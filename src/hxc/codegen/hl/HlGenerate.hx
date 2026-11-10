@@ -609,15 +609,23 @@ class HlGenerate {
 		var ctx = createContext(com, false);
 		if (dump) {
 			// genhl.ml opens dump/hlopt.txt in create_context, and writes it as each function is optimised
-			ctx.dumpOut = new StringBuf();
 			hxc.core.PathKey.mkdirFromPath("dump/hlopt.txt");
-			sys.io.File.saveContent("dump/hlopt.txt", "");
+			ctx.dumpOut = sys.io.File.write("dump/hlopt.txt", true);
 		}
-		addTypes(ctx, com.types);
-		var code = buildCode(ctx, com.types, com.main);
+		var code;
+		try {
+			addTypes(ctx, com.types);
+			code = buildCode(ctx, com.types, com.main);
+		} catch (e:Dynamic) {
+			// the TypingError path included: the handle is never leaked
+			if (ctx.dumpOut != null) ctx.dumpOut.close();
+			ctx.dumpOut = null;
+			throw e;
+		}
+		if (ctx.dumpOut != null) ctx.dumpOut.close();
+		ctx.dumpOut = null;
 		ocamlArraySort(code.natives, (n1, n2) -> n1.lib - n2.lib);
 		if (dump) {
-			sys.io.File.saveContent("dump/hlopt.txt", ctx.dumpOut.toString());
 			var out = new StringBuf();
 			HlDump.dump(s -> {
 				out.add(s);

@@ -34,7 +34,7 @@ output.
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set (see `--dotnet`) |
 | `--dotnet <dir>` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, generic instantiations and the casts between them, the Serializer, exceptions and calls into `--net-lib` assemblies (overloads, generic methods, `Nullable<T>`, indexers, properties, delegates) and a subset of inline C# work; see [.NET output](#net-output) |
-| `--hl x.hl` | Early: HashLink bytecode with `-D hl_no_opt`, debug info included, byte-identical to Haxe 4.3.7's on the small programs in `tests/cases/hl-output` (larger programs are not yet checked). The bytecode optimiser, Haxe's default, is not ported: without `-D hl_no_opt` hxc reports an error. HL/C (`--hl x.c`) is not yet supported |
+| `--hl x.hl` | Early: HashLink bytecode, debug info included, byte-identical to Haxe 4.3.7's on the programs in `tests/cases/hl-output` (with `-D hl_no_opt`) and `tests/cases/hl-opt` (with the bytecode optimiser, Haxe's default, on); larger programs are not yet checked. HL/C (`--hl x.c`) is not yet supported |
 | `--lua`, `--python`, `--php`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.

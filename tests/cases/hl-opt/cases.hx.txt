@@ -1621,3 +1621,117 @@ class P {
 	}
 }
 ===
+
+--- opt-long-function
+// Stress: one function with 2000 `if (x == i) y += i;` statements and a 400-case Int switch, built by a
+// macro, so the optimiser's blocks, liveness and assigns remap run over a long function.
+class P {
+	static macro function gen() {
+		var stmts = [];
+		for (i in 0...2000) stmts.push(macro if (x == $v{i}) y += $v{i});
+		var cases = [for (i in 0...400) {values: [macro $v{i}], expr: macro y += $v{i * 3}, guard: null}];
+		stmts.push({expr: ESwitch(macro x, cases, macro y -= 1), pos: haxe.macro.Context.currentPos()});
+		return macro $b{stmts};
+	}
+
+	static function main() {
+		var x = Std.random(1) + 7;
+		var y = 0;
+		gen();
+		Sys.println(y);
+	}
+}
+===
+
+--- opt-assigns-debug + --debug
+// opt-assigns with --debug: the assigns remap runs over the debug information.
+class P {
+	static function copyArg(x:Int, y:Int):Int {
+		var a = x;
+		var b = y;
+		a = a + b;
+		return a + b;
+	}
+
+	static function chain(x:Int):Int {
+		var a = x;
+		var b = a;
+		var c = b;
+		return c + a;
+	}
+
+	static function onlyWrite(x:Int):Int {
+		var w = x * 3;
+		w = x * 4;
+		var z;
+		z = 1;
+		return x;
+	}
+
+	static function main() {
+		var a = Std.random(1) + 5;
+		var b = a;
+		Sys.println(b);
+		Sys.println(copyArg(2, 3));
+		Sys.println(chain(4));
+		Sys.println(onlyWrite(6));
+		var s = "x";
+		var t = s;
+		var u = t;
+		s = "y";
+		Sys.println(s + t + u);
+	}
+}
+===
+
+--- opt-dump + -D dump
+// opt-loops with -D dump: the .hl must not change when the optimiser also writes dump/hlopt.txt.
+class P {
+	static function main() {
+		var i = 0;
+		var acc = 0;
+		while (i < 20) {
+			i++;
+			if (i % 3 == 0) continue;
+			if (i > 15) break;
+			acc += i;
+		}
+		Sys.println(acc + ":" + i);
+		var sum = 0;
+		for (k in 0...10) {
+			if (k == 2) continue;
+			if (k == 8) break;
+			sum += k * k;
+		}
+		Sys.println(sum);
+		var n = 0;
+		do {
+			n += 2;
+		} while (n < 9);
+		Sys.println(n);
+		var tot = 0;
+		for (a in 0...5) {
+			var row = 0;
+			for (b in 0...5) {
+				if (b > a) break;
+				row += a * b;
+			}
+			tot += row;
+		}
+		Sys.println(tot);
+		// live across the back edge
+		var prev = 1;
+		var cur = 1;
+		for (_ in 0...10) {
+			var nx = prev + cur;
+			prev = cur;
+			cur = nx;
+		}
+		Sys.println(cur + prev);
+		var arr = [3, 1, 2];
+		var m = 0;
+		for (v in arr) if (v > m) m = v;
+		Sys.println(m);
+	}
+}
+===
