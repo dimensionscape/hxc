@@ -4394,17 +4394,23 @@ class EvalStdLib {
 		function iteratorOf(items:Array<EvalValue>):EvalValue
 			return listIteratorValue(items);
 		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.ObjectMap"]) {
-			// An IntMap key is decodeInt, a StringMap key decodeVString and an ObjectMap key any value.
-			function argKey(v:EvalValue):EvalValue {
-				return switch (mapPath) {
-					case "haxe.ds.IntMap": hxc.eval.EvalValue.EvalValueTools.vint(decodeInt(ctx, v));
-					case "haxe.ds.StringMap":
+			// An IntMap key is decodeInt, a StringMap key decodeVString and an ObjectMap key any value. The
+			// map's kind is settled here, not compared by path on every call.
+			final mapKind = switch (mapPath) {
+				case "haxe.ds.IntMap": 1;
+				case "haxe.ds.StringMap": 2;
+				case _: 3;
+			};
+			inline function argKey(v:EvalValue):EvalValue {
+				return switch (mapKind) {
+					case 1: hxc.eval.EvalValue.EvalValueTools.vint(decodeInt(ctx, v));
+					case 2:
 						decodeVString(ctx, v);
 						v;
 					case _: v;
 				};
 			}
-			function keyString(v:EvalValue):String return mapPath == "haxe.ds.ObjectMap" ? objectMapKey(v) : mapKey(v);
+			inline function keyString(v:EvalValue):String return mapKind == 3 ? objectMapKey(v) : mapKey(v);
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
 				var vi = new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map()));

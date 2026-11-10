@@ -1446,7 +1446,8 @@ class JField extends JNode {
 		this.recv = recv;
 	}
 
-	// 0 not yet known; 1 a class's var read (EvalEmitter.evalField's last FInstance case), 2 any other.
+	// 0 not yet known; 1 a class's var read (EvalEmitter.evalField's last FInstance case), 2 any other,
+	// 3 a static field.
 	var mode:Int = 0;
 	var cf:Null<TClassField> = null;
 	var hash:Int = -1;
@@ -1454,12 +1455,20 @@ class JField extends JNode {
 	// prototype, so an index once found stays right.
 	var cacheProto:Null<VPrototype> = null;
 	var cacheIdx:Int = -1;
+	// A static field's slot: `staticOwner.pfields[staticIdx]`, found through `staticProto`, which stays
+	// right while the context still maps the class to that prototype (a prototype's slots are only ever
+	// added, and its fields array is never replaced).
+	var staticClass:Null<TClass> = null;
+	var staticCtx:Null<EvalContext> = null;
+	var staticProto:Null<VPrototype> = null;
+	var staticOwner:Null<VPrototype> = null;
+	var staticIdx:Int = -1;
 
 	override public function run(ctx:EvalContext, ev:Eval):EvalValue {
 		var old = ev.currentPos;
 		if (pos != null) ev.currentPos = pos;
 		if (mode == 0) mode = varRead();
-		var r = if (mode == 1) readVar(ctx, recv.run(ctx, ev)) else EvalEmitter.evalField(ctx, e1, fa, e.pos, recv == null ? null : recv.run(ctx, ev));
+		var r = if (mode == 1) readVar(ctx, recv.run(ctx, ev)) else if (mode == 3) readStatic(ctx) else EvalEmitter.evalField(ctx, e1, fa, e.pos, recv == null ? null : recv.run(ctx, ev));
 		ev.currentPos = old;
 		return r;
 	}
@@ -1471,9 +1480,38 @@ class JField extends JNode {
 				if (!f.kind.match(Var(_))) return 2;
 				cf = f;
 				return 1;
+			case FStatic(c, f):
+				staticClass = c;
+				cf = f;
+				return 3;
 			case _:
 				return 2;
 		}
+	}
+
+	// EvalEmitter.evalField's static read, with the slot it found kept for the next run.
+	function readStatic(ctx:EvalContext):EvalValue {
+		var key = EvalHash.pathHash(staticClass.path);
+		var proto = ctx.staticPrototypes.get(key);
+		if (proto != null && proto == staticProto && ctx == staticCtx) return staticOwner.pfields[staticIdx];
+		var v = EvalEmitter.evalField(ctx, e1, fa, e.pos, null);
+		proto = ctx.staticPrototypes.get(key);
+		if (proto != null) {
+			var h = EvalHash.fieldHash(cf);
+			var p = proto;
+			while (p != null) {
+				var idx = p.pnames.get(h);
+				if (idx != null) {
+					staticCtx = ctx;
+					staticProto = proto;
+					staticOwner = p;
+					staticIdx = idx;
+					break;
+				}
+				p = p.pparent;
+			}
+		}
+		return v;
 	}
 
 	// evalField's instance read: an instance's field (the field read on it, or `stack` on an exception
@@ -1627,7 +1665,8 @@ class JCall extends JNode {
 
 	// The callee's shape, worked out on the first run: 0 a field read off a receiver (`calleeE1`.`calleeFa`),
 	// 1 a proper static method, 2 anything else. For an instance field, instKind is 1 for a proper method
-	// (instClass/instField), 2 for another method and 0 for a variable.
+	// (instClass/instField), 2 for another method and 0 for a variable; 3 is a structure's field
+	// (instField), read as a bound method when the receiver is a class instance.
 	var calleeKind:Int = -1;
 	var calleeE1:Null<TExpr> = null;
 	var calleeFa:Null<TFieldAccess> = null;
@@ -1646,6 +1685,9 @@ class JCall extends JNode {
 						instClass = c;
 						instField = cf;
 						instKind = EvalEmitter.isProperMethod(cf) ? 1 : cf.kind.match(Method(_)) ? 2 : 0;
+					case FAnon(cf):
+						instField = cf;
+						instKind = 3;
 					case _:
 				}
 				0;
@@ -1780,9 +1822,9 @@ class JCall extends JNode {
 							case _: m;
 						}
 					}
-				} else if (instKind != 0) {
-					// EvalEmitter.evalField's read of a method on a receiver that is not null:
-					// EvalField.dynamicField.
+				} else if (instKind == 1 || instKind == 2 || (instKind == 3 && recvValue.match(VInstance(_)))) {
+					// EvalEmitter.evalField's read of a method on a receiver that is not null, and of a
+					// structure's field on a class instance: EvalField.dynamicField.
 					var cf = instField;
 					if (methodHash < 0) methodHash = EvalHash.fieldHash(cf);
 					var rv = EvalValueTools.vresolve(recvValue);
