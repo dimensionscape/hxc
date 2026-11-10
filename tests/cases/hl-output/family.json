@@ -1,0 +1,8 @@
+{
+	"name": "hl-output",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "--main", "$module", "--hl", "out.hl", "-D", "hl_no_opt", "--macro", "HlDigest.after('out.hl')"]
+}

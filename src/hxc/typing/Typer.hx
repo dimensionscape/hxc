@@ -383,7 +383,9 @@ class Typer {
 		var realCf = implC.statics.get(cf.name);
 		if (realCf != null) cf = realCf;
 		TypeFields.forceFieldBody(ctx.com, implC, cf);
-		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+		// calls.ml's make_static_call: the receiver is make_static_this, typed by the bare `{ Statics c }`
+		// anon, not the `Class<...>` type expression an access written in the source gets.
+		var implExpr = TexprTools.makeStaticThis(implC, p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
 		return Calls.makeCall(ctx, staticExpr, castArgs(ctx, cf, e, p), t, p);
 	}
@@ -6898,7 +6900,10 @@ class Typer {
 				// unannotated arrow whose return mono that branch binds), so re-check here, not only up
 				// front. `return null` is exempt: it stays a type error ("Cannot return null from
 				// Void-function"), handled by the value path below.
-				if (isVoid(TypeFunctions.follow(ctx.ret)) && !isVoid(TypeFunctions.follow(teRaw.type)) && !teRaw.expr.match(TConst(TNull))) {
+				// An open monomorph (`return untyped $setref(...)` in an inline Void function) is unified with
+				// Void below, as typer.ml's cast_or_unify does.
+				if (isVoid(TypeFunctions.follow(ctx.ret)) && !isVoid(TypeFunctions.follow(teRaw.type)) && !teRaw.expr.match(TConst(TNull))
+					&& !TypeFunctions.follow(teRaw.type).match(TMono(_))) {
 					var vt = monoOrDynamic(ctx, withType, p);
 					return TypeFunctions.mk(TBlock([teRaw, TypeFunctions.mk(TReturn(null), vt, p)]), vt, teRaw.pos);
 				}

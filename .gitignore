@@ -6,6 +6,8 @@ out/
 tests/fixtures/*/bin/
 tests/fixtures/*/obj/
 tests/dotnet/tmp/
+tests/hl/tmp/
 # Builds and measurement scripts for private codebases: local only
 docs/superpowers/plans/*/serverapp/
 docs/superpowers/plans/*/measure/
+.hl-compare/

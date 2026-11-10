@@ -678,7 +678,7 @@ class Filters {
 
 	// Cpp only: interfaces have no super, so the first extended interface becomes superClass for
 	// efficiency and the remaining ones stay implemented. interfaces is prepend-built, so index 0 is
-	// the list head. Downstream cpp passes depend on the mutation: CppFixOverrides walks superClass,
+	// the list head. Downstream cpp passes depend on the mutation: FixOverrides walks superClass,
 	// which is how a sub-interface's redeclared method gets dropped.
 	public static function promoteFirstInterfaceToSuper(t:ModuleType):Void {
 		switch (t) {
@@ -1117,7 +1117,7 @@ class Filters {
 		if (!com.platform.match(Cross)) hxc.optimization.Analyzer.Run.runOnTypes(com, newTypes);
 		stageMark("analyzer:done"); memProbe("analyzer:done");
 		var renameLocals = hxc.filters.RenameVars.init(com.types, com.platform.match(Cpp),
-			com.platform.match(Js) && com.getEsVersion() >= 6, com.platform.match(Java));
+			com.platform.match(Js) && com.getEsVersion() >= 6, com.platform.match(Java | Hl));
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
 			// add_final_return: adds a trailing default-valued return to a non-Void function that can fall
@@ -1381,7 +1381,7 @@ class Filters {
 				case Java | Cs:
 				case _: addFieldInits(com, tctx, renameLocals, t);
 			}
-			switch (addMetaField(com, t)) {
+			if (com.platform != Hl) switch (addMetaField(com, t)) {
 				case null:
 				case ncls: metaCompanions.push(ncls);
 			}

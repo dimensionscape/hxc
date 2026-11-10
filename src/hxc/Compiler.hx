@@ -806,8 +806,7 @@ class Compiler {
 					ownPackages = ["cs"];
 					ctx.file = argValue(args, i++, a);
 				case "-php" | "--php" | "-swf" | "--swf"
-					| "-python" | "--python" | "-lua" | "--lua"
-					| "-hl" | "--hl":
+					| "-python" | "--python" | "-lua" | "--lua":
 					// Targets without a generator here; the output-file value must still be consumed
 					// so it does not parse as a compilation root.
 					if (targetTaken || platform != Cross) throw new ArgFailure("Multiple targets");
@@ -820,10 +819,15 @@ class Compiler {
 						case "-php" | "--php": ["php"];
 						case "-swf" | "--swf": ["flash"];
 						case "-python" | "--python": ["python"];
-						case "-lua" | "--lua": ["lua"];
-						case _: ["hl"];
+						case _: ["lua"];
 					};
 					i++;
+				case "-hl" | "--hl":
+					// No bytecode generator yet, but the platform is set for the same reason as -neko above.
+					setPlatform(Hl);
+					targetDir = "hl";
+					ownPackages = ["hl"];
+					ctx.file = argValue(args, i++, a);
 				case "--display":
 					ctx.displaySpec = argValue(args, i++, a);
 				case "-java-lib" | "--java-lib":
@@ -1023,6 +1027,17 @@ class Compiler {
 		if (platform == Cs && ctx.defines.rawDefined("dotnet")) Setup.addDotnetRuntime(ctx);
 		if (platform == Cs) hxc.codegen.dotnet.NetSetup.beforeGenerate(ctx);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
+		if (platform == Hl) {
+			// hl-ver defaults to the std's hl/hl_version, found through the class path and trimmed.
+			// hlc is defined when the output is a .c file.
+			if (!ctx.defines.rawDefined("hl_ver")) {
+				var vf = hxc.context.ModuleLoader.findFileOpt(ctx, "hl/hl_version");
+				if (vf == null || !sys.FileSystem.exists(vf))
+					throw "The file hl_version could not be found. Please make sure HAXE_STD_PATH is set to the standard library corresponding to the used compiler version.";
+				ctx.defines.rawDefineValue("hl_ver", StringTools.trim(sys.io.File.getContent(vf)));
+			}
+			if (ctx.file != null && StringTools.endsWith(ctx.file, ".c")) ctx.defines.rawDefine("hlc");
+		}
 		// Run while the arguments are processed: a --display request whose mode does not type the whole
 		// compile (usage, diagnostics and statistics do) defines `display` as that mode, "1" for the empty
 		// one. A JSON payload defines it once its method is known, below.
@@ -1731,6 +1746,9 @@ class Compiler {
 						hxc.codegen.dotnet.GenerateDotnet.generate(ctx);
 						tGen();
 						dotnetWritten = true;
+					} else if (platform == Hl) {
+						// The log line, the timer, the old output's removal and fix_overrides are in the generator.
+						hxc.codegen.hl.HlGenerate.generate(ctx);
 					}
 				}
 			}

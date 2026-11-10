@@ -38,7 +38,7 @@ class CppGen {
 		// Fix overrides (Cpp only): rewrite each override method's signature to match its overridden base
 		// (return type + arg types) so C++ virtual overrides are covariant-clean; must run before
 		// generation.
-		for (mt in com.types) CppFixOverrides.fixOverrides(com, mt);
+		for (mt in com.types) hxc.codegen.FixOverrides.fixOverrides(com, mt);
 		// Constructor synthesis (the forwarding/inherited/compiler-generated constructors) is done at typer
 		// time by Filters.run -> Typer.ensureInheritedCtor for every platform, so no cpp-gen pass is needed.
 		CppGenClass.buildTypeIds(com);

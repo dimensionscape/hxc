@@ -535,7 +535,7 @@ class CppiaGen {
 		var debug = com.debug;
 		var trace = com.defines.rawDefined("cppgen-trace");
 		// Override fixing runs for the Cpp platform before either generator.
-		for (mt in com.types) CppFixOverrides.fixOverrides(com, mt);
+		for (mt in com.types) hxc.codegen.FixOverrides.fixOverrides(com, mt);
 		mkdirFromPath(com.file);
 		var script = new CppiaWriter(com, com.file, com.debug);
 		script.stringId("");

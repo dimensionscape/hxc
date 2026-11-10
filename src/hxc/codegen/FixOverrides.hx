@@ -1,17 +1,18 @@
-package hxc.generators.cpp;
+package hxc.codegen;
 
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.context.Context;
 
 /**
-	Run per type for the Cpp platform before generation: rewrite each override method's signature to match
-	the overridden base method's (argument types + return type), so C++ sees a matching, non-covariant
-	virtual signature. An argument whose type differs from the base is renamed to a `_tmp_` shadow and the
-	real argument is rebound from a cast at the top of the body. This is cpp-only (js skips it, eval never
-	generates), so it is safe to run as a mutation pass in CppGen.generate.
+	codegen.ml's fix_overrides, run per type for the Cpp and Hl platforms before generation: rewrite each
+	override method's signature to match the overridden base method's (argument types + return type), so
+	the target sees a matching, non-covariant virtual signature. An argument whose type differs from the
+	base is renamed to a `_tmp_` shadow and the real argument is rebound from a cast at the top of the body.
+	Only cpp and hl run it (Haxe also runs it for flash), as a mutation pass at the start of their
+	generators.
 **/
-class CppFixOverrides {
+class FixOverrides {
 	// The overridden field, searched up the super chain (cpp skips interfaces), falling back to c's own
 	// field (unless it is an AccRequire var).
 	static function findField(com:Context, c:TClass, f:TClassField):Null<TClassField> {
@@ -23,7 +24,7 @@ class CppFixOverrides {
 				if (r != null) return r;
 			}
 		}
-		// Cpp uses delegation for interfaces, so interfaces is not searched.
+		// Cpp and Hl use delegation for interfaces, so interfaces is not searched.
 		var own = c.fields.get(f.name);
 		if (own == null) return null;
 		switch (own.kind) {
