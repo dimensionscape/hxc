@@ -143,6 +143,9 @@ class EvalContext {
 	// reused for a new compilation.
 	public var staticInits:Map<Int, {proto:VPrototype, delays:Array<hxc.eval.EvalPrototype.ProtoDelay>}>;
 	public var constructors:Map<Int, VFunc>;
+	// Each interpreted method's function (EvalPrototype.makeFunction) with what it runs, so a call site
+	// that found the function can run its body without going through it (hxc.eval.EvalJit.JCall).
+	public var jitMethods:haxe.ds.ObjectMap<Dynamic, hxc.eval.EvalJit.JMethod> = new haxe.ds.ObjectMap();
 	// (class path, field) for every class method a subclass overrides, keyed by the path's hash and then
 	// the field's name.
 	public var overrides:Map<Int, Map<String, Bool>> = new Map();

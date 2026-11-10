@@ -269,6 +269,34 @@ class EvalJit {
 	}
 }
 
+// What an interpreted method's function (EvalPrototype.makeFunction) runs: the function calls
+// EvalJit.invoke with these, and a call site that knows them binds its arguments itself.
+class JMethod {
+	public final ctx:EvalContext;
+	public final tf:TFunc;
+	public final isInstance:Bool;
+	public final abstractThis:Bool;
+	public final info:EvalContext.EvalEnvInfo;
+	var cache:Null<JCompiled> = null;
+
+	public function new(ctx:EvalContext, tf:TFunc, isInstance:Bool, abstractThis:Bool, info:EvalContext.EvalEnvInfo) {
+		this.ctx = ctx;
+		this.tf = tf;
+		this.isInstance = isInstance;
+		this.abstractThis = abstractThis;
+		this.info = info;
+	}
+
+	public inline function compiled():JCompiled {
+		var c = cache;
+		if (c == null || !c.valid(ctx, tf)) {
+			c = EvalJit.compiled(ctx, tf);
+			cache = c;
+		}
+		return c;
+	}
+}
+
 class JCompiled {
 	public final ctx:EvalContext;
 	public final expr:TExpr;
@@ -1608,6 +1636,9 @@ class JCall extends JNode {
 	var methodProto:Null<VPrototype> = null;
 	var methodSlots:Int = -1;
 	var methodFn:Null<VFunc> = null;
+	// What `methodFn` and `staticFn` run when they are interpreted methods' functions, null for any other.
+	var methodDm:Null<JMethod> = null;
+	var staticDm:Null<JMethod> = null;
 
 	public function new(e:TExpr, callee:TExpr, argExprs:Array<TExpr>, args:Array<JNode>, recv:Null<JNode>, calleeNode:Null<JNode>) {
 		super(e);
@@ -1703,6 +1734,38 @@ class JCall extends JNode {
 		};
 	}
 
+	// Whether the call gives the method exactly its arguments, none of them defaulted, few enough to hold
+	// while its frame is made: anything else goes through the method's function.
+	inline function fits(c:JCompiled):Bool {
+		return !c.anyDefault && c.argSlots.length == args.length && args.length <= 4;
+	}
+
+	// The method's function (EvalPrototype.makeFunction) and EvalJit.invoke in one, the arguments bound
+	// into the frame without an array in between: the arguments in the caller's frame, the leave position
+	// as callAt records it, then the frame, its `this` (the receiver, an abstract's first argument, or none)
+	// and the body.
+	function callMethod(ctx:EvalContext, ev:Eval, m:JMethod, c:JCompiled, recvValue:Null<EvalValue>, leaveFirst:Bool, p:Position):EvalValue {
+		// The method's own context is the caller's: the call site found it in its context's table.
+		var mctx = m.ctx;
+		var n = args.length;
+		var a0:EvalValue = n > 0 ? args[0].run(ctx, ev) : VNull;
+		var a1:EvalValue = n > 1 ? args[1].run(ctx, ev) : VNull;
+		var a2:EvalValue = n > 2 ? args[2].run(ctx, ev) : VNull;
+		var a3:EvalValue = n > 3 ? args[3].run(ctx, ev) : VNull;
+		if (!leaveFirst && ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
+		var env = EvalContext.pushFrame(mctx, m.info, c.layout);
+		env.vthis = m.isInstance ? recvValue : (m.abstractThis ? a0 : null);
+		var locals = env.locals;
+		var slots = c.argSlots;
+		if (n > 0) locals[slots[0]] = a0;
+		if (n > 1) locals[slots[1]] = a1;
+		if (n > 2) locals[slots[2]] = a2;
+		if (n > 3) locals[slots[3]] = a3;
+		var ret = EvalJit.runBody(mctx, env.eval, c.node);
+		EvalContext.popFrame(mctx, env);
+		return ret;
+	}
+
 	function siteKind():Int {
 		return switch (callee.expr) {
 			case TConst(TSuper): 1;
@@ -1794,6 +1857,7 @@ class JCall extends JNode {
 		// value EvalField.dynamicField would make for it.
 		var direct:Null<VFunc> = null;
 		var directRecv:EvalValue = VNull;
+		var directDm:Null<JMethod> = null;
 		if (calleeKind < 0) decodeCallee();
 		var fn = switch (calleeKind) {
 			// The receiver first, null-checked at its position.
@@ -1844,6 +1908,7 @@ class JCall extends JNode {
 					if (cached != null) {
 						direct = cached;
 						directRecv = rv;
+						directDm = methodDm;
 						VNull;
 					} else switch (EvalField.field(ctx, rv, methodHash)) {
 						case VFunction(f, false):
@@ -1855,6 +1920,8 @@ class JCall extends JNode {
 									methodProto = vi.iproto;
 									methodSlots = vi.iproto.pinstanceFields.length;
 									methodFn = f;
+									var dm = ctx.jitMethods.get(f);
+									methodDm = dm != null && dm.isInstance ? dm : null;
 								case _:
 							}
 							VNull;
@@ -1871,12 +1938,22 @@ class JCall extends JNode {
 					};
 					staticFn = f;
 					staticEpoch = EvalJit.epoch;
+					staticDm = switch (f) {
+						case VFunction(sf, _):
+							var dm = ctx.jitMethods.get(sf);
+							dm != null && !dm.isInstance ? dm : null;
+						case _: null;
+					};
 					f;
 				}
 			case _: EvalValueTools.vresolve(calleeNode.run(ctx, ev));
 		};
 		if (leaveFirst && ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
 		if (direct != null) {
+			if (directDm != null) {
+				var c = directDm.compiled();
+				if (fits(c)) return callMethod(ctx, ev, directDm, c, directRecv, leaveFirst, p);
+			}
 			var argv = evalArgsFrom(ctx, ev, 1);
 			argv[0] = directRecv;
 			return leaveFirst ? direct(argv) : EvalJit.callAt(ev, p, direct, argv);
@@ -1886,6 +1963,10 @@ class JCall extends JNode {
 				case TField(_, FStatic(c, cf)) if (cf.name == "trace" && c.path.name == "Log" && c.path.pack.length == 1 && c.path.pack[0] == "haxe"): 1;
 				case _: 2;
 			};
+		}
+		if (calleeKind == 1 && trace == 2 && staticDm != null && staticEpoch == EvalJit.epoch) {
+			var c = staticDm.compiled();
+			if (fits(c)) return callMethod(ctx, ev, staticDm, c, null, leaveFirst, p);
 		}
 		// A bound method's arguments go in after a slot for its receiver.
 		var bound = trace != 1 && switch (fn) { case VFieldClosure(_, _): true; case _: false; };
