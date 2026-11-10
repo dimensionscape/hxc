@@ -1269,6 +1269,14 @@ class Compiler {
 					ctx.afterInitMacros = [];
 					for (cb in aim) cb();
 				}
+				// The HL generator refuses to run without hl_no_opt, since the optimiser is not ported. Say so
+				// before typing rather than after it: on a large program that is a whole compile spent on an
+				// answer known now. Checked after the init macros because they can define it; the generator
+				// keeps its own check for a define added later still.
+				if (platform == Hl && !noOutput && ctx.displaySpec == null && !ctx.defines.rawDefined("hl_no_opt")) {
+					ctx.addDiagnostic(hxc.codegen.hl.HlGenerate.NO_OPTIMISER, Position.nullPos);
+					throw new CompileAbort();
+				}
 			}
 		} catch (_:CompileAbort) {
 			// The compile ends quietly; the final flush prints what was queued and an error among it is the
