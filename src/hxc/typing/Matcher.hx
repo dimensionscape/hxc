@@ -606,7 +606,7 @@ class PatternMaker {
 			if (pat != null) return answerDisplay(pat);
 		} catch (_:Dynamic) {}
 		hxc.parser.Parser.displaySuppressed = savedSuppressed;
-		if (pctx.ctx.com.diagnostics.length > diagBefore) pctx.ctx.com.diagnostics.resize(diagBefore);
+		pctx.ctx.com.rollbackDiagnostics(diagBefore);
 		// Anything that is not a lower-case identifier (an uppercase name, a $-ident) is not a capture;
 		// generated-local and `_` prefixes are excluded.
 		if (i.length > 0 && !hxc.ast.Ast.isLowerIdent(i) && i.charCodeAt(0) != "`".code && i.charCodeAt(0) != "_".code) {
