@@ -380,6 +380,8 @@ class HlIntrinsics {
 	// NativeArray of haxe._Resource.ResourceContent
 	static function resources(ctx:HlContext):Int {
 		var tdef = Lambda.find(ctx.com.types, t -> isPath(TypeFunctions.tPath(t), ["haxe", "_Resource"], "ResourceContent"));
+		// genhl's List.find raises Not_found
+		if (tdef == null) HlContext.die();
 		var c = switch tdef {
 			case TClassDecl(c): c;
 			case _: HlContext.die();

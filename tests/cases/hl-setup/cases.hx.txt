@@ -109,3 +109,26 @@ class P {
 		Sys.println(b.getI32(0));
 	}
 }
+
+--- typed-dump-implicit-cast + --hl out.hl -D hl_no_opt -D dump --macro Probe.after('dump/hl/P.dump')
+abstract Meters(Int) {
+	public inline function new(v:Int) {
+		this = v;
+	}
+
+	@:from static function fromString(s:String):Meters {
+		return new Meters(s.length);
+	}
+
+	@:to function toFloat():Float {
+		return this / 2;
+	}
+}
+
+class P {
+	static function main() {
+		var m:Meters = "hello";
+		var f:Float = m;
+		Sys.println(f);
+	}
+}

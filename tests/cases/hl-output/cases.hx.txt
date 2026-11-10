@@ -1,4 +1,4 @@
-# The .hl file Haxe writes, as its length and MD5 (HlDigest). All of these fail until the generator is complete.
+# The .hl file Haxe writes, as its length and MD5 (HlDigest).
 --- empty-main
 class P { static function main() {} }
 ===
@@ -934,6 +934,17 @@ class P {
 }
 ===
 
+--- debug-classpath + -cp sub
+# Greeter is the fixture's package-less sub/Greeter.hx, found through `sub/`: Haxe prepends class paths, so
+# `sub/` comes before the family's `./` and is the entry stripped from its debug file name.
+class P {
+	static function main() {
+		Sys.println(Greeter.greet("sub"));
+		trace("traced");
+	}
+}
+===
+
 --- resources + --macro P.addResources()
 class P {
 	#if macro
@@ -958,6 +969,184 @@ class P {
 class P {
 	static function main() {
 		Sys.println("where");
+	}
+}
+===
+
+--- generics-abstracts
+@:generic
+class Stack<T> {
+	var items:Array<T> = [];
+
+	public function new() {}
+
+	public function push(v:T):Void {
+		items.push(v);
+	}
+
+	public function pop():T {
+		return items.pop();
+	}
+
+	public var size(get, never):Int;
+
+	function get_size():Int {
+		return items.length;
+	}
+}
+
+abstract Meters(Int) {
+	public inline function new(v:Int) {
+		this = v;
+	}
+
+	@:from static function fromString(s:String):Meters {
+		return new Meters(s.length);
+	}
+
+	@:to function toFloat():Float {
+		return this / 2;
+	}
+
+	@:op(A + B) static function add(a:Meters, b:Meters):Meters;
+
+	@:op(A * B) static function scale(a:Meters, b:Int):Meters {
+		return new Meters(a.raw() * b);
+	}
+
+	@:op(-A) static function neg(a:Meters):Meters;
+
+	@:op(A > B) static function gt(a:Meters, b:Meters):Bool;
+
+	@:op(A == B) static function eq(a:Meters, b:Meters):Bool;
+
+	public inline function raw():Int {
+		return this;
+	}
+
+	public function toString():String {
+		return this + "m";
+	}
+}
+
+class P {
+	static inline function clamp(v:Int, lo:Int, hi:Int):Int {
+		return v < lo ? lo : (v > hi ? hi : v);
+	}
+
+	static function main() {
+		var si = new Stack<Int>();
+		si.push(1);
+		si.push(2);
+		var ss = new Stack<String>();
+		ss.push("a");
+		Sys.println(si.pop() + si.size + " " + ss.pop() + ss.size);
+		var a = new Meters(3);
+		var b:Meters = "hello";
+		var c = a + b;
+		var d = c * 2;
+		var e = -d;
+		Sys.println(c.toString() + " " + d.raw() + " " + e.toString());
+		Sys.println(d > c);
+		Sys.println(a == new Meters(3));
+		var f:Float = d;
+		Sys.println(f);
+		Sys.println(clamp(15, 0, 10) + clamp(-3, 0, 10) + clamp(4, 0, 10));
+		var x = 7;
+		Sys.println(clamp(x, 0, 5));
+	}
+}
+===
+
+--- string-buf-math
+class P {
+	static function main() {
+		var b = new StringBuf();
+		b.add("x=");
+		b.add(12);
+		b.addChar(0x41);
+		b.addChar(0xE9);
+		b.addSub("abcdef", 1, 3);
+		b.add(1.5);
+		b.add(true);
+		b.add(null);
+		Sys.println(b.toString());
+		Sys.println(b.length);
+		Sys.println(Math.floor(2.7) + " " + Math.floor(-2.5) + " " + Math.ceil(2.1) + " " + Math.round(2.5));
+		Sys.println(Math.sqrt(16) + " " + Math.sqrt(2));
+		Sys.println(Math.pow(2, 10) + " " + Math.pow(2, 0.5));
+		Sys.println(Math.abs(-3) + " " + Math.min(1, 2) + " " + Math.max(1.5, -1));
+		Sys.println(Std.parseInt("42") + " " + Std.parseInt("0x1F") + " " + Std.parseInt("  -7z") + " " + Std.parseInt("x"));
+		Sys.println(Std.parseFloat("3.25") + " " + Std.parseFloat("1e3") + " " + Std.parseFloat("abc"));
+		Sys.println(Std.int(3.9) + " " + Std.int(-3.9));
+		Sys.println(0.1);
+		Sys.println(1e21);
+		Sys.println(-0.0);
+		Sys.println(Math.NaN);
+		Sys.println(Math.POSITIVE_INFINITY + " " + Math.NEGATIVE_INFINITY);
+		Sys.println(Math.isNaN(Math.NaN) + " " + Math.isFinite(1.0));
+		Sys.println(1 / 3);
+		Sys.println(0.1 + 0.2);
+		Sys.println(123456789.125);
+		var f:Float = 5;
+		Sys.println(f);
+	}
+}
+===
+
+--- reflect-type
+class Animal {
+	public var name:String;
+
+	public function new(name:String) {
+		this.name = name;
+	}
+
+	public function speak():String {
+		return name + " speaks";
+	}
+}
+
+class Dog extends Animal {
+	public function new(name:String) {
+		super(name);
+	}
+
+	override public function speak():String {
+		return name + " barks";
+	}
+}
+
+enum Kind {
+	KA;
+	KB(v:Int);
+}
+
+class P {
+	static function main() {
+		var d = new Dog("rex");
+		Sys.println(Type.getClassName(Type.getClass(d)));
+		Sys.println(Type.getClassName(Type.getSuperClass(Dog)));
+		Sys.println(Type.getClassName(Animal));
+		var a:Animal = Type.createInstance(Dog, ["fido"]);
+		Sys.println(a.speak());
+		var cl = Type.resolveClass("Animal");
+		Sys.println(cl == Animal);
+		Sys.println(Type.getEnumName(Kind));
+		Sys.println(Type.enumConstructor(KB(3)) + " " + Type.enumParameters(KB(3)) + " " + Type.enumIndex(KB(3)));
+		var o = {x: 1, y: "two", z: 3.5};
+		var fs = Reflect.fields(o);
+		fs.sort((a, b) -> a < b ? -1 : (a > b ? 1 : 0));
+		Sys.println(fs.join(","));
+		Sys.println(Reflect.field(o, "y"));
+		Reflect.setField(o, "x", 10);
+		Sys.println(o.x);
+		Sys.println(Reflect.hasField(o, "z") + " " + Reflect.hasField(o, "w"));
+		var values:Array<Dynamic> = [1, 2.5, "s", true, null, d, KA, o, Dog, Kind, function() {}];
+		for (v in values) Sys.println(Type.typeof(v));
+		Sys.println(Std.isOfType(d, Animal) + " " + Std.isOfType(a, Dog) + " " + Std.isOfType("s", Int));
+		Sys.println(Type.getInstanceFields(Dog).length > 0);
+		Sys.println(Reflect.isFunction(d.speak) + " " + Reflect.isObject(o));
 	}
 }
 ===

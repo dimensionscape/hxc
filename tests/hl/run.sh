@@ -2,9 +2,9 @@
 # Runs the HashLink generator's cases in tests/cases/hl-output/cases.hx.txt.
 #   tests/hl/run.sh --compiler <hxc> [--haxe <haxe>] [--hl <hl.exe>] [--std <dir>] [--case <pattern>] [-j <jobs>]
 # A case is `--- name [@ pack.Module] [+ extra compiler args]`, its source (module P unless `@` names another,
-# written at that module's path and given to --main), `===` and nothing after it (the
-# expected result is Haxe's own). Each case is compiled with the family's arguments (family.json, less the
-# digest macro) in one directory, src/, by Haxe and then by hxc twice (one directory, so that paths baked in
+# written at that module's path, next to the family's fixture files, and given to --main), `===` and nothing
+# after it (the expected result is Haxe's own). Each case is compiled with the family's arguments
+# (family.json, less the digest macro) in one directory, src/, by Haxe and then by hxc twice (one directory, so that paths baked in
 # with -D absolute-path agree); each out.hl is moved to h.hl, x.hl and y.hl. x.hl must be byte-identical to
 # y.hl (else `nondeterministic`) and to h.hl (else `differs from Haxe; see tools/hl-compare.sh`), and hl must
 # print the same and exit the same running h.hl and x.hl in src/ (else `runs differently`).
@@ -75,6 +75,8 @@ run_hl() {
 run_case() {
 	local name="$1" extra="$2" source="$3" d="$4" module="$5" problem="" hcode=0 xcode=0 ycode=0 hout xout
 	local file="$d/src/${module//.//}.hx" src="$(native "$d/src")"
+	mkdir -p "$d/src"
+	cp -R "$root/tests/cases/hl-output/fixture/." "$d/src/"
 	mkdir -p "$(dirname "$file")"
 	printf '%s\n' "$source" > "$file"
 	set -f

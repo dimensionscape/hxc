@@ -383,7 +383,9 @@ class Typer {
 		var realCf = implC.statics.get(cf.name);
 		if (realCf != null) cf = realCf;
 		TypeFields.forceFieldBody(ctx.com, implC, cf);
-		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+		// calls.ml's make_static_call: the receiver is make_static_this, typed by the bare `{ Statics c }`
+		// anon, not the `Class<...>` type expression an access written in the source gets.
+		var implExpr = TexprTools.makeStaticThis(implC, p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
 		return Calls.makeCall(ctx, staticExpr, castArgs(ctx, cf, e, p), t, p);
 	}

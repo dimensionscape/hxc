@@ -19,6 +19,10 @@
 	"int64-maps": "== out.hl 60683 3d5f64c43cd083b8e57d77c252e33bbe",
 	"debug-assigns": "== out.hl 56955 f887166966d72b14b31103e24141a4fb",
 	"debug-paths": "== out.hl 56335 804314defa1c0ee82b596a16bee69c37",
+	"debug-classpath": "== out.hl 56629 6ec3e3c0d4b3f90b435bc8ee1f02db44",
 	"resources": "== out.hl 57346 46c12aad184f98d4d314fccb462ef2ac",
-	"absolute-path": "== out.hl 55628 ba4620026015ec67a46d2d3f598b1e31"
+	"absolute-path": "== out.hl 55628 ba4620026015ec67a46d2d3f598b1e31",
+	"generics-abstracts": "== out.hl 57740 b046777f48cce8780a9bd9b64425e0e6",
+	"string-buf-math": "== out.hl 58474 eafad4853eff1b01f22ce4fe814b3bcd",
+	"reflect-type": "== out.hl 61807 e4aeed0e4bfe8cd9fda155f2a221c56c"
 }
