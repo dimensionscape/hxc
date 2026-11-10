@@ -99,8 +99,10 @@ class Context {
 		if (hostCom != null) return hxc.typing.TypeFields.macroDisplayWindow ? hostCom.displaySpec : null;
 		return displaySpec;
 	}
-	// The macro com's error hook; the interpreter marks itself as having had an error.
-	public static var onMacroWorldError:Null<Void->Void> = null;
+	// The macro com's error hook; the interpreter marks itself as having had an error. It returns how to
+	// take the mark back when this error was the one that set it (null when it was already set), so a
+	// speculative typing that rolls its diagnostics back does not leave the interpreter marked.
+	public static var onMacroWorldError:Null<Void->Null<Void->Void>> = null;
 
 	public var mainClass:Null<Path>;
 	// The loaded Java libraries. The JVM generator copies every non-std, non-extern one next to the jar
@@ -731,20 +733,46 @@ class Context {
 			throw new hxc.core.TypingError(message, pos, depth);
 		// Forward macro-world diagnostics to the host. Mark interpreter errors so later macro calls are
 		// skipped for this compilation.
-		if (isMacro && (severity == null || severity == Error) && onMacroWorldError != null) onMacroWorldError();
-		if (forwardWarningsTo != null)
+		var undoMacroWorldError = isMacro && (severity == null || severity == Error) && onMacroWorldError != null ? onMacroWorldError() : null;
+		var forwardedAt:Null<Int> = null;
+		if (forwardWarningsTo != null) {
+			forwardedAt = forwardWarningsTo.diagnostics.length;
 			forwardWarningsTo.addDiagnostic(message, pos, depth, severity);
+		}
 		// Keep a local diagnostic copy for report-once checks even when forwarding it to the host.
 		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
 			Sys.println("[diag" + (isMacro ? ":macro" : "") + " #" + diagnostics.length + (forwardWarningsTo != null ? " fwd" : "") + "] " + message.split("
 ")[0]);
-		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
+		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity,
+			forwardedAt: forwardedAt, undoMacroWorldError: undoMacroWorldError});
 		// Errors outside a macro call's span gain a Called from macro here entry one level deeper.
 		// Relocated errors inside the call do not.
 		var span = relocateNullPosTo;
 		if (span != null && (severity == null || severity == Error) && pos != null
 				&& (pos.file != span.file || pos.max < span.min || pos.min > span.max))
 			diagnostics.push({message: "... Called from macro here", pos: span, depth: depth + 1, severity: Error});
+	}
+
+	// Take back every diagnostic recorded since `mark` (an earlier diagnostics.length), with what recording
+	// them did outside this list: the copies forwarded to the host context, and the macro interpreter's
+	// error mark. Trimming the list alone would leave a macro-world speculative typing's errors in the
+	// host's output.
+	public function rollbackDiagnostics(mark:Int):Void {
+		if (diagnostics.length <= mark) return;
+		var i = diagnostics.length;
+		while (i > mark) {
+			var undo = diagnostics[--i].undoMacroWorldError;
+			if (undo != null) undo();
+		}
+		if (forwardWarningsTo != null)
+			for (i in mark...diagnostics.length) {
+				var at = diagnostics[i].forwardedAt;
+				if (at != null) {
+					forwardWarningsTo.rollbackDiagnostics(at);
+					break;
+				}
+			}
+		diagnostics.resize(mark);
 	}
 
 	// Printed errors use ordinary diagnostic routing but are excluded from diagnostics-report
@@ -880,6 +908,10 @@ typedef CompilerDiagnostic = {
 	 * output.
 	 */
 	var ?printedOnly:Bool;
+	// The host's diagnostics length before this one was forwarded to it, and how to take back the macro
+	// interpreter error mark recording it set: what rollbackDiagnostics undoes besides the entry itself.
+	var ?forwardedAt:Int;
+	var ?undoMacroWorldError:Void->Void;
 };
 
 class ContextError {

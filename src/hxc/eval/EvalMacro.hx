@@ -2629,9 +2629,16 @@ class EvalMacro {
 	// again; the mark belongs to the compilation, so it is kept here and handed to each one.
 	static var interpHadError = false;
 
-	static function markInterpError():Void {
+	static function markInterpError():Null<Void->Void> {
+		if (interpHadError) return null;
 		interpHadError = true;
-		if (macroCtx != null) macroCtx.hadError = true;
+		var ctx = macroCtx;
+		var hadError = ctx != null && ctx.hadError;
+		if (ctx != null) ctx.hadError = true;
+		return function() {
+			interpHadError = false;
+			if (ctx != null) ctx.hadError = hadError;
+		};
 	}
 
 	static function initMacroContext(com:Context):Void {

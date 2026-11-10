@@ -604,9 +604,11 @@ class HlGenerate {
 		tGen();
 	}
 
+	public static inline var NO_OPTIMISER = "hl: the HashLink optimiser is not ported yet: compile with -D hl_no_opt";
+
 	static function generateCode(com:Context):Void {
 		if (!com.defines.rawDefined("hl_no_opt")) {
-			com.addDiagnostic("hl: the HashLink optimiser is not ported yet: compile with -D hl_no_opt", Position.nullPos);
+			com.addDiagnostic(NO_OPTIMISER, Position.nullPos);
 			return;
 		}
 		var dump = com.defines.rawDefined("dump");

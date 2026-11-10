@@ -76,3 +76,15 @@ enum E { C(a:Int); }
 class P {
 	static function main() { switch C(1) { case C(x, y, _): trace(x); } }
 }
+
+--- macro-world-capture-shares-its-name-with-a-field-of-the-payload-class
+class Node { public var e:Def; public function new(e:Def) this.e = e; }
+enum Def { Paren(e:Node); Leaf; }
+class P {
+	static function depth(n:Node):Int {
+		return switch n.e { case Paren(e): 1 + depth(e); case Leaf: 0; }
+	}
+	static macro function first() return macro $v{depth(new Node(Paren(new Node(Leaf))))};
+	static macro function second() return macro $v{depth(new Node(Leaf))};
+	static function main() { #if !macro trace(first()); trace(second()); #end }
+}
