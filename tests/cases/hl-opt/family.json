@@ -1,0 +1,8 @@
+{
+	"name": "hl-opt",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "--main", "$module", "--hl", "out.hl", "--macro", "HlDigest.after('out.hl')"]
+}

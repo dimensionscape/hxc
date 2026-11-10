@@ -11,6 +11,9 @@
 # first differing table entry, `functions: <same>/<total> identical` and the first differing function as two
 # columns. h/dump/hl/*.dump (the typed AST) is compared too: a difference there is a typer or filter bug,
 # not a generator one. Exit 1 when anything differs.
+# HL_OPT=1 compiles without -D hl_no_opt (the optimiser runs) and, after that comparison, prints the first
+# function block of dump/hlopt.txt that differs (blocks start at a line `<name>@<findex>`), or
+# `hlopt.txt identical`.
 # Environment: HXC (default bin/hxc-windows-x64.exe), HAXE (default haxe), HAXE_STD_PATH for hxc (default
 # C:/HaxeToolkit/haxe/std when that exists), HXC_ARGS: arguments for the second compile only, HL_MAIN: the
 # main class (default P; a case with `@ pack.Module` gives that module and keeps its file at pack/Module.hx).
@@ -36,7 +39,8 @@ collect() {
 	[ -f "$work/src/out.hl" ] && mv "$work/src/out.hl" "$work/$1/"
 	[ -d "$work/src/dump" ] && mv "$work/src/dump" "$work/$1/"
 }
-args=(-cp . --main "${HL_MAIN:-P}" --hl out.hl -D hl_no_opt -D dump "$@")
+args=(-cp . --main "${HL_MAIN:-P}" --hl out.hl -D dump "$@")
+[ -z "${HL_OPT:-}" ] && args+=(-D hl_no_opt)
 "$haxe" --cwd "$(native "$work/src")" "${args[@]}" > "$work/h.log" 2>&1 || { echo "Haxe failed:"; cat "$work/h.log"; exit 2; }
 collect h
 # shellcheck disable=SC2086 # HXC_ARGS is a list
@@ -44,3 +48,28 @@ collect h
 collect x
 cd "$root" || exit 2
 haxe -cp tools/hl --run HlCompare "$(native "$work/h")" "$(native "$work/x")"
+code=$?
+if [ -n "${HL_OPT:-}" ]; then
+	hf="$work/h/dump/hlopt.txt"; xf="$work/x/dump/hlopt.txt"
+	if [ ! -f "$hf" ] || [ ! -f "$xf" ]; then
+		echo "hlopt.txt missing (Haxe: $([ -f "$hf" ] && echo yes || echo no), hxc: $([ -f "$xf" ] && echo yes || echo no))"
+		code=1
+	elif cmp -s "$hf" "$xf"; then
+		echo "hlopt.txt identical"
+	else
+		# Split both into one file per block (a block starts at a line `<name>@<findex>`), then diff the
+		# first block that differs, or that only one dump has.
+		bd="$work/blocks"; rm -rf "$bd"; mkdir -p "$bd/h" "$bd/x"
+		for side in h x; do
+			BD="$bd/$side" awk '/^[^ 	]+@[0-9]+[ 	]*$/ { n++; f = sprintf("%s/%06d", ENVIRON["BD"], n) } f { print > f }' "$work/$side/dump/hlopt.txt"
+		done
+		first=""
+		for b in $(cd "$bd" && ls h x | grep -v : | sort -u); do
+			if ! cmp -s "$bd/h/$b" "$bd/x/$b" 2> /dev/null; then first="$b"; break; fi
+		done
+		echo "hlopt.txt differs; first differing block ($first):"
+		diff "$bd/h/$first" "$bd/x/$first" 2>&1 | head -60
+		code=1
+	fi
+fi
+exit $code
