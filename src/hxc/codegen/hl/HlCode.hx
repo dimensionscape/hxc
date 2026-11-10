@@ -248,7 +248,7 @@ class HlTypeTable {
 		}
 	}
 
-	static function key(t:HlType, depth:Int):String {
+	public static function key(t:HlType, depth:Int):String {
 		return switch t {
 			case HVoid: "v";
 			case HUI8: "1";
@@ -283,7 +283,7 @@ class HlTypeTable {
 
 	// Whether OCaml's compare finds a and b equal (when it ends): a pair of virtuals or unnamed enums is
 	// assumed equal while their fields are compared, which is where compare would meet the same pair again.
-	static function same(a:HlType, b:HlType, assumed:Array<Array<Dynamic>>):Bool {
+	public static function same(a:HlType, b:HlType, assumed:Array<Array<Dynamic>>):Bool {
 		return switch [a, b] {
 			case [HFun(a1, r1), HFun(a2, r2)] | [HMethod(a1, r1), HMethod(a2, r2)]:
 				if (a1.length != a2.length) return false;
@@ -360,5 +360,32 @@ class HlTypeTable {
 				for (f in e.efields) for (t in f.t) getType(t);
 			case _:
 		}
+	}
+}
+
+// Functions of hlcode.ml that need nothing but the code model.
+class HlCodeUtils {
+	// hlcode.ml: is_dynamic
+	public static function isDynamic(t:HlType):Bool {
+		return switch t {
+			case HDyn | HFun(_) | HObj(_) | HArray | HVirtual(_) | HDynObj | HNull(_) | HEnum(_): true;
+			case _: false;
+		}
+	}
+
+	// hlcode.ml: resolve_field. The field with index fid, counting from the root class's first field; null
+	// where OCaml raises Not_found.
+	public static function resolveField(p:HlClassProto, fid:Int):Null<HlField> {
+		var pl = [];
+		while (p != null) {
+			pl.unshift(p);
+			p = p.psuper;
+		}
+		for (p in pl) {
+			var d = fid - p.pfields.length;
+			if (d < 0) return p.pfields[fid];
+			fid = d;
+		}
+		return null;
 	}
 }

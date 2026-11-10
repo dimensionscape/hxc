@@ -604,16 +604,12 @@ class HlGenerate {
 		tGen();
 	}
 
-	public static inline var NO_OPTIMISER = "hl: the HashLink optimiser is not ported yet: compile with -D hl_no_opt";
-
 	static function generateCode(com:Context):Void {
-		if (!com.defines.rawDefined("hl_no_opt")) {
-			com.addDiagnostic(NO_OPTIMISER, Position.nullPos);
-			return;
-		}
 		var dump = com.defines.rawDefined("dump");
 		var ctx = createContext(com, false);
 		if (dump) {
+			// genhl.ml opens dump/hlopt.txt in create_context, and writes it as each function is optimised
+			ctx.dumpOut = new StringBuf();
 			hxc.core.PathKey.mkdirFromPath("dump/hlopt.txt");
 			sys.io.File.saveContent("dump/hlopt.txt", "");
 		}
@@ -621,6 +617,7 @@ class HlGenerate {
 		var code = buildCode(ctx, com.types, com.main);
 		ocamlArraySort(code.natives, (n1, n2) -> n1.lib - n2.lib);
 		if (dump) {
+			sys.io.File.saveContent("dump/hlopt.txt", ctx.dumpOut.toString());
 			var out = new StringBuf();
 			HlDump.dump(s -> {
 				out.add(s);
