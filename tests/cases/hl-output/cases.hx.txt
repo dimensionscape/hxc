@@ -1188,3 +1188,209 @@ class P {
 	}
 }
 ===
+
+# An inlined closure with early returns over T and Null<T> branches: the folded if takes the
+# branches' common type, so the result is cast and bound to a temp.
+--- inline-closure-branch-type + --debug
+class Ex {
+	public static inline function lock<T>(f:Void->T) {
+		return f();
+	}
+}
+
+class E {
+	public var file:String;
+
+	public function new(f) {
+		file = f;
+	}
+}
+
+class P {
+	var cache:Map<String, {r:E}> = new Map();
+
+	function new() {}
+
+	function open(path:String, check = true) {
+		var r = cache.get(path);
+		if (r != null)
+			return r.r;
+		return Ex.lock(function() {
+			var r = cache.get(path);
+			if (r != null)
+				return r.r;
+			var e = null;
+			var f = path + "x";
+			if (f == null)
+				return null;
+			if (check) {
+				e = new E(f);
+				if (e.file == null) e = null;
+			}
+			cache.set(path, {r: e});
+			return e;
+		});
+	}
+
+	static function main() {
+		var p = new P();
+		trace(p.open("a").file);
+		trace(p.open("a").file);
+	}
+}
+===
+
+# The if folded from an early return spans to the last statement folded into its else.
+--- inline-closure-early-return-pos + --debug
+class P {
+	static inline function pick(f:Int->Int->Int, a:Int, b:Int) {
+		return f(a, b) <= 0 ? a : b;
+	}
+
+	static function main() {
+		var x = Std.random(5), y = Std.random(5);
+		var r = pick(function(o1, o2) {
+			if (o1 != o2)
+				return o1 - o2;
+			var d = o1 * 2 - o2;
+			if (d != 0)
+				return d;
+			return o2 - o1;
+		}, x, y);
+		trace(r >= 0 || r < 0);
+	}
+}
+===
+
+# A function argument a closure captures stays a call through its local.
+--- inline-captured-function-arg + --debug
+class L {
+	public var items:Array<Int> = [1, 2, 3, 3, 4];
+
+	public function new() {}
+
+	public inline function filter(f:Int->Bool) {
+		var out = [];
+		for (i in items)
+			if (f(i)) out.push(i);
+		items = out;
+	}
+}
+
+class P {
+	var limit = 2;
+
+	function new() {}
+
+	inline function cull(l:L, f:Int->Bool) {
+		var prev = -1;
+		var prevResult = true;
+		l.filter(function(p) {
+			if (p != prev) {
+				prev = p;
+				prevResult = f(p);
+			}
+			return prevResult;
+		});
+	}
+
+	function run() {
+		var l = new L();
+		cull(l, function(c) return c > limit);
+		trace(l.items);
+	}
+
+	static function main() {
+		new P().run();
+	}
+}
+===
+
+# The temp of `a ?? b` sits at the left operand.
+--- null-coal-positions + --debug
+class P {
+	static var n = 0;
+
+	static function a():Null<String> {
+		return n++ % 2 == 0 ? null : "a";
+	}
+
+	static function f(c:Int):String {
+		return a() ?? switch (c) {
+			case 1: "one";
+			case 2: "two";
+			default:
+				"many";
+		};
+	}
+
+	static function g():String {
+		return a() ??
+			"b";
+	}
+
+	static function main() {
+		trace(f(1));
+		trace(g());
+		trace(f(3));
+		trace(g());
+	}
+}
+===
+
+# `c.p += x` on a Null<Float> property: the setter call has the setter's return type.
+--- property-op-assign + --debug
+class C {
+	public var left(get, set):Null<Float>;
+
+	var l:Null<Float> = 0;
+
+	public function new() {}
+
+	function get_left() {
+		return l;
+	}
+
+	function set_left(v:Null<Float>):Null<Float> {
+		l = v;
+		return v;
+	}
+}
+
+class P {
+	static function main() {
+		var c = new C();
+		var m = 1.5;
+		c.left += m;
+		c.left -= 0.25;
+		trace(c.left);
+	}
+}
+===
+
+# A nullable value passed for a non-null parameter is read as the parameter's type when the branches
+# are unified, so no cast is added.
+--- inline-nullable-arg-branch-type + --debug
+class P {
+	static function main() {
+		var defs = ["a" => 1, "army" => 2, "2" => 3];
+		var q = "q";
+		inline function str(f:String):Null<String> {
+			var v = defs.get(f);
+			return (v != null) ? Std.string(v) : null;
+		}
+		inline function resolve(field:String, name:String):String {
+			if (defs.exists(name))
+				return name;
+			if (name == q)
+				return q + name;
+			throw 'unknown $field $name';
+		}
+		var army = str("army");
+		if (army == null)
+			throw "none";
+		var id = resolve("army", army);
+		trace(id);
+	}
+}
+===

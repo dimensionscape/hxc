@@ -25,5 +25,11 @@
 	"generics-abstracts": "== out.hl 57740 b046777f48cce8780a9bd9b64425e0e6",
 	"string-buf-math": "== out.hl 58474 eafad4853eff1b01f22ce4fe814b3bcd",
 	"reflect-type": "== out.hl 61807 e4aeed0e4bfe8cd9fda155f2a221c56c",
-	"recursive-typedef": "== out.hl 56643 e0ec4676527084dc188a0945e64e8c02"
+	"recursive-typedef": "== out.hl 56643 e0ec4676527084dc188a0945e64e8c02",
+	"inline-closure-branch-type": "== out.hl 57713 e32a90b43c3e0dba53eafc391a810f55",
+	"inline-closure-early-return-pos": "== out.hl 56866 4afabfb4e7143e7b7a22b867013cc00a",
+	"inline-captured-function-arg": "== out.hl 57710 e6c0b0a996e561c79ee8618f9d174fb8",
+	"null-coal-positions": "== out.hl 56954 d2249d0c350d1523a622d1e91edd47cd",
+	"property-op-assign": "== out.hl 56755 a09a5150f68ad1bc10433b3142e90cf3",
+	"inline-nullable-arg-branch-type": "== out.hl 57499 860195963a979bbe7853f9e0ba45e53f"
 }

@@ -664,11 +664,14 @@ class Operators {
 				var tmpType = ctx.com.basic.tnull(tmin);
 				// The value-reference temp keeps its plain name (not a gen local), so it renders as tmp,
 				// not _gtmp.
-				var tmp = TypeFunctions.allocVar(VGenerated, "tmp", tmpType, p);
-				var tmpLocal = TexprTools.makeLocal(tmp, p);
-				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(tmpType, p)), ctx.com.basic.tbool, p);
+				// The temp, its reads, the null and the test sit at the left operand; only the if and the
+				// block span the whole `a ?? b`.
+				var p1 = te1.pos;
+				var tmp = TypeFunctions.allocVar(VGenerated, "tmp", tmpType, p1);
+				var tmpLocal = TexprTools.makeLocal(tmp, p1);
+				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(tmpType, p1)), ctx.com.basic.tbool, p1);
 				var iff = Typer.makeIfThenElse(ctx, check, tmpLocal, te2, WithTypeTools.withType(t), p);
-				var decl = TypeFunctions.mk(TVarExpr(tmp, te1), tvoid, p);
+				var decl = TypeFunctions.mk(TVarExpr(tmp, te1), tvoid, p1);
 				// The temp-binding block is wrapped in a :mergeBlock meta, so the analyzer merges it into
 				// the enclosing scope and declares an assigned-in-branches result var before the temp,
 				// rather than splicing the plain block and emitting the temp first.
@@ -1219,8 +1222,11 @@ class Operators {
 					FieldAccessTools.getFieldExpr(sfa, FCall);
 				case _: Typer.accGet(ctx, sAcc);
 			};
+			// The call has the setter's own return type, not the written value's: `c.p += x` on a
+			// Null<Float> property calls a setter that answers Null<Float>, though `c.p + x` is Float.
+			var setterRet = switch (TypeFunctions.follow(setterExpr.type)) { case TFun(s): s.ret; case _: value.type; };
 			return Calls.accessorCallResult(fa, Calls.makeCall(ctx, atFieldPos(setterExpr, fa.pos),
-				[Typer.castOrUnify(ctx, value.type, value, p)], value.type, p));
+				[Typer.castOrUnify(ctx, value.type, value, p)], setterRet, p));
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
 		var target = FieldAccessTools.getFieldExpr(faOn, FWrite);

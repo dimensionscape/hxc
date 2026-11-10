@@ -702,8 +702,10 @@ class Inline {
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
 				// A multiply-read function argument still inlines at its call sites (each a fresh tvar copy);
 				// non-call reads keep the bound local, which local-dce drops when every read was a call.
+				// One bound because it needs a temp or because a closure captures it does not: its
+				// calls stay calls through the local.
 				switch (param.expr) {
-					case TFunction(_) if (!use.writes): inlineIfCalled.set(nv.id, true);
+					case TFunction(_) if (!use.writes && !forceTemp && !(use.captured && !isConstantForCapture(param))): inlineIfCalled.set(nv.id, true);
 					case _:
 				}
 				// An optional argument with a non-null default falls back when the passed value is null
@@ -1175,8 +1177,10 @@ class Inline {
 			case TIf(cond, e1, null) if (hasTermReturn(e1)):
 				var s = stmts[i];
 				var rest = stmts.slice(i + 1);
-				var restBlock = TypeFunctions.mk(TBlock(rest), s.type, rest[rest.length - 1].pos);
-				TypeFunctions.mk(TIf(cond, e1, restBlock), s.type, s.pos);
+				// The else block sits at the if's own position and the if spans to the last statement
+				// folded in; with kept positions (a self-calling closure) both reach the output.
+				var restBlock = TypeFunctions.mk(TBlock(rest), s.type, s.pos);
+				TypeFunctions.mk(TIf(cond, e1, restBlock), s.type, Position.union(s.pos, rest[rest.length - 1].pos));
 			case _: null;
 		};
 	}
@@ -1195,11 +1199,28 @@ class Inline {
 				if (ftt.match(TDynamic(_)) || isInlineVoid(ftt)) return inlineFuncRetType;
 			}
 			if (!isInlineVoid(TypeFunctions.follow(e.type))) return e.type;
-			for (value in values) {
-				var t = mappedValueType(value);
-				if (t != ctx.com.basic.tvoid) return t;
+			// The common type is unify_min's, not the first branch's: `if (c) a else b` over a T and a
+			// Null<T> is Null<T>, which then differs from a T return and gets the result cast. unify_min
+			// sees each value as Haxe's inliner does, an argument read typed as its parameter; it looks
+			// for null through a block's last expression, parentheses and metadata, so those are
+			// retyped along the way too.
+			function asMapped(v:TExpr):TExpr {
+				var inner:Null<TExprExpr> = switch (v.expr) {
+					case TBlock(el) if (el.length > 0):
+						var last = asMapped(el[el.length - 1]);
+						last == el[el.length - 1] ? null : TBlock(el.slice(0, el.length - 1).concat([last]));
+					case TParenthesis(e1):
+						var m1 = asMapped(e1);
+						m1 == e1 ? null : TParenthesis(m1);
+					case TMeta(entry, e1):
+						var m1 = asMapped(e1);
+						m1 == e1 ? null : TMeta(entry, m1);
+					case _: null;
+				};
+				var t = mappedValueType(v);
+				return inner == null && t == v.type ? v : TypeFunctions.mk(inner == null ? v.expr : inner, t, v.pos);
 			}
-			return e.type;
+			return Typer.unifyMin(ctx, [for (value in values) asMapped(value)]);
 		}
 		switch (e.expr) {
 			case TReturn(eo):
