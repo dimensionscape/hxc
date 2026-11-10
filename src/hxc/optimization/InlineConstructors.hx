@@ -81,6 +81,9 @@ class InlineConstructors {
 }
 
 private class InlineConstructorsRun {
+	// HXC_DBG_IC, read once: the checks sit on every cancelled object and analysed expression.
+	static final dbgIc:Null<String> = Sys.getEnv("HXC_DBG_IC");
+
 	var ctx:TyperContext;
 	var inlineObjs:IntMap<InlineObject> = new IntMap();
 	var vars:IntMap<InlineVar> = new IntMap();
@@ -98,7 +101,7 @@ private class InlineConstructorsRun {
 
 	function cancelIo(io:InlineObject, p:Position):Void {
 		if (io.cancelled) return;
-		if (Sys.getEnv("HXC_DBG_IC") != null)
+		if (dbgIc != null)
 			Sys.println("[ic-cancel] io at " + io.pos.file + ":" + hxc.ast.Position.lineNumber(io.pos) + " from " + p.file + ":" + hxc.ast.Position.lineNumber(p));
 		io.cancelled = true;
 		for (iv in io.aliases) cancelIv(iv, p);
@@ -344,7 +347,7 @@ private class InlineConstructorsRun {
 								if (!captured2) cancelIv(fiv, efield.pos);
 								IOFInlineVar(fiv);
 							} else {
-								if (Sys.getEnv("HXC_DBG_IC") != null)
+								if (dbgIc != null)
 									Sys.println("[ic-reject] " + fname + " fiv=" + (fiv == null ? "null" : "found")
 										+ (fiv != null ? " strict=" + TypeUnification.typeIseqStrict(fiv.v.type, efield.type)
 										+ " closed=" + fiv.closed + " fivT=" + hxc.core.TPrinting.sTypeStr(fiv.v.type)
@@ -354,7 +357,7 @@ private class InlineConstructorsRun {
 							}
 					}
 				case iv if (iv != null):
-					if (Sys.getEnv("HXC_DBG_IC") != null) Sys.println("[ic-why] field-nonalias " + fname);
+					if (dbgIc != null) Sys.println("[ic-why] field-nonalias " + fname);
 					cancelIv(iv, efield.pos);
 					IOFNone;
 				case _:
@@ -503,7 +506,7 @@ private class InlineConstructorsRun {
 						}
 						iv;
 					case iv if (iv != null):
-						if (Sys.getEnv("HXC_DBG_IC") != null) Sys.println("[ic-why] reassign");
+						if (dbgIc != null) Sys.println("[ic-why] reassign");
 						cancelIv(iv, e.pos);
 						analyzeSub(false, rve);
 						null;
@@ -521,7 +524,7 @@ private class InlineConstructorsRun {
 				});
 			case TLocal(v) if (v.id < 0):
 				var iv = getIv(v.id);
-				if (iv.closed || !captured) { if (Sys.getEnv("HXC_DBG_IC") != null) Sys.println("[ic-why] local closed=" + iv.closed + " captured=" + captured); cancelIv(iv, e.pos); }
+				if (iv.closed || !captured) { if (dbgIc != null) Sys.println("[ic-why] local closed=" + iv.closed + " captured=" + captured); cancelIv(iv, e.pos); }
 				iv;
 			case TBlock(el):
 				var r:Null<InlineVar> = null;
@@ -760,7 +763,7 @@ private class InlineConstructorsRun {
 
 	public function run(originalE:TExpr):TExpr {
 		if (!checkForCtors(false, originalE)) return originalE;
-		if (Sys.getEnv("HXC_DBG_IC") == "2")
+		if (dbgIc == "2")
 			Sys.println("[ic-input] " + ctx.curfield.name + "\n" + hxc.core.TPrinting.sExprPretty(true, "", false, hxc.core.TPrinting.sTypeStr, originalE));
 		var e = markCtors(false, originalE);
 		analyze([], false, false, e);

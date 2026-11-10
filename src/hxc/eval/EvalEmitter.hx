@@ -1263,11 +1263,14 @@ class EvalEmitter {
 
 	// Force a class's field bodies in the WORLD it belongs to (a macro-world class's decl
 	// lives in the macro Context; the host skips macro bodies).
+	// HXC_DEBUG_INITS, read once: forceInWorld runs for every class a macro touches.
+	static final debugInits:Bool = Sys.getEnv("HXC_DEBUG_INITS") != null;
+
 	public static function forceInWorld(ctx:EvalContext, cls:TClass):Void {
 		var initCom = ctx.com;
 		var mw = hxc.eval.EvalMacro.macroWorld();
 		if (mw != null && mw.moduleLut.get(hxc.context.Context.pathKey(cls.module.path)) == cls.module) initCom = mw;
-		if (Sys.getEnv("HXC_DEBUG_INITS") != null) {
+		if (debugInits) {
 			var key = hxc.context.Context.pathKey(cls.path);
 			Sys.println("[force] " + cls.path.name
 				+ " world=" + (initCom == mw ? "macro" : "host")
@@ -1313,7 +1316,7 @@ class EvalEmitter {
 	public static function constructClass(ctx:EvalContext, c:TClass, key:Int, args:Array<EvalValue>, p:Position):EvalValue {
 		if (ctx.instancePrototypes.get(key) == null)
 			try registerLazyClass(ctx, c) catch (e:Dynamic) {
-				if (Sys.getEnv("HXC_DEBUG_INITS") != null) Sys.println("[lazy] register failed " + c.path.name + ": " + Std.string(e));
+				if (debugInits) Sys.println("[lazy] register failed " + c.path.name + ": " + Std.string(e));
 			}
 		var proto = EvalContext.getInstancePrototype(ctx, key, p);
 		var inst = new VInstance(proto.pinstanceFields.copy(), proto, INormal);

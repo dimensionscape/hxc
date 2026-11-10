@@ -335,9 +335,11 @@ class TypeFunctions {
 		return _nullAbstract;
 	}
 
+	static final traceDeps:Bool = Sys.getEnv("HXC_TRACE_DEPS") != null;
+
 	public static function addDependency(m:ModuleDef, mdep:ModuleDef, skipPostprocess:Bool = false):Void {
 		if (m != nullModule && m != mdep) {
-			if (Sys.getEnv("HXC_TRACE_DEPS") != null)
+			if (traceDeps)
 				Sys.println("[dep] " + m.path.pack.concat([m.path.name]).join(".") + " -> " + mdep.path.pack.concat([mdep.path.name]).join("."));
 			m.extra.deps.set(mdep.id, mdep);
 			// Adding a dependency clears the POST-PROCESSING mark and nothing else, so a module served back

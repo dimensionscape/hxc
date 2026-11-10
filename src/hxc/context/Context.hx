@@ -416,9 +416,11 @@ class Context {
 	public static var nextStoredTypedExprId:Int = 0;
 
 	// Increment before allocating a stored-expression ID. HXC_STE_DBG traces the allocation site.
+	static final steDbg:Bool = Sys.getEnv("HXC_STE_DBG") != null;
+
 	public static function allocStoredTypedExprId(tag:String):Int {
 		var id = ++nextStoredTypedExprId;
-		if (Sys.getEnv("HXC_STE_DBG") != null) Sys.stderr().writeString("[STE] " + id + " " + tag + "\n");
+		if (steDbg) Sys.stderr().writeString("[STE] " + id + " " + tag + "\n");
 		return id;
 	}
 

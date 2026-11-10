@@ -617,35 +617,48 @@ class TexprTools {
 	}
 
 	// Rebuild e with f applied to each direct sub-expression.
+	// A node none of whose children changed is returned as it is, not rebuilt: a pass over the whole tree
+	// (and there are dozens) otherwise allocates every node again to say nothing changed. Only the kinds
+	// that hold no array are kept this way, so a mapped node's arrays are always its own.
 	public static function mapExpr(f:TExpr->TExpr, e:TExpr):TExpr {
 		inline function mk2(ed:TExprExpr):TExpr return TypeFunctions.mk(ed, e.type, e.pos);
 		return switch (e.expr) {
 			case TConst(_) | TLocal(_) | TBreak | TContinue | TTypeExpr(_) | TIdent(_):
 				e;
 			case TArray(e1, e2):
-				var e1 = f(e1);
-				mk2(TArray(e1, f(e2)));
+				var n1 = f(e1);
+				var n2 = f(e2);
+				n1 == e1 && n2 == e2 ? e : mk2(TArray(n1, n2));
 			case TBinop(op, e1, e2):
-				var e1 = f(e1);
-				mk2(TBinop(op, e1, f(e2)));
+				var n1 = f(e1);
+				var n2 = f(e2);
+				n1 == e1 && n2 == e2 ? e : mk2(TBinop(op, n1, n2));
 			case TFor(v, e1, e2):
-				var e1 = f(e1);
-				mk2(TFor(v, e1, f(e2)));
+				var n1 = f(e1);
+				var n2 = f(e2);
+				n1 == e1 && n2 == e2 ? e : mk2(TFor(v, n1, n2));
 			case TWhile(e1, e2, flag):
-				var e1 = f(e1);
-				mk2(TWhile(e1, f(e2), flag));
+				var n1 = f(e1);
+				var n2 = f(e2);
+				n1 == e1 && n2 == e2 ? e : mk2(TWhile(n1, n2, flag));
 			case TThrow(e1):
-				mk2(TThrow(f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TThrow(n1));
 			case TEnumParameter(e1, ef, i):
-				mk2(TEnumParameter(f(e1), ef, i));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TEnumParameter(n1, ef, i));
 			case TEnumIndex(e1):
-				mk2(TEnumIndex(f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TEnumIndex(n1));
 			case TField(e1, v):
-				mk2(TField(f(e1), v));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TField(n1, v));
 			case TParenthesis(e1):
-				mk2(TParenthesis(f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TParenthesis(n1));
 			case TUnop(op, pre, e1):
-				mk2(TUnop(op, pre, f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TUnop(op, pre, n1));
 			case TArrayDecl(el):
 				mk2(TArrayDecl([for (x in el) f(x)]));
 			case TNew(t, pl, el):
@@ -658,13 +671,15 @@ class TexprTools {
 				var e1 = f(e1);
 				mk2(TCall(e1, [for (x in el) f(x)]));
 			case TVarExpr(v, eo):
-				mk2(TVarExpr(v, eo == null ? null : f(eo)));
+				var no = eo == null ? null : f(eo);
+				no == eo ? e : mk2(TVarExpr(v, no));
 			case TFunction(fu):
 				mk2(TFunction(new TFunc(fu.args, fu.type, f(fu.expr))));
 			case TIf(ec, e1, e2):
-				var ec = f(ec);
-				var e1 = f(e1);
-				mk2(TIf(ec, e1, e2 == null ? null : f(e2)));
+				var nc = f(ec);
+				var n1 = f(e1);
+				var n2 = e2 == null ? null : f(e2);
+				nc == ec && n1 == e1 && n2 == e2 ? e : mk2(TIf(nc, n1, n2));
 			case TSwitch(e1, cases, def):
 				var e1 = f(e1);
 				// The body maps before the values.
@@ -674,11 +689,14 @@ class TexprTools {
 				var e1 = f(e1);
 				mk2(TTry(e1, [for (c in catches) {v: c.v, expr: f(c.expr)}]));
 			case TReturn(eo):
-				mk2(TReturn(eo == null ? null : f(eo)));
+				var no = eo == null ? null : f(eo);
+				no == eo ? e : mk2(TReturn(no));
 			case TCast(e1, t):
-				mk2(TCast(f(e1), t));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TCast(n1, t));
 			case TMeta(m, e1):
-				mk2(TMeta(m, f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TMeta(m, n1));
 		};
 	}
 
