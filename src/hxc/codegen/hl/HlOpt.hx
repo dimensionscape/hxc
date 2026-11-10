@@ -240,7 +240,7 @@ class HlOpt {
 				}
 			}
 
-			// the OCaml list acc, head first
+			// the OCaml list acc, reversed (last element first)
 			var newAssigns:Array<HlOptAssign> = [];
 			for (a in assigns) {
 				var i = a.name;
@@ -286,9 +286,12 @@ class HlOpt {
 						q--;
 					}
 				}
-				newAssigns = loop(a.reg).concat(newAssigns);
+				// OCaml builds `loop p @ acc` and then reverses it; pushing each `loop p` reversed gives the
+				// same order without rebuilding the array on every assign
+				var l = loop(a.reg);
+				var k = l.length;
+				while (k > 0) newAssigns.push(l[--k]);
 			}
-			newAssigns.reverse();
 			// List.sort is a stable merge sort
 			haxe.ds.ArraySort.sort(newAssigns, (a1, a2) -> a1.reg - a2.reg);
 			assigns = newAssigns;

@@ -34,5 +34,8 @@
 	"opt-unreachable": "== out.hl 40252 c55e6c5e53f2a36472e6bb1b015fd735",
 	"opt-closure-dyn": "== out.hl 39702 4f0cb899a8d78723afff823f0a5e6a6b",
 	"opt-assigns": "== out.hl 39755 62b7d1cbef0cd11d098338357d9e0d91",
-	"opt-ref-struct": "== out.hl 39763 cf745734cce94a49dac667712a1bb0f5"
+	"opt-ref-struct": "== out.hl 39763 cf745734cce94a49dac667712a1bb0f5",
+	"opt-long-function": "== out.hl 103639 31edce9b8c5b0027aaace56a97059862",
+	"opt-assigns-debug": "== out.hl 39755 2b36edb4c4bd95dcbef6591792ef99a8",
+	"opt-dump": "== out.hl 40292 83f816e737b6914a1c0d70061be32e32"
 }
