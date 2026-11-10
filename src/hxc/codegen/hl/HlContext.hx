@@ -96,8 +96,14 @@ class HlContext {
 	public var isMacro:Bool;
 	public var cachedTypes:Map<String, HlType> = new Map();
 	public var m:HlMethodContext;
-	// keyed by the anon's identity (OCaml compares tanon structurally, which for a cached anon is the same)
-	public var anonsCache:ObjectMap<TAnon, HlType> = new ObjectMap();
+	// A PMap under OCaml's polymorphic compare in genhl.ml, so an anon finds any structurally equal one, not
+	// only itself: every apply_typedef makes a fresh anon, and a recursive generic typedef (Node<T> with a
+	// field of type Node<T>) is only stopped by its second instance finding the first. Keyed by
+	// HlTypes.anonKey, which encodes what that compare looks at.
+	public var anonsCache:Map<String, HlType> = new Map();
+	// anonKey's numbering of the declarations, monos and lazies it keys by identity
+	public var anonKeyIds:ObjectMap<{}, Int> = new ObjectMap();
+	public var anonKeyNext = 0;
 	public var methodWrappers:Map<String, Int> = new Map();
 	// a list in OCaml (head first); here the head is the last element
 	public var recCache:Array<{t:T, r:{v:Null<HlType>}}> = [];

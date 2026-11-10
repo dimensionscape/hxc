@@ -5,9 +5,12 @@
 # written at that module's path, next to the family's fixture files, and given to --main), `===` and nothing
 # after it (the expected result is Haxe's own). Each case is compiled with the family's arguments
 # (family.json, less the digest macro) in one directory, src/, by Haxe and then by hxc twice (one directory, so that paths baked in
-# with -D absolute-path agree); each out.hl is moved to h.hl, x.hl and y.hl. x.hl must be byte-identical to
-# y.hl (else `nondeterministic`) and to h.hl (else `differs from Haxe; see tools/hl-compare.sh`), and hl must
-# print the same and exit the same running h.hl and x.hl in src/ (else `runs differently`).
+# with -D absolute-path agree); each out.hl is moved to h.hl, x.hl and y.hl. hxc must exit 0 both times,
+# within 300 seconds (else `hxc failed`), and x.hl must be byte-identical to y.hl (else `nondeterministic`)
+# and to h.hl (else `differs from Haxe; see tools/hl-compare.sh`). Then, only as a smoke check, hl runs
+# h.hl and x.hl in src/: Haxe's build must exit 0 (else the case itself is broken), and both must print the
+# same and exit the same (else `runs differently`). With the bytes already identical, that last check can
+# only catch a crash or a program that does not run deterministically.
 # --case runs the cases whose names match it, a shell pattern like `trace-*`. Cases run -j at a time
 # (default $HXC_TEST_JOBS, or 4) and report in case order. Case directories go under $HXC_TEST_TMP, by
 # default tests/hl/tmp (gitignored), and are kept for a failed case.
@@ -63,10 +66,12 @@ native() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 # The family's arguments without the digest macro: HlDigest is only for the conformance harness.
 cargs=(-cp . --hl out.hl -D hl_no_opt)
 
-# Runs hl on $2 in directory $1 for at most 60 seconds; sets $ran to its output and `[exit N]`.
+# Runs hl on $2 in directory $1 for at most 60 seconds; sets $ran to its output and `[exit N]`, and
+# $rancode to N.
 run_hl() {
 	local code=0
 	ran="$(cd "$1" && exec timeout -k 5 60 "$hl" "$2" 2>&1)" || code=$?
+	rancode=$code
 	ran="$ran"$'\n'"[exit $code]"
 	ran="${ran//$'\r'/}"
 }
@@ -82,17 +87,17 @@ run_case() {
 	set -f
 	hout="$("$haxe" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || hcode=$?
 	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/h.hl"
-	xout="$("$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || xcode=$?
+	xout="$(timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || xcode=$?
 	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/x.hl"
-	"$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra > /dev/null 2>&1 || ycode=$?
+	timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra > /dev/null 2>&1 || ycode=$?
 	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/y.hl"
 	set +f
 	if [ $hcode != 0 ] || [ ! -f "$d/h.hl" ]; then
 		problem="Haxe could not compile the case (exit $hcode): $hout"
-	elif [ ! -f "$d/x.hl" ]; then
-		problem="x.hl missing (hxc exit $xcode)${xout:+: $xout}"
-	elif [ ! -f "$d/y.hl" ]; then
-		problem="y.hl missing (hxc exit $ycode on the second compile)"
+	elif [ $xcode != 0 ] || [ ! -f "$d/x.hl" ]; then
+		problem="hxc failed (exit $xcode$([ -f "$d/x.hl" ] || echo ', no x.hl'))${xout:+: $xout}"
+	elif [ $ycode != 0 ] || [ ! -f "$d/y.hl" ]; then
+		problem="hxc failed on the second compile (exit $ycode$([ -f "$d/y.hl" ] || echo ', no y.hl'))"
 	elif ! cmp -s "$d/x.hl" "$d/y.hl"; then
 		problem="nondeterministic: x.hl differs from y.hl"
 	elif ! cmp -s "$d/x.hl" "$d/h.hl"; then
@@ -100,8 +105,11 @@ run_case() {
 	else
 		run_hl "$d/src" ../h.hl
 		hout="$ran"
+		hrun=$rancode
 		run_hl "$d/src" ../x.hl
-		if [ "$ran" != "$hout" ]; then
+		if [ $hrun != 0 ]; then
+			problem="Haxe's build did not run on hl (exit $hrun): $hout"
+		elif [ "$ran" != "$hout" ]; then
 			problem="runs differently: Haxe's build printed '$hout', hxc's '$ran'"
 		fi
 	fi

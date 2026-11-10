@@ -217,16 +217,21 @@ typedef HlCodeData = {
 }
 
 // The type table gather_types builds: every type once, in first-visit order, and the index of each. The
-// OCaml table compares types with polymorphic compare: equal for the same physical value, otherwise field
-// by field. So an object or enum is its (pname, pid) / (ename, eid), a virtual is its fields compared
-// element by element (two separately built equal virtuals share one index), and everything else is
-// structural. The key string below encodes exactly that.
+// OCaml table is a PMap under polymorphic compare: equal for the same physical value, otherwise field by field.
+// So an object or enum is its (pname, pid) / (ename, eid), and everything else is structural. A virtual can
+// reach itself (a recursive typedef), and there compare stops only at physically equal values: when it ends
+// with 0 the two types unfold to the same infinite tree, so two separately built virtuals with the same
+// unfolding share one index even when their cycles are shaped differently (a virtual whose `next` is
+// another copy of itself equals that copy). The key below is that unfolding cut at a fixed depth, and
+// `same` settles the types under one key by comparing them coinductively.
 class HlTypeTable {
 	public var types(default, null):Array<HlType> = [];
 
-	var index = new Map<String, Int>();
-	var virtualStack:Array<HlVirtualProto> = [];
-	var enumStack:Array<HlEnumProto> = [];
+	// key -> indices of the types under it
+	var index = new Map<String, Array<Int>>();
+
+	// how many virtuals (or unnamed enums) deep the key looks before cutting
+	static inline var KEY_DEPTH = 3;
 
 	// hlcode.ml: gather_types
 	public function new(code:HlCodeData) {
@@ -243,7 +248,7 @@ class HlTypeTable {
 		}
 	}
 
-	function key(t:HlType):String {
+	static function key(t:HlType, depth:Int):String {
 		return switch t {
 			case HVoid: "v";
 			case HUI8: "1";
@@ -255,40 +260,78 @@ class HlTypeTable {
 			case HBool: "b";
 			case HBytes: "B";
 			case HDyn: "d";
-			case HFun(args, ret): "F(" + [for (a in args) key(a)].join(",") + ")" + key(ret);
-			case HMethod(args, ret): "M(" + [for (a in args) key(a)].join(",") + ")" + key(ret);
+			case HFun(args, ret): "F(" + [for (a in args) key(a, depth)].join(",") + ")" + key(ret, depth);
+			case HMethod(args, ret): "M(" + [for (a in args) key(a, depth)].join(",") + ")" + key(ret, depth);
 			case HObj(p): "O" + p.pid + ":" + p.pname;
 			case HStruct(p): "S" + p.pid + ":" + p.pname;
 			case HArray: "a";
 			case HType: "t";
-			case HRef(t): "R" + key(t);
-			case HVirtual(v):
-				// a virtual reaching itself is the same value, as with physical equality in OCaml
-				var depth = virtualStack.indexOf(v);
-				if (depth >= 0) return "V@" + depth;
-				virtualStack.push(v);
-				var k = "V(" + [for (f in v.vfields) f.name + ":" + f.nameIndex + ":" + key(f.t)].join(",") + ")";
-				virtualStack.pop();
-				k;
+			case HRef(t): "R" + key(t, depth);
+			case HVirtual(_) if (depth >= KEY_DEPTH): "V~";
+			case HVirtual(v): "V(" + [for (f in v.vfields) f.name + ":" + f.nameIndex + ":" + key(f.t, depth + 1)].join(",") + ")";
 			case HDynObj: "o";
 			case HAbstract(name, i): "A" + i + ":" + name;
 			case HEnum(e) if (e.eid != 0): "E" + e.eid + ":" + e.ename;
+			// eid 0 is not unique (the unnamed enums closures use), so the rest is compared too
+			case HEnum(_) if (depth >= KEY_DEPTH): "E~";
 			case HEnum(e):
-				// eid 0 is not unique (the unnamed enums closures use), so compare the rest too
-				var depth = enumStack.indexOf(e);
-				if (depth >= 0) return "E@" + depth;
-				enumStack.push(e);
-				var k = "E0(" + e.eglobal + ":" + [for (f in e.efields) f.name + ":" + f.nameIndex + ":" + [for (t in f.t) key(t)].join("+")].join(",") + ")";
-				enumStack.pop();
-				k;
-			case HNull(t): "N" + key(t);
-			case HPacked(t): "P" + key(t);
+				"E0(" + e.eglobal + ":" + [for (f in e.efields) f.name + ":" + f.nameIndex + ":" + [for (t in f.t) key(t, depth + 1)].join("+")].join(",") + ")";
+			case HNull(t): "N" + key(t, depth);
+			case HPacked(t): "P" + key(t, depth);
 		}
+	}
+
+	// Whether OCaml's compare finds a and b equal (when it ends): a pair of virtuals or unnamed enums is
+	// assumed equal while their fields are compared, which is where compare would meet the same pair again.
+	static function same(a:HlType, b:HlType, assumed:Array<Array<Dynamic>>):Bool {
+		return switch [a, b] {
+			case [HFun(a1, r1), HFun(a2, r2)] | [HMethod(a1, r1), HMethod(a2, r2)]:
+				if (a1.length != a2.length) return false;
+				for (i in 0...a1.length) if (!same(a1[i], a2[i], assumed)) return false;
+				same(r1, r2, assumed);
+			case [HObj(p1), HObj(p2)] | [HStruct(p1), HStruct(p2)]:
+				p1.pid == p2.pid && p1.pname == p2.pname;
+			case [HRef(t1), HRef(t2)] | [HNull(t1), HNull(t2)] | [HPacked(t1), HPacked(t2)]:
+				same(t1, t2, assumed);
+			case [HVirtual(v1), HVirtual(v2)]:
+				if (v1 == v2) return true;
+				for (p in assumed) if (p[0] == v1 && p[1] == v2) return true;
+				if (v1.vfields.length != v2.vfields.length) return false;
+				assumed.push([v1, v2]);
+				for (i in 0...v1.vfields.length) {
+					var f1 = v1.vfields[i], f2 = v2.vfields[i];
+					if (f1.name != f2.name || f1.nameIndex != f2.nameIndex || !same(f1.t, f2.t, assumed)) return false;
+				}
+				true;
+			case [HAbstract(n1, i1), HAbstract(n2, i2)]:
+				n1 == n2 && i1 == i2;
+			case [HEnum(e1), HEnum(e2)]:
+				if (e1 == e2) return true;
+				if (e1.eid != 0 || e2.eid != 0) return e1.eid == e2.eid && e1.ename == e2.ename;
+				for (p in assumed) if (p[0] == e1 && p[1] == e2) return true;
+				if (e1.ename != e2.ename || e1.eglobal != e2.eglobal || e1.efields.length != e2.efields.length) return false;
+				assumed.push([e1, e2]);
+				for (i in 0...e1.efields.length) {
+					var f1 = e1.efields[i], f2 = e2.efields[i];
+					if (f1.name != f2.name || f1.nameIndex != f2.nameIndex || f1.t.length != f2.t.length) return false;
+					for (j in 0...f1.t.length) if (!same(f1.t[j], f2.t[j], assumed)) return false;
+				}
+				true;
+			case _:
+				// the constructors without arguments
+				a.getIndex() == b.getIndex() && a.getParameters().length == 0;
+		}
+	}
+
+	function find(t:HlType, k:String):Null<Int> {
+		var bucket = index.get(k);
+		if (bucket != null) for (i in bucket) if (same(types[i], t, [])) return i;
+		return null;
 	}
 
 	// The index of a type the table gathered, or null.
 	public function indexOf(t:HlType):Null<Int> {
-		return index.get(key(t));
+		return find(t, key(t, 0));
 	}
 
 	function getType(t:HlType):Void {
@@ -297,9 +340,11 @@ class HlTypeTable {
 			case HStruct({psuper: p}) if (p != null): getType(HStruct(p));
 			case _:
 		}
-		var k = key(t);
-		if (index.exists(k)) return;
-		index.set(k, types.length);
+		var k = key(t, 0);
+		if (find(t, k) != null) return;
+		var bucket = index.get(k);
+		if (bucket == null) index.set(k, bucket = []);
+		bucket.push(types.length);
 		types.push(t);
 		switch t {
 			case HFun(args, ret) | HMethod(args, ret):

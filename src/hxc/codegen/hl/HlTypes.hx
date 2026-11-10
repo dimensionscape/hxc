@@ -395,6 +395,134 @@ class HlTypes {
 		return r;
 	}
 
+	// The anons_cache key: equal strings for two anons exactly when OCaml's compare finds them equal (when it
+	// terminates). Records compare field by field and short-circuit on physically equal values, so:
+	// - a class field is its name, type, positions, doc, meta (each entry's name, argument count and position),
+	//   kind, params and flags, with its exprs and overloads by identity (an apply_params copy keeps all but
+	//   the type; anons from different declarations differ in their positions);
+	// - a class, enum, typedef or abstract is its identity: the same declaration is the same value, and two
+	//   different ones differ by path, or by position for type parameters of the same path;
+	// - a monomorph is its contents, as a ref is: bound ones by their type, unbound ones without constraints
+	//   all alike (constraints, rare here, are keyed by identity); a lazy type once forced by its type;
+	// - everything else is structural. An anon reaching itself (OCaml's compare would not end) is a back
+	//   reference.
+	public static function anonKey(ctx:HlContext, a:TAnon):String {
+		var anons:Array<TAnon> = [];
+		var monos:Array<TMono> = [];
+		function id(o:{}):Int {
+			var i = ctx.anonKeyIds.get(o);
+			if (i == null) {
+				i = ctx.anonKeyNext++;
+				ctx.anonKeyIds.set(o, i);
+			}
+			return i;
+		}
+		function pos(p:Position):String {
+			return p == null ? "-" : p.min + ":" + p.max + ":" + p.file.length + ":" + p.file;
+		}
+		function str(s:Null<String>):String {
+			return s == null ? "-" : s.length + ":" + s;
+		}
+		var typeKey:T->String = null;
+		function params(tl:TParams):String {
+			return "<" + [for (t in tl) typeKey(t)].join(",") + ">";
+		}
+		function access(v:VarAccess):String {
+			return switch v {
+				case AccNormal: "n";
+				case AccNo: "o";
+				case AccNever: "v";
+				case AccCtor: "c";
+				case AccCall: "l";
+				case AccInline: "i";
+				case AccRequire(s, msg): "r" + str(s) + str(msg);
+			}
+		}
+		function field(cf:TClassField):String {
+			var b = new StringBuf();
+			b.add(str(cf.name));
+			b.add("(");
+			b.add(typeKey(cf.type));
+			b.add(")");
+			b.add(pos(cf.pos));
+			b.add("|");
+			b.add(pos(cf.namePos));
+			b.add("|");
+			if (cf.doc == null) b.add("-") else {
+				b.add(str(cf.doc.own));
+				for (d in cf.doc.inherited) b.add(str(d));
+			}
+			b.add("|");
+			for (m in cf.meta) b.add(str(m.name) + m.params.length + "@" + pos(m.pos) + ";");
+			b.add("|");
+			b.add(switch cf.kind {
+				case Var(k): "V" + access(k.read) + access(k.write);
+				case Method(k): "M" + k.getIndex();
+			});
+			b.add("|");
+			for (p in cf.params) b.add(str(p.name) + typeKey(p.type) + ";");
+			b.add("|");
+			b.add(cf.expr == null ? "-" : "#" + id(cf.expr));
+			b.add(cf.exprUnoptimized == null ? "-" : "#" + id(cf.exprUnoptimized));
+			b.add(cf.overloads.length == 0 ? "-" : "#" + id(cf.overloads));
+			b.add("|");
+			b.add(cf.flags);
+			return b.toString();
+		}
+		function anon(a:TAnon):String {
+			var depth = anons.indexOf(a);
+			if (depth >= 0) return "A@" + depth;
+			anons.push(a);
+			var b = new StringBuf();
+			b.add("A{");
+			for (n in hxc.core.PMapOrder.sortedKeys(a.fields)) {
+				b.add(field(a.fields.get(n)));
+				b.add(",");
+			}
+			b.add("}");
+			b.add(switch a.status.get() {
+				case Closed: "c";
+				case Const: "k";
+				case Extend(tl): "x" + params(tl);
+				case Statics(c): "s" + id(c);
+				case EnumStatics(e): "e" + id(e);
+				case AbstractStatics(a): "a" + id(a);
+			});
+			anons.pop();
+			return b.toString();
+		}
+		typeKey = function(t:T):String {
+			return switch t {
+				case TMono(r):
+					var c = r.downConstraints.length == 0 && r.upConstraints.length == 0 ? "" : "#" + id(r);
+					if (r.type == null) "_" + c else {
+						var depth = monos.indexOf(r);
+						if (depth >= 0) "M@" + depth else {
+							monos.push(r);
+							var k = "M(" + typeKey(r.type) + ")" + c;
+							monos.pop();
+							k;
+						}
+					}
+				case TEnum(e, tl): "E" + id(e) + params(tl);
+				case TInst(c, tl): "I" + id(c) + params(tl);
+				case TType(d, tl): "T" + id(d) + params(tl);
+				case TAbstract(a, tl): "B" + id(a) + params(tl);
+				case TFun(sig):
+					"F(" + [for (arg in sig.args) str(arg.name) + (arg.opt ? "?" : "") + typeKey(arg.t)].join(",") + ")" + typeKey(sig.ret);
+				case TAnon(a): anon(a);
+				case TDynamic(null): "D";
+				case TDynamic(t): "D(" + typeKey(t) + ")";
+				case TLazy(f):
+					switch f.get() {
+						case LAvailable(t): "L(" + typeKey(t) + ")";
+						case _: "L#" + id(f);
+					}
+			}
+		}
+		return anon(a);
+	}
+
 	// genhl.ml: to_type
 	public static function toType(ctx:HlContext, t:T, ?tref:{v:Null<HlType>}):HlType {
 		switch t {
@@ -425,12 +553,13 @@ class HlTypes {
 					case _:
 				}
 				if (!a.fields.keys().hasNext()) return HDyn;
-				var cached = ctx.anonsCache.get(a);
+				var key = anonKey(ctx, a);
+				var cached = ctx.anonsCache.get(key);
 				if (cached != null) return cached;
 				var vp:HlVirtualProto = {vfields: [], vindex: new Map()};
 				var t = HVirtual(vp);
 				if (tref != null) tref.v = t;
-				ctx.anonsCache.set(a, t);
+				ctx.anonsCache.set(key, t);
 				// PMap.fold visits the names in increasing order; the list is then sorted by name
 				var fields = [for (n in hxc.core.PMapOrder.sortedKeys(a.fields)) cfieldType(ctx, a.fields.get(n))];
 				vp.vfields = fields;

@@ -1150,3 +1150,41 @@ class P {
 	}
 }
 ===
+
+# A recursive generic typedef: each apply_typedef makes a fresh anon, and the second visit of Node<Int> finds
+# the first in genhl's anons_cache only because OCaml compares the anons structurally. Pair swaps its
+# parameters, so the hit is two applications away; Tree recurses through Array<>. No second instance of Node:
+# Haxe 4.3.7 itself runs out of memory comparing Node<Int>'s virtual with Node<String>'s (the recursive field
+# `next` sorts before `value`, so OCaml's compare recurses through `next` without end).
+--- recursive-typedef
+typedef Node<T> = {value:T, ?next:Node<T>}
+typedef Pair<A, B> = {a:A, b:Null<Pair<B, A>>}
+typedef Tree<T> = {label:T, children:Array<Tree<T>>}
+
+class P {
+	static function sum(n:Node<Int>):Int {
+		var s = 0;
+		while (n != null) {
+			s += n.value;
+			n = n.next;
+		}
+		return s;
+	}
+
+	static function count<T>(t:Tree<T>):Int {
+		var c = 1;
+		for (x in t.children) c += count(x);
+		return c;
+	}
+
+	static function main() {
+		var n:Node<Int> = {value: 1, next: {value: 2}};
+		Sys.println(n.next.value);
+		Sys.println(sum({value: 3, next: n}));
+		var p:Pair<Int, String> = {a: 1, b: {a: "x", b: {a: 2, b: null}}};
+		Sys.println(p.b.a + p.b.b.a);
+		var t:Tree<String> = {label: "root", children: [{label: "leaf", children: []}, {label: "leaf2", children: []}]};
+		Sys.println(t.children[1].label + " " + count(t));
+	}
+}
+===

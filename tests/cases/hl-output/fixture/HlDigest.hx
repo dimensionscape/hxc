@@ -5,14 +5,19 @@ import haxe.macro.Context;
 class HlDigest {
 	// Prints "== <path> <length> <md5>" once the .hl is written: the length and MD5 of its bytes with the
 	// case directory replaced by $CASE and the std directory by $STD in the strings table and the
-	// debug-files table (each spelled with / or \). Those tables are length-prefixed, so they are decoded,
-	// substituted entry by entry and written again with their lengths recomputed; every other byte is kept.
-	// The result is only hashed, never written. The std root is HAXE_STD_PATH, or the class path entry that
-	// ends in hl/_std with that removed; entries under it (std/hl/_std/) stay distinct as $STD/hl/_std/.
+	// debug-files table. Those tables are length-prefixed, so they are decoded, substituted entry by entry and
+	// written again with their lengths recomputed; every other byte is kept. The result is only hashed, never
+	// written. The std root is HAXE_STD_PATH, or else the class path entry that ends in hl/_std with that
+	// removed; entries under it (std/hl/_std/) stay distinct as $STD/hl/_std/.
+	// Each table is substituted only in the spellings Haxe 4.3.7 writes there, so that a compiler spelling a
+	// root with the other separator still digests differently: the case directory only ever appears as
+	// Path.get_full_path gives it (-D absolute-path), in the native spelling (\ on Windows); the std root
+	// appears in the debug files as given (Haxe prefixes the class path verbatim), and in the strings both as
+	// given and natively (a -D absolute-path PosInfos file name).
 	public static function after(path:String):Void {
 		Context.onAfterGenerate(function() {
 			var subs = substitutions();
-			var out = normalise(sys.io.File.getBytes(path), subs);
+			var out = normalise(sys.io.File.getBytes(path), subs.strings, subs.files);
 			Sys.println("== " + path + " " + out.length + " " + haxe.crypto.Md5.make(out).toHex());
 		});
 	}
@@ -22,29 +27,38 @@ class HlDigest {
 		return d;
 	}
 
-	// [from, to] pairs, longest first, each directory in its / and \ spellings.
-	static function substitutions():Array<Array<String>> {
-		var roots:Array<Array<String>> = [[Sys.getCwd(), "$CASE"]];
+	static function native(d:String):String {
+		return Sys.systemName() == "Windows" ? StringTools.replace(d, "/", "\\") : d;
+	}
+
+	// [from, to] pairs for each table, longest first.
+	static function substitutions():{strings:Array<Array<String>>, files:Array<Array<String>>} {
 		var std = Sys.getEnv("HAXE_STD_PATH");
-		if (std != null && std != "") roots.push([std, "$STD"]);
-		for (cp in Context.getClassPath()) {
-			var c = StringTools.replace(trimEnd(cp), "\\", "/");
-			if (StringTools.endsWith(c, "/hl/_std")) roots.push([c.substr(0, c.length - "/hl/_std".length), "$STD"]);
-		}
-		var all:Array<Array<String>> = [];
-		for (r in roots) {
-			var d = trimEnd(r[0]);
-			if (d.length == 0) continue;
-			var f = StringTools.replace(d, "\\", "/");
-			var b = StringTools.replace(d, "/", "\\");
-			for (s in [d, f, b]) {
-				var dup = false;
-				for (x in all) if (x[0] == s) dup = true;
-				if (!dup) all.push([s, r[1]]);
+		if (std == null || std == "") {
+			std = "";
+			for (cp in Context.getClassPath()) {
+				var c = trimEnd(cp);
+				var f = StringTools.replace(c, "\\", "/");
+				if (StringTools.endsWith(f, "/hl/_std")) std = c.substr(0, c.length - "/hl/_std".length);
 			}
 		}
-		all.sort((a, b) -> b[0].length - a[0].length);
-		return all;
+		std = trimEnd(std);
+		var cwd = native(trimEnd(Sys.getCwd()));
+		function list(pairs:Array<Array<String>>):Array<Array<String>> {
+			var all:Array<Array<String>> = [];
+			for (p in pairs) {
+				if (p[0].length == 0) continue;
+				var dup = false;
+				for (x in all) if (x[0] == p[0]) dup = true;
+				if (!dup) all.push(p);
+			}
+			all.sort((a, b) -> b[0].length - a[0].length);
+			return all;
+		}
+		return {
+			strings: list([[cwd, "$CASE"], [std, "$STD"], [native(std), "$STD"]]),
+			files: list([[cwd, "$CASE"], [std, "$STD"]])
+		};
 	}
 
 	static function sub(s:String, subs:Array<Array<String>>):String {
@@ -105,7 +119,7 @@ class HlDigest {
 		return p;
 	}
 
-	static function normalise(b:Bytes, subs:Array<Array<String>>):Bytes {
+	static function normalise(b:Bytes, stringSubs:Array<Array<String>>, fileSubs:Array<Array<String>>):Bytes {
 		var out = new BytesBuffer();
 		var pos = 3; // HLB
 		var version = b.get(pos++);
@@ -123,7 +137,7 @@ class HlDigest {
 		var nbytes = version >= 5 ? counts[3] : 0;
 		pos += nints * 4 + nfloats * 8;
 		out.addBytes(b, 0, pos);
-		pos = strings(b, pos, nstrings, subs, out);
+		pos = strings(b, pos, nstrings, stringSubs, out);
 		var start = pos;
 		if (version >= 5) {
 			var total = b.getInt32(pos);
@@ -134,7 +148,7 @@ class HlDigest {
 			r = readIndex(b, pos);
 			var nfiles = r.v;
 			out.addBytes(b, start, r.pos - start);
-			pos = strings(b, r.pos, nfiles, subs, out);
+			pos = strings(b, r.pos, nfiles, fileSubs, out);
 		} else {
 			out.addBytes(b, start, pos - start);
 		}
