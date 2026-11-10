@@ -36,8 +36,9 @@ folder, never into the repo.
 
 - **Byte-identical output.** Output must be byte-identical to Haxe 4.3.7's for the same source and
   command line. A difference is a bug until it is fixed, or listed with a reason.
-- **Branch.** Work on branch `hl-opt` from `c5f9545e` (`kha-port` with Plan 1 merged). Commits stay
-  local; the user pushes.
+- **Branch.** Work on branch `hl-opt` from `hl-heaps-fixes` (`59a72b2d`: `kha-port` with Plan 1
+  merged, plus the early `hl_no_opt` check), in the worktree `D:/_github/hxc/.claude/worktrees/hl-opt`.
+  Never work in `D:/_github/hxc` itself; other sessions use it. Commits stay local; the user pushes.
 - **Public repo.** No private app names in anything committed: file contents, file names, case names
   or commit messages. The controller gives the check command with each task. The commit author is the
   repo-local noreply address; don't change git config.
@@ -58,11 +59,12 @@ folder, never into the repo.
   and the order in which the assigns remap gathers.
 - **Sorts.** OCaml `List.sort` is a stable merge sort, used on the remapped assigns, keyed by position.
 - **Suites stay green:**
-  - own suite: 202 checked, 0 failed at `c5f9545e`;
+  - own suite: 0 failed (202 checked at `c5f9545e`; take the count at `59a72b2d` before starting);
   - `.NET`: 736/736;
   - `tests/hl/run.sh` on `hl-output`: 27/27.
 
-  `HAXE_STD_PATH=C:/HaxeToolkit/haxe/std` for every hxc compile.
+  `HAXE_STD_PATH=C:/HaxeToolkit/haxe/std` for every hxc compile. Never run two suites at once, and
+  never while another session on this machine is running its suites or timings.
 
 ## Review Focus
 
@@ -99,7 +101,8 @@ folder, never into the repo.
 | `src/hxc/codegen/hl/HlOpt.hx` | new: block graph, `_optimize`, `remap_fun` with its dump, `optimize` entry (`hlopt.ml` lines 440–1097) |
 | `src/hxc/codegen/hl/HlFunctions.hx` | call `HlOpt.optimize` at the end of `makeFun` (genhl 3294) |
 | `src/hxc/codegen/hl/HlContext.hx` | `dumpOut:Null<StringBuf>` (genhl `dump_out`) |
-| `src/hxc/codegen/hl/HlGenerate.hx` | drop the `NO_OPTIMISER` refusal; write `dumpOut` to `dump/hlopt.txt` |
+| `src/hxc/codegen/hl/HlGenerate.hx` | drop the `NO_OPTIMISER` refusal and constant; write `dumpOut` to `dump/hlopt.txt` |
+| `src/hxc/Compiler.hx` | drop the early `hl_no_opt` check after the init macros (`59a72b2d`) |
 | `tests/cases/hl-opt/` | new family: same shape as `hl-output`, without `-D hl_no_opt` |
 | `tests/expected/hl-opt.json` | its recording from Haxe 4.3.7 |
 | `tests/hl/run.sh` | `--family <name>` (default `hl-output`) |
@@ -227,7 +230,7 @@ folder, never into the repo.
 **Files:**
 - Create: `src/hxc/codegen/hl/HlOpt.hx`
 - Modify: `src/hxc/codegen/hl/HlFunctions.hx` (end of the function builder, where the comment
-  "the optimiser (Hlopt) is Plan 2" is), `HlContext.hx`, `HlGenerate.hx`
+  "the optimiser (Hlopt) is Plan 2" is), `HlContext.hx`, `HlGenerate.hx`, `src/hxc/Compiler.hx`
 - Modify: whatever `genhl.ml` optimise-only path differs (`HlContext.allocTmp`/`hold`/`free`,
   `HlTypes.typeKey` for `mallocs`)
 - Test: `hl-opt` family; `tools/hl-compare.sh` with `HL_OPT=1`
@@ -273,7 +276,8 @@ folder, never into the repo.
   - At the end of the function builder, when `ctx.optimize && (genContent == null || name is not ("",""))`,
     run `HlOpt.optimize(ctx.dumpOut == null ? null : line -> { ctx.dumpOut.add(line); ctx.dumpOut.add("\n"); }, i -> ctx.cstrings.arr[i], hlf)`
     under `Timer.timer(["generate","hl","opt"])`, and push the result.
-  - In `HlGenerate.generateCode`, remove the `NO_OPTIMISER` refusal and its constant.
+  - Remove both refusals: the early check after the init macros in `Compiler.hx` (`59a72b2d`) and the
+    one in `HlGenerate.generateCode`, with the `NO_OPTIMISER` constant.
   - With `dump`, save `dumpOut` to `dump/hlopt.txt` after code generation; it is `""` when the
     optimiser is off.
 
