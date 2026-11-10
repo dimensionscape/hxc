@@ -55,7 +55,7 @@ class EvalJit {
 	public static function invoke(ctx:EvalContext, c:JCompiled, args:Array<EvalValue>, offset:Int, vthis:Null<EvalValue>, info:Null<EvalEnvInfo>):EvalValue {
 		var n = c.argSlots.length;
 		var defaults:Null<Array<EvalValue>> = null;
-		for (i in 0...n) {
+		if (c.anyDefault) for (i in 0...n) {
 			var d = c.argDefaults[i];
 			if (d == null) continue;
 			var j = i + offset;
@@ -67,7 +67,7 @@ class EvalJit {
 			}
 		}
 		if (info == null) info = EvalContext.createEnvInfo(vthis == null, c.expr.pos, EKEntrypoint, 0, 0);
-		var env = EvalContext.pushEnvironment(ctx, info, c.layout);
+		var env = EvalContext.pushFrame(ctx, info, c.layout);
 		env.vthis = vthis;
 		var locals = env.locals;
 		for (i in 0...n) {
@@ -78,7 +78,7 @@ class EvalJit {
 		// More values than arguments, raised in the pushed environment.
 		if (args.length > n + offset) EvalExceptions.excString(ctx, "Something went wrong");
 		var ret = runBody(ctx, env.eval, c.node);
-		EvalContext.popEnvironment(ctx, env);
+		EvalContext.popFrame(ctx, env);
 		return ret;
 	}
 
@@ -233,6 +233,8 @@ class EvalJit {
 
 	// A closure captures its defining frame and runs its body in a child frame linked to it.
 	public static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
+		// The closure keeps its defining frame (and the snapshot that frame's callers).
+		EvalContext.markEscaped(captured);
 		var snap = EvalEmitter.snapshotCaptures(tf, captured);
 		var ordinal = tf.evalOrdinal;
 		// The closure's info is made with it, not per call.
@@ -244,7 +246,7 @@ class EvalJit {
 				c = compiled(ctx, tf);
 				cache = c;
 			}
-			var env2 = EvalContext.pushEnvironment(ctx, info, c.layout);
+			var env2 = EvalContext.pushFrame(ctx, info, c.layout);
 			env2.lexicalParent = snap;
 			env2.vthis = captured == null ? null : captured.vthis;
 			var n = c.argSlots.length;
@@ -261,7 +263,7 @@ class EvalJit {
 			// More values than arguments, raised in the pushed environment.
 			if (args.length > n) EvalExceptions.excString(ctx, "Something went wrong");
 			var r = runBody(ctx, env2.eval, c.node);
-			EvalContext.popEnvironment(ctx, env2);
+			EvalContext.popFrame(ctx, env2);
 			return r;
 		};
 	}
@@ -276,6 +278,8 @@ class JCompiled {
 	// Each argument's slot in the layout and its default value, if it has one.
 	public final argSlots:Array<Int>;
 	public final argDefaults:Array<Null<TExpr>>;
+	// Whether any argument has a default.
+	public final anyDefault:Bool;
 
 	public function new(ctx:EvalContext, tf:TFunc, layout:FrameLayout, node:JNode) {
 		this.ctx = ctx;
@@ -285,6 +289,9 @@ class JCompiled {
 		this.node = node;
 		this.argSlots = [for (a in tf.args) layout.slots.get(a.v.id)];
 		this.argDefaults = [for (a in tf.args) a.c];
+		var any = false;
+		for (d in this.argDefaults) if (d != null) any = true;
+		this.anyDefault = any;
 	}
 
 	public inline function valid(ctx:EvalContext, tf:TFunc):Bool {

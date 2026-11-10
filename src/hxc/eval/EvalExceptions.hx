@@ -55,6 +55,8 @@ class EvalExceptions {
 	public static function callStack(eval:Eval):Array<EvalEnv> {
 		var acc:Array<EvalEnv> = [];
 		var e = eval.env;
+		// The stack keeps its frames, read for their positions after they have returned.
+		EvalContext.markEscaped(e);
 		while (e != null) {
 			acc.push(e);
 			e = e.parent;

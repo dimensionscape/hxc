@@ -1,0 +1,246 @@
+--- a-second-call-starts-with-null-locals
+class P {
+	static function f(set:Bool):Null<Int> {
+		var x:Null<Int> = null;
+		var y:Null<String>;
+		if (set) {
+			x = 7;
+			y = "set";
+		} else y = null;
+		var z = x == null ? -1 : x;
+		return z + (y == null ? 0 : y.length);
+	}
+
+	static function main() {
+		trace(f(true));
+		trace(f(false));
+		trace(f(true));
+		trace(f(false));
+	}
+}
+
+--- a-closure-keeps-the-frame-it-was-made-in
+class P {
+	static function counter(start:Int):() -> Int {
+		var n = start;
+		return function() {
+			n++;
+			return n;
+		};
+	}
+
+	static function plain(a:Int, b:Int):Int {
+		var c = a * b;
+		return c + 1;
+	}
+
+	static function main() {
+		var a = counter(10);
+		var b = counter(100);
+		trace(plain(2, 3));
+		trace(a());
+		trace(b());
+		var c = counter(1000);
+		trace(plain(4, 5));
+		trace(a());
+		trace(b());
+		trace(c());
+		var fs = [for (i in 0...4) counter(i * 10)];
+		for (f in fs) trace(f());
+		for (f in fs) trace(f());
+	}
+}
+
+--- a-closure-made-below-keeps-its-callers-apart
+class P {
+	var name:String;
+
+	function new(name:String) {
+		this.name = name;
+	}
+
+	function greeter(times:Int):String -> String {
+		var prefix = name + ":";
+		return inner(prefix, times);
+	}
+
+	function inner(prefix:String, times:Int):String -> String {
+		var count = 0;
+		return function(s) {
+			count += times;
+			return prefix + s + count + name;
+		};
+	}
+
+	static function main() {
+		var x = new P("x").greeter(1);
+		var y = new P("y").greeter(2);
+		trace(x("a"));
+		trace(y("b"));
+		trace(x("c"));
+		trace(new P("z").greeter(3)("d"));
+		trace(y("e"));
+	}
+}
+
+--- recursion-keeps-each-level-its-own-locals
+class P {
+	static function fib(n:Int):Int {
+		if (n < 2) return n;
+		var a = fib(n - 1);
+		var b = fib(n - 2);
+		return a + b;
+	}
+
+	static function even(n:Int):Bool {
+		var m = n;
+		return m == 0 ? true : odd(m - 1);
+	}
+
+	static function odd(n:Int):Bool {
+		var m = n;
+		return m == 0 ? false : even(m - 1);
+	}
+
+	static function walk(depth:Int, acc:Array<Int>):Array<Int> {
+		var mine = depth * depth;
+		if (depth > 0) walk(depth - 1, acc);
+		acc.push(mine);
+		return acc;
+	}
+
+	static function main() {
+		trace(fib(15));
+		trace(even(10));
+		trace(odd(7));
+		trace(walk(5, []));
+		trace(walk(3, []));
+	}
+}
+
+--- a-caught-exception-keeps-its-stack
+import haxe.CallStack;
+
+class P {
+	static function thrower(n:Int):Int {
+		var local = n * 2;
+		if (n == 0) throw "deep";
+		return thrower(n - 1) + local;
+	}
+
+	static function busy(n:Int):Int {
+		var t = 0;
+		for (i in 0...n) t += helper(i);
+		return t;
+	}
+
+	static function helper(i:Int):Int {
+		var j = i + 1;
+		return j * 2;
+	}
+
+	static function main() {
+		var stack:Array<StackItem> = null;
+		try {
+			thrower(3);
+		} catch (e:String) {
+			stack = CallStack.exceptionStack();
+			trace(e);
+		}
+		trace(busy(10));
+		try {
+			trace(thrower(2));
+		} catch (e:String) {
+			trace("again " + e);
+		}
+		trace(busy(5));
+		trace(stack.length);
+		for (item in stack) switch (item) {
+			case FilePos(s, file, line, _): trace(line + " " + (s == null ? "" : switch (s) { case Method(c, m): c + "." + m; case _: "?"; }));
+			case _: trace("other");
+		}
+	}
+}
+
+--- a-saved-call-stack-keeps-its-positions
+import haxe.CallStack;
+
+class P {
+	static var saved:Array<StackItem>;
+
+	static function outer(n:Int, again:Bool):Int {
+		var a = n + 1;
+		if (again) {
+			var r = middle(a, true);
+			return r - a;
+		}
+		return middle(a, false) + a;
+	}
+
+	static function middle(n:Int, again:Bool):Int {
+		var b = n * 2;
+		if (again) {
+			var r = other(b);
+			return r + leaf(b, false);
+		}
+		return leaf(b, true) + b;
+	}
+
+	static function leaf(n:Int, save:Bool):Int {
+		if (save) saved = CallStack.callStack();
+		var m = other(n);
+		return m - 1;
+	}
+
+	static function other(n:Int):Int {
+		var k = n + 3;
+		return k;
+	}
+
+	static function show() {
+		for (item in saved) switch (item) {
+			case FilePos(s, file, line, _): trace(line + " " + (s == null ? "" : switch (s) { case Method(c, m): c + "." + m; case _: "?"; }));
+			case _: trace("other");
+		}
+	}
+
+	static function main() {
+		trace(outer(1, false));
+		var first = saved;
+		show();
+		trace(outer(2, true));
+		trace(middle(3, true));
+		trace(leaf(4, false));
+		trace(other(5));
+		saved = first;
+		show();
+	}
+}
+
+--- defaults-and-finally-across-reused-frames
+class P {
+	static function pad(s:String, width:Int = 6, fill:String = "."):String {
+		var out = s;
+		while (out.length < width) out += fill;
+		return out;
+	}
+
+	static function guarded(n:Int):String {
+		var log = "";
+		try {
+			if (n % 2 == 0) throw n;
+			log += "ok" + n;
+		} catch (e:Int) {
+			log += "caught" + e;
+		}
+		return pad(log, 10, n % 3 == 0 ? "-" : null);
+	}
+
+	static function main() {
+		trace(pad("a"));
+		trace(pad("b", 3));
+		trace(pad("c", 4, "*"));
+		trace(pad("d"));
+		for (i in 0...5) trace(guarded(i));
+	}
+}

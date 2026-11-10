@@ -58,6 +58,10 @@ class EvalEnv {
 	// sits at its evalSlot.
 	public var layout:Null<hxc.core.FrameLayout>;
 	public var layoutId:Int;
+	// Something outlives the call with a reference to this frame (a closure made in it or below it, a
+	// captured call stack), so it is not handed to a later call. Whatever marks a frame marks the frames
+	// it reaches too (markEscaped).
+	public var escaped:Bool = false;
 	public function new(info:EvalEnvInfo, locals:Array<EvalValue>, captures:Array<EvalValue>, parent:Null<EvalEnv>, stackDepth:Int, eval:Eval,
 			?layout:hxc.core.FrameLayout) {
 		this.info = info;
@@ -260,9 +264,58 @@ class EvalContext {
 		return env;
 	}
 
+	// pushEnvironment for a function's own layout, taking the layout's returned frame when there is one:
+	// the same frame as a new one would be, every field set again and every local null. A frame is only
+	// taken by the thread (the Eval) that returned it.
+	public static function pushFrame(ctx:EvalContext, info:EvalEnvInfo, layout:hxc.core.FrameLayout):EvalEnv {
+		var free:Null<EvalEnv> = layout.evalFreeEnv;
+		if (free == null || profOn) return pushEnvironment(ctx, info, layout);
+		var eval = getEval(ctx);
+		var locals = free.locals;
+		if (free.eval != eval || locals.length != layout.size) return pushEnvironment(ctx, info, layout);
+		layout.evalFreeEnv = null;
+		if (hxc.compiler.HostRuntime.preemptPending()) EvalStdLib.preemptPoll();
+		for (i in 0...locals.length) locals[i] = VNull;
+		var parent = eval.env;
+		free.info = info;
+		free.captures = info.numCaptures == 0 ? noCaptures : [for (_ in 0...info.numCaptures) VNull];
+		free.parent = parent;
+		free.stackDepth = parent == null ? 1 : parent.stackDepth + 1;
+		free.leavePos = null;
+		free.vthis = null;
+		free.lexicalParent = null;
+		eval.env = free;
+		return free;
+	}
+
 	public static function popEnvironment(ctx:EvalContext, env:EvalEnv):Void {
 		if (profOn) profPop(env);
 		env.eval.env = env.parent;
+	}
+
+	// popEnvironment for a frame pushFrame made: a frame nothing kept is left for the layout's next call.
+	public static inline function popFrame(ctx:EvalContext, env:EvalEnv):Void {
+		if (profOn) profPop(env);
+		env.eval.env = env.parent;
+		if (!env.escaped) {
+			// The frame holds nothing once it has returned.
+			env.parent = null;
+			env.vthis = null;
+			env.lexicalParent = null;
+			env.layout.evalFreeEnv = env;
+		}
+	}
+
+	// A frame something keeps, with every frame reachable from it (its callers and its defining frames).
+	// A kept frame is never taken again, so its chains stay as they are and the walk stops at one already
+	// marked.
+	public static function markEscaped(env:Null<EvalEnv>):Void {
+		var e = env;
+		while (e != null && !e.escaped) {
+			e.escaped = true;
+			if (e.lexicalParent != null) markEscaped(e.lexicalParent);
+			e = e.parent;
+		}
 	}
 
 	// HXC_DBG_EVALPROF: calls, inclusive and self time per interpreted function, printed with
