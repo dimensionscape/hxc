@@ -334,6 +334,36 @@ class HlcCheck {
 		eq("ctype enum", HlcNames.ctype(HEnum({ename: "haxe.io.Error", eid: 1, eglobal: null, efields: []})), "venum*");
 		eq("args_repr", HlcNames.argsRepr([HBytes, HI32, HRef(HI32)]), "vbyte*,int,int*");
 		eq("args_repr void", HlcNames.argsRepr([]), "void");
+
+		// A 7-digit collision (hlc-digest-collision's types.c): both digests start f8d4f18, and the type
+		// PMap.mapi visits second gets the full digest. Re-signing a desc (desc_string on DSimple (HRef t) with
+		// a function t) also finds its 7 digits taken: Haxe wrote t$ref_t$fun_cb6e3d37d4a166890af599b23180a494.
+		var collA = HFun([HI32, HF64, str, HBool], HI32);
+		var collB = HFun([HBool, HDyn, HBool, HF64, HI32], str);
+		eq("(i32,f64,String,bool):i32", funName(collA), "t$fun_f8d4f18");
+		eq("(bool,dyn,bool,f64,i32):String", funName(collB), "t$fun_f8d4f18");
+		eq("(i32,f64,String,bool):i32 full", HlcOcaml.md5Hex(HlcOcaml.marshal(descValue(collA))), "f8d4f18090985197954432adf9fb76cc");
+		eq("(bool,dyn,bool,f64,i32):String full", HlcOcaml.md5Hex(HlcOcaml.marshal(descValue(collB))), "f8d4f1891ec96b1ed214e7240a057de3");
+		var f64Bool = HFun([HF64], HBool);
+		eq("(f64):bool full", HlcOcaml.md5Hex(HlcOcaml.marshal(descValue(f64Bool))), "cb6e3d37d4a166890af599b23180a494");
+		eq("(ref((f64):bool)):bool", funName(HFun([HRef(f64Bool)], HBool)), "t$fun_19055a6");
+		for (pair in [[collA, collB], [collB, collA]]) {
+			var c = emptyCode();
+			c.globals = pair;
+			var cids = HlcNames.makeTypesIdents(new HlTypeTable(c));
+			var a = cids.get(collA), b = cids.get(collB);
+			var names = a + " " + b;
+			check("one collision side keeps 7 digits", names == "t$fun_f8d4f18 t$fun_f8d4f1891ec96b1ed214e7240a057de3"
+				|| names == "t$fun_f8d4f18090985197954432adf9fb76cc t$fun_f8d4f18", names);
+		}
+		var c = emptyCode();
+		var refF = HRef(f64Bool);
+		c.globals = [f64Bool, refF];
+		var cids = HlcNames.makeTypesIdents(new HlTypeTable(c));
+		var signs = cids.get(f64Bool) + " " + cids.get(refF);
+		check("ref re-signs its function type",
+			signs == "t$fun_cb6e3d3 t$ref_t$fun_cb6e3d37d4a166890af599b23180a494"
+			|| signs == "t$fun_cb6e3d37d4a166890af599b23180a494 t$ref_t$fun_cb6e3d3", signs);
 	}
 
 	static function main() {

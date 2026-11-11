@@ -63,9 +63,12 @@ Both compilers are given `-D no-compilation`, since without the `hashlink` haxel
 the files are written ends in "Build failed". hxc's files are byte-identical to Haxe's on:
 
 - the hl-output and hl-opt cases, run with `tests/hl/run.sh --hlc`;
-- the hlc-output family (18 cases), whose family.json names `out/main.c`, so it runs in this mode without
+- the hlc-output family (20 cases), whose family.json names `out/main.c`, so it runs in this mode without
   `--hlc`; the cases cover string constants, naming, modules, closures, enums, virtuals and the other
-  things hl2c.ml hashes or orders;
+  things hl2c.ml hashes or orders. hlc-digest-collision and hlc-digest-collision-reversed declare two
+  function types whose digests share their first 7 digits, in both orders, so each side once keeps
+  t$fun_f8d4f18 and once gets the full digest; the first also signs a function type twice through
+  `hl.Ref<Float->Bool>`;
 - JoeClash's Android build (2800 files).
 
 In this mode (directory mode) `run.sh` has Haxe, hxc and hxc again each write an `out/` directory, kept as
@@ -85,7 +88,6 @@ before and after, and no file under bin/android is newer than the start.
 
 Not covered yet:
 
-- 7-character type-digest collisions: no case reaches one, so the collision handling is untested.
 - A class proto's maps, which HlcOcaml leaves unmodelled: a hash or marshal that reaches one throws
   `Unmodelled`, and hxc stops with "HL/C: hl2c's type digest reaches an OCaml value hxc does not model". A
   virtual proto's vindex map is modelled. A type description marshals a whole ttype only under HRef (and

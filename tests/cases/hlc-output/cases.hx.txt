@@ -542,3 +542,50 @@ class P {
 	}
 }
 ===
+
+--- hlc-digest-collision
+// Two function types whose type_desc digests share their first 7 hex digits, f8d4f18: make_sign gives
+// the one PMap.mapi visits second the full 32-digit digest. Declared a then b, b's type is visited first
+// and keeps t$fun_f8d4f18, a's gets t$fun_f8d4f18090985197954432adf9fb76cc. hl.Ref<Float->Bool> signs
+// (f64):bool a second time, through desc_string on DSimple (HRef t), so the ref is
+// t$ref_t$fun_<full digest>.
+class P {
+	static function a(i:Int, f:Float, s:String, b:Bool):Int {
+		return b ? i + s.length : Std.int(f);
+	}
+
+	static function b(x:Bool, d:Dynamic, y:Bool, f:Float, i:Int):String {
+		return "" + x + d + y + f + i;
+	}
+
+	static function call(r:hl.Ref<Float->Bool>):Bool {
+		return r.get()(1.5);
+	}
+
+	static function main() {
+		Sys.println(a(1, 2.5, "s", true));
+		Sys.println(b(false, null, true, 1.5, 2));
+		var f = (x:Float) -> x > 1;
+		Sys.println(call(f));
+	}
+}
+===
+
+--- hlc-digest-collision-reversed
+// hlc-digest-collision's pair declared b then a: the gather order changes the PMap's AVL tree, so a's
+// type is visited first and keeps t$fun_f8d4f18, and b's gets t$fun_f8d4f1891ec96b1ed214e7240a057de3.
+class P {
+	static function b(x:Bool, d:Dynamic, y:Bool, f:Float, i:Int):String {
+		return "" + x + d + y + f + i;
+	}
+
+	static function a(i:Int, f:Float, s:String, b:Bool):Int {
+		return b ? i + s.length : Std.int(f);
+	}
+
+	static function main() {
+		Sys.println(b(false, null, true, 1.5, 2));
+		Sys.println(a(1, 2.5, "s", true));
+	}
+}
+===
