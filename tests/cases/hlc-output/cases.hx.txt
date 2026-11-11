@@ -440,3 +440,22 @@ class P {
 	}
 }
 ===
+
+--- hlc-virtual-index
+// Two function types whose first arguments are separately written anonymous types with the same fields:
+// genhl gives each its own virtual proto, so make_types_idents' PMap compares the two protos field by
+// field, finds the vfields equal and goes on to vindex, the (name -> index) PMap built from them.
+class P {
+	static function f(o:{x:Int}):Int {
+		return o.x;
+	}
+
+	static function g(o:{x:Int}):Float {
+		return o.x * 0.5;
+	}
+
+	static function main() {
+		Sys.println(f({x: Std.random(5)}) + g({x: Std.random(7)}));
+	}
+}
+===

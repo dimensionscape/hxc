@@ -378,6 +378,24 @@ class HlcCheck {
 			threw = true;
 		check("marshal reaches sentinel", threw);
 
+		// A virtual's vindex: ExtLib's PMap of (name, index) added in index order. Sorted names make a chain,
+		// since PMap's bal tolerates a height difference of 2; two protos with equal vfields compare equal
+		// through it (the shared `compare` closure is skipped by identity).
+		function abc():HlType
+			return HVirtual({vfields: [for (n in ["a", "b", "c"]) {name: n, nameIndex: 0, t: HI32}], vindex: new Map()});
+		var va = abc(), vb = abc();
+		var vindex = block(block(HlcOcaml.ttypeValue(va)).fields[0]).fields[1];
+		var shape = Std.string(block(vindex).fields[1]);
+		eq("vindex shape", shape,
+			'OBlock([0|OInt(0),OStr("a"),OInt(0),OBlock([0|OInt(0),OStr("b"),OInt(1),OBlock([0|OInt(0),OStr("c"),OInt(2),OInt(0),OInt(1)]),OInt(2)]),OInt(3)])');
+		eq("equal virtuals compare", HlcOcaml.compare(HlcOcaml.ttypeValue(HFun([va], HI32)), HlcOcaml.ttypeValue(HFun([vb], HI32))), 0);
+		threw = false;
+		try
+			HlcOcaml.hash(vindex)
+		catch (e:Unmodelled)
+			threw = true;
+		check("hash reaches the PMap's closure", threw);
+
 		// 70 adds: 16 -> 32 -> 64 buckets. iter goes by hash land 63, each bucket newest first.
 		var t = new CamlHashtbl<Int>();
 		for (i in 0...70) t.add(OInt(i), i);

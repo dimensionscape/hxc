@@ -11,8 +11,9 @@ import hxc.codegen.hl.HlCode;
 //   - the polymorphic Hashtbl (stdlib/hashtbl.ml): bucket order of add, replace, resize, iter and fold;
 //   - Marshal.to_bytes v [Marshal.Closures]: runtime/extern.c with sharing, small header.
 // Values are modelled by OValue. Physical identity, which Marshal's sharing and compare's shortcut see, is
-// Haxe object identity of OString and OBlockRef. A field OCaml holds but this model does not (a PMap) is the
-// sentinel OBlock(HlcOcaml.UNMODELLED): reaching it in a hash walk, a compare or a marshal throws Unmodelled.
+// Haxe object identity of OString and OBlockRef. A field OCaml holds but this model does not (a class proto's
+// PMaps) is the sentinel OBlock(HlcOcaml.UNMODELLED): reaching it in a hash walk, a compare or a marshal throws
+// Unmodelled. A virtual proto's vindex PMap is modelled, with its `compare` closure as OBlock(HlcOcaml.PMAP_CMP).
 // This module imports nothing from hxc outside hxc.codegen.hl, so tools/hl/HlcCheck runs under haxe --run.
 
 // An OCaml string (String_tag block). The bytes are the UTF-8 of s.
@@ -70,6 +71,11 @@ class Unmodelled extends haxe.Exception {
 
 class HlcOcaml {
 	public static final UNMODELLED = new OBlockRef(0, []);
+
+	// The `cmp` closure of every PMap built from PMap.empty (ExtLib's `{cmp = compare; map}`): one physical
+	// value (Closure_tag), so compare and equal skip it by identity. Compare raises on two different
+	// closures (not modelled: there is only this one), and a hash walk or a marshal throws Unmodelled on it.
+	public static final PMAP_CMP = new OBlockRef(247, []);
 
 	// ---- runtime/hash.c ----
 
@@ -166,7 +172,7 @@ class HlcOcaml {
 					h = mixDouble(h, f);
 					num--;
 				case OBlock(b):
-					if (b == UNMODELLED) throw new Unmodelled(queuePath(parent, slot, at));
+					if (b == UNMODELLED || b == PMAP_CMP) throw new Unmodelled(queuePath(parent, slot, at));
 					var len = b.fields.length;
 					h = mix(h, (len << 10) | b.tag);
 					for (i in 0...len) {
@@ -215,6 +221,7 @@ class HlcOcaml {
 			case [OBlock(x), OBlock(y)]:
 				if (x == y) return true;
 				if (x.tag != y.tag || x.fields.length != y.fields.length) return false;
+				if (x == PMAP_CMP || y == PMAP_CMP) throw new Unmodelled(path + " (functional value)");
 				for (i in 0...x.fields.length) if (!eqRec(x.fields[i], y.fields[i], path + "." + i)) return false;
 				return true;
 			default:
@@ -267,6 +274,7 @@ class HlcOcaml {
 				return 0;
 			case [OBlock(x), OBlock(y)]:
 				if (x == y) return 0;
+				if (x == PMAP_CMP || y == PMAP_CMP) throw new Unmodelled(path + " (functional value)");
 				var n = x.fields.length;
 				if (n != y.fields.length) return n < y.fields.length ? -1 : 1;
 				for (i in 0...n) {
@@ -537,9 +545,67 @@ class HlcOcaml {
 	static function fieldProto(f:HlFieldProto):OValue
 		return memoBlock(f, () -> [OStr(new OString(f.fname)), OInt(f.fid), OInt(f.fmethod), intOption(f.fvirtual)]);
 
-	// virtual_proto: vfields, vindex (the sentinel).
-	static function virtualProto(vp:HlVirtualProto):OValue
-		return memoBlock(vp, () -> [arrayOf(vp.vfields, fieldTuple), OBlock(UNMODELLED)]);
+	// virtual_proto: vfields, vindex. genhl builds vindex by adding each vfield's name (the tuple's own string)
+	// with its index, in index order, to PMap.empty.
+	static function virtualProto(vp:HlVirtualProto):OValue {
+		return memoBlock(vp, () -> {
+			var fields = arrayOf(vp.vfields, fieldTuple);
+			var map = OInt(0);
+			for (i in 0...vp.vfields.length) map = pmapAdd(blockOf(fieldTuple(vp.vfields[i])).fields[0], OInt(i), map);
+			[fields, OBlock(new OBlockRef(0, [OBlock(PMAP_CMP), map]))];
+		});
+	}
+
+	// ExtLib's PMap.add on the map: Empty is 0, Node (l, k, v, r, h) a tag-0 block; keys under compare, an
+	// equal key replaced in place, the AVL rebalanced as PMap's bal does (height difference above 2).
+	static function pmapAdd(x:OValue, d:OValue, m:OValue):OValue {
+		return switch m {
+			case OBlock(n):
+				var l = n.fields[0], k = n.fields[1], r = n.fields[3];
+				var c = compare(x, k);
+				if (c == 0) node(l, x, d, r, n.fields[4]);
+				else if (c < 0) pmapBal(pmapAdd(x, d, l), k, n.fields[2], r);
+				else pmapBal(l, k, n.fields[2], pmapAdd(x, d, r));
+			default: node(OInt(0), x, d, OInt(0), OInt(1));
+		}
+	}
+
+	static function node(l:OValue, k:OValue, v:OValue, r:OValue, h:OValue):OValue
+		return OBlock(new OBlockRef(0, [l, k, v, r, h]));
+
+	static function pmapHeight(m:OValue):Int {
+		return switch m {
+			case OBlock(n): switch n.fields[4] {
+					case OInt(h): h;
+					default: throw "not a PMap node";
+				}
+			default: 0;
+		}
+	}
+
+	static function pmapMake(l:OValue, k:OValue, v:OValue, r:OValue):OValue {
+		var hl = pmapHeight(l), hr = pmapHeight(r);
+		return node(l, k, v, r, OInt((hl > hr ? hl : hr) + 1));
+	}
+
+	static function pmapBal(l:OValue, k:OValue, v:OValue, r:OValue):OValue {
+		var hl = pmapHeight(l), hr = pmapHeight(r);
+		if (hl > hr + 2) {
+			var ln = blockOf(l);
+			var ll = ln.fields[0], lk = ln.fields[1], lv = ln.fields[2], lr = ln.fields[3];
+			if (pmapHeight(ll) >= pmapHeight(lr)) return pmapMake(ll, lk, lv, pmapMake(lr, k, v, r));
+			var lrn = blockOf(lr);
+			return pmapMake(pmapMake(ll, lk, lv, lrn.fields[0]), lrn.fields[1], lrn.fields[2], pmapMake(lrn.fields[3], k, v, r));
+		}
+		if (hr > hl + 2) {
+			var rn = blockOf(r);
+			var rl = rn.fields[0], rk = rn.fields[1], rv = rn.fields[2], rr = rn.fields[3];
+			if (pmapHeight(rr) >= pmapHeight(rl)) return pmapMake(pmapMake(l, k, v, rl), rk, rv, rr);
+			var rln = blockOf(rl);
+			return pmapMake(pmapMake(l, k, v, rln.fields[0]), rln.fields[1], rln.fields[2], pmapMake(rln.fields[3], rk, rv, rr));
+		}
+		return node(l, k, v, r, OInt((hl >= hr ? hl : hr) + 1));
+	}
 
 	// (string * string index * ttype)
 	static function fieldTuple(f:HlField):OValue
@@ -632,7 +698,7 @@ private class Marshaller {
 						strings.set(s, objCounter++);
 					}
 				case OBlock(b):
-					if (b == HlcOcaml.UNMODELLED) throw new Unmodelled(path(stackB, stackI));
+					if (b == HlcOcaml.UNMODELLED || b == HlcOcaml.PMAP_CMP) throw new Unmodelled(path(stackB, stackI));
 					var sz = b.fields.length;
 					if (sz == 0) {
 						header(0, b.tag);
