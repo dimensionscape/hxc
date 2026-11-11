@@ -346,6 +346,8 @@ class HlcOcaml {
 			case HObj(p) | HStruct(p): [classProto(p)];
 			case HRef(t) | HNull(t) | HPacked(t): [ttypeValue(t)];
 			case HVirtual(vp): [virtualProto(vp)];
+			// One string per HAbstract object: the front end makes one object per hl.Abstract<"..."> declaration,
+			// whose name genhl shares (HlContext.abstractTypes).
 			case HAbstract(name, index): [OStr(new OString(name)), OInt(index)];
 			case HEnum(e): [enumProto(e)];
 			default: throw "unreachable";

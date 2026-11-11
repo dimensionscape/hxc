@@ -158,8 +158,8 @@ class HlcCheck {
 
 		// Sharing inside a marshalled desc (the sharing probe's types.c). genhl's to_type builds each HNull and
 		// HRef afresh, so two in one function type are distinct blocks; a shared one is a back-reference and
-		// gives another name. The abstract's three uses are one object here (one name string in genhl), and
-		// one virtual proto reached twice is one DVirtual.
+		// gives another name. BytesMap's three uses are one hl.Abstract<"hl_bytes_map"> declaration, so one
+		// object here (one name string in genhl), and one virtual proto reached twice is one DVirtual.
 		var code3 = emptyCode();
 		var nullsApart = HFun([HNull(HI32), HNull(HI32)], HNull(HI32));
 		var nullShared = HNull(HI32);
@@ -188,6 +188,22 @@ class HlcCheck {
 		var code4 = emptyCode();
 		code4.globals = [oneShared];
 		check("shared null(i32) is a back-reference", HlcNames.makeTypesIdents(new HlTypeTable(code4)).get(oneShared) != "t$fun_5a98bcd");
+		// An abstract's name string is shared per hl.Abstract<"..."> declaration, not per name (the abstract
+		// probe's types.c): direct(a:hl.Abstract<"hlc_d">, b:hl.Abstract<"hlc_d">):hl.Abstract<"hlc_d"> has three
+		// declarations, three strings; viaTypedef(a:X, b:X):X with typedef X = hl.Abstract<"hlc_x"> has one;
+		// mixedDecl(a:X, b:hl.Abstract<"hlc_x">) has two. hxc's front end makes one HAbstract per declaration
+		// (HlContext.abstractTypes), and ttypeValue one string per HAbstract.
+		var code5 = emptyCode();
+		var direct = HFun([HAbstract("hlc_d", 1), HAbstract("hlc_d", 1)], HAbstract("hlc_d", 1));
+		var x = HAbstract("hlc_x", 2);
+		var viaTypedef = HFun([x, x], x);
+		var mixedDecl = HFun([x, HAbstract("hlc_x", 2)], HVoid);
+		code5.globals = [direct, viaTypedef, mixedDecl];
+		var ids5 = HlcNames.makeTypesIdents(new HlTypeTable(code5));
+		eq("ident (abstract x3, three declarations)", ids5.get(direct), "t$fun_2dadd64");
+		eq("ident (abstract x3, one declaration)", ids5.get(viaTypedef), "t$fun_d8cc033");
+		eq("ident (abstract x2, two declarations)", ids5.get(mixedDecl), "t$fun_b11d96e");
+		eq("ident abstract hlc_x", ids5.get(x), "t$hlc_x");
 
 		// make_global_names: the hlc-probe's globals.c, then the global-names probe's.
 		var gcode = stringConstants(["hello ", "s"]);

@@ -109,6 +109,10 @@ class HlContext {
 	// anonKey's numbering of the declarations, monos and lazies it keys by identity
 	public var anonKeyIds:ObjectMap<{}, Int> = new ObjectMap();
 	public var anonKeyNext = 0;
+	// HAbstract by the hl.Abstract<"name"> constant class it comes from. genhl takes the name from that class's
+	// expression, so every use of one declaration shares one OCaml string and HL/C's t$fun_ digests see a
+	// back-reference; one HlType object per class gives HlcOcaml.ttypeValue that sharing.
+	public var abstractTypes:ObjectMap<{}, HlType> = new ObjectMap();
 	public var methodWrappers:Map<String, Int> = new Map();
 	// a list in OCaml (head first); here the head is the last element
 	public var recCache:Array<{t:T, r:{v:Null<HlType>}}> = [];

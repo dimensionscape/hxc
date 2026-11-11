@@ -566,8 +566,13 @@ class HlTypes {
 				return HDyn;
 			case TEnum(e, _):
 				return enumType(ctx, e, tref);
-			case TInst(c, [TInst({kind: KExpr({expr: EConst(CString(name, _))})}, _)]) if (c.path.pack.length == 1 && c.path.pack[0] == "hl" && c.path.name == "Abstract"):
-				return HAbstract(name, HlContext.allocString(ctx, name));
+			case TInst(c, [TInst(k = {kind: KExpr({expr: EConst(CString(name, _))})}, _)]) if (c.path.pack.length == 1 && c.path.pack[0] == "hl" && c.path.name == "Abstract"):
+				var index = HlContext.allocString(ctx, name);
+				var known = ctx.abstractTypes.get(k);
+				if (known != null) return known;
+				var t = HAbstract(name, index);
+				ctx.abstractTypes.set(k, t);
+				return t;
 			case TInst(c, pl):
 				switch c.kind {
 					case KTypeParameter(tl):
