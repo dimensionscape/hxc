@@ -63,7 +63,7 @@ Both compilers are given `-D no-compilation`, since without the `hashlink` haxel
 the files are written ends in "Build failed". hxc's files are byte-identical to Haxe's on:
 
 - the hl-output and hl-opt cases, run with `tests/hl/run.sh --hlc`;
-- the hlc-output family (31 cases), whose family.json names `out/main.c`, so it runs in this mode without
+- the hlc-output family (32 cases), whose family.json names `out/main.c`, so it runs in this mode without
   `--hlc`; the cases cover string constants, naming, modules, closures, enums, virtuals and the other
   things hl2c.ml hashes or orders. hlc-digest-collision and hlc-digest-collision-reversed declare two
   function types whose digests share their first 7 digits, in both orders, so each side once keeps
@@ -72,8 +72,9 @@ the files are written ends in "Build failed". hxc's files are byte-identical to 
   The hlc-macro-* cases give fields names from a macro, which Haxe's eval hands over as the very OCaml
   string the macro holds: a string literal used on two calls, from a variable or from an inline function
   (literal, variable, inline), a field's name taken by Context.getType or Context.getBuildFields (field,
-  build-field, object-field), names in class fields a build macro adds (interface) and in object
-  declarations a macro returns (object, object-twice); hlc-macro-separate-names is the control;
+  build-field, object-field), names in class fields a build macro adds (interface), in object
+  declarations a macro returns (object, object-twice) and in one it types and turns back into syntax with
+  Context.typeExpr and Context.getTypedExpr (typed-object); hlc-macro-separate-names is the control;
 - JoeClash's Android build (2800 files).
 
 In this mode (directory mode) `run.sh` has Haxe, hxc and hxc again each write an `out/` directory, kept as
@@ -113,7 +114,8 @@ Not covered yet:
   (an interface's inherited fields, apply_params, structure extension, map_anon_ref), the parsed field or
   object field it was typed from (Ast.fieldNameOrigin), or what the macro string that named it stands for
   (EvalMacro.nameOriginOf: a string literal's TString, or the field or object field the macro API encoded
-  the name from, as eval's encode_string and decode_string pass the OCaml string through). Haxe also
+  the name from, as eval's encode_string and decode_string pass the OCaml string through), through a typed
+  object declaration's key (TexprTools.objectKeyNameOrigin) as well. Haxe also
   shares a name in a macro string that eval takes from elsewhere without copying, such as its field-name
   hash table (`Reflect.fields`, whose names are the strings first hashed), and a string literal typed twice
   (one AST string, where hxc makes a TString per typing); hxc gives such names strings of their own, so

@@ -4163,8 +4163,10 @@ class EvalMacro {
 			case "TField": TField(loop(args[0]), decodeFieldAccessValue(ec, args[1]));
 			case "TTypeExpr": TTypeExpr(decodeModuleTypeValue(ec, args[0]));
 			case "TParenthesis": TParenthesis(loop(args[0]));
-			case "TObjectDecl": TObjectDecl([for (fv in arrOf(args[0]))
-				{key: {name: strOf(EvalField.field(ec, fv, EvalNames.hName())), pos: p, quotes: NoQuotes}, expr: loop(EvalField.field(ec, fv, EvalNames.hExpr()))}]);
+			case "TObjectDecl": TObjectDecl([for (fv in arrOf(args[0])) {
+				var nv = EvalField.field(ec, fv, EvalNames.hName());
+				{key: {name: strOf(nv), pos: p, quotes: NoQuotes, nameOrigin: nameOriginOf(nv)}, expr: loop(EvalField.field(ec, fv, EvalNames.hExpr()))};
+			}]);
 			case "TArrayDecl": TArrayDecl([for (x in arrOf(args[0])) loop(x)]);
 			case "TCall": TCall(loop(args[0]), [for (x in arrOf(args[1])) loop(x)]);
 			case "TNew": switch (moduleTypeFromRef(ec, args[0])) {
@@ -5231,7 +5233,7 @@ class EvalMacro {
 			case TTypeExpr(mt): mkEnumValue(ec, "TypedExprDef", "TTypeExpr", [encodeModuleType(ec, mt)]);
 			case TParenthesis(e1): mkEnumValue(ec, "TypedExprDef", "TParenthesis", [encodeTypedExpr(ec, e1)]);
 			case TObjectDecl(fl):
-				mkEnumValue(ec, "TypedExprDef", "TObjectDecl", [encodeArray([for (f in fl) typedObjectField(ec, f.key.name, f.expr)])]);
+				mkEnumValue(ec, "TypedExprDef", "TObjectDecl", [encodeArray([for (f in fl) typedObjectField(ec, f.key, f.expr)])]);
 			case TArrayDecl(el): mkEnumValue(ec, "TypedExprDef", "TArrayDecl", [encodeArray([for (e in el) encodeTypedExpr(ec, e)])]);
 			case TCall(e1, el): mkEnumValue(ec, "TypedExprDef", "TCall", [encodeTypedExpr(ec, e1), encodeArray([for (e in el) encodeTypedExpr(ec, e)])]);
 			case TNew(c, params, el): mkEnumValue(ec, "TypedExprDef", "TNew", [encodeClassRef(ec, c), encodeArray([for (p in params) encodeType(ec, p)]), encodeArray([for (e in el) encodeTypedExpr(ec, e)])]);
@@ -5328,9 +5330,9 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
-	static function typedObjectField(ec:EvalContext, name:String, expr:TExpr):EvalValue {
+	static function typedObjectField(ec:EvalContext, key:TObjectFieldKey, expr:TExpr):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalNames.hName(), mkString(name));
+		fields.set(EvalNames.hName(), mkName(key.name, hxc.core.TexprTools.objectKeyNameOrigin(key)));
 		fields.set(EvalNames.hExpr(), encodeTypedExpr(ec, expr));
 		return VObject(new VObject([], ODictionary(fields)));
 	}

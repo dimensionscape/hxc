@@ -1645,7 +1645,7 @@ class Typer {
 						try TypeUnification.typeEqKind(EqStrict, te.type, ft)
 						catch (_:UnifyError) te = TypeFunctions.mk(TCast(te, null), ft, te.pos);
 					}
-					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
+					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes, nameOrigin: Ast.objectFieldNameOrigin(f)}, expr: te});
 					// Against an expected structure the field takes the expected type (the value was just
 					// coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not `{f:Int}`.
 					// A field whose name is not a valid identifier (a quoted key like "x-bar") is a

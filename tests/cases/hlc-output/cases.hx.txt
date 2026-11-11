@@ -896,6 +896,28 @@ class P {
 }
 ===
 
+--- hlc-macro-typed-object-names
+// An object declaration a macro types and turns back into syntax (Context.typeExpr, then
+// Context.getTypedExpr) on two calls: the typed declaration keeps the reified literals' "x" and "y", so
+// a's and b's structures share them, and h's digest has back-references.
+import haxe.macro.Context;
+import haxe.macro.Expr;
+
+class P {
+	macro static function obj(e:Expr):Expr
+		return Context.getTypedExpr(Context.typeExpr(macro {x: $e, y: 2}));
+
+	#if !macro
+	static function main() {
+		var a = obj(1);
+		var b = obj(1.5);
+		function h(p, q) return 0;
+		Sys.println(a.x + b.x + a.y + h(a, b));
+	}
+	#end
+}
+===
+
 --- hlc-macro-object-field-names
 // Field names a build macro takes out of a parsed object declaration it leaves as it is: Mirror's x is
 // Q.a's own "x", so `two`'s digest has a back-reference.

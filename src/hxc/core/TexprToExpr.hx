@@ -178,7 +178,8 @@ class TexprToExpr {
 			case TParenthesis(e1):
 				EParenthesis(convertExpr(e1));
 			case TObjectDecl(fl):
-				EObjectDecl([for (f in fl) {name: f.key.name, expr: convertExpr(f.expr), quotes: f.key.quotes, pos: f.key.pos}]);
+				EObjectDecl([for (f in fl) {name: f.key.name, expr: convertExpr(f.expr), quotes: f.key.quotes, pos: f.key.pos,
+					nameOrigin: TexprTools.objectKeyNameOrigin(f.key)}]);
 			case TArrayDecl(el):
 				EArrayDecl([for (x in el) convertExpr(x)]);
 			case TCall(e1, el):

@@ -267,7 +267,9 @@ class TAnon {
 	}
 }
 
-typedef TObjectFieldKey = {name:String, pos:Position, quotes:QuoteStatus};
+// nameOrigin: what the name's OCaml string stands for, kept from the object declaration it was typed from
+// (TexprTools.objectKeyNameOrigin): Haxe's typed key holds the AST string itself.
+typedef TObjectFieldKey = {name:String, pos:Position, quotes:QuoteStatus, ?nameOrigin:{}};
 typedef TObjectField = {key:TObjectFieldKey, expr:TExpr};
 
 typedef TSwitchCase = {values:Array<TExpr>, expr:TExpr};

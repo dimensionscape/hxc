@@ -11,6 +11,13 @@ class TexprTools {
 	static inline var DE_DEAD = 1;
 	static inline var DE_BREAK_CONTINUE = 2;
 
+	// What a typed object declaration's key name stands for, as Ast.objectFieldNameOrigin says for the
+	// syntax: the declaration's own name string (or what a macro's string stood for), else the key itself.
+	// Haxe's TObjectDecl keeps the AST string, and getTypedExpr and the macro API's TypedExpr encoding pass
+	// it on, so a name a typed declaration gives a structure is shared with the declaration's.
+	public static inline function objectKeyNameOrigin(key:TObjectFieldKey):{}
+		return key.nameOrigin != null ? key.nameOrigin : key;
+
 	public static inline function makeInt(basic:BasicTypes, i:Int, p:Position):TExpr {
 		return TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 	}
@@ -850,7 +857,7 @@ class TexprTools {
 				typeConstantValue(basic, e1);
 			case EObjectDecl(el):
 				TypeFunctions.mk(TObjectDecl([for (f in el) {
-					key: {name: f.name, pos: f.pos, quotes: f.quotes},
+					key: {name: f.name, pos: f.pos, quotes: f.quotes, nameOrigin: Ast.objectFieldNameOrigin(f)},
 					expr: typeConstantValue(basic, f.expr)
 				}]), TypeFunctions.mkAnon(new Ref(Closed)), e.pos);
 			case EArrayDecl(el):
