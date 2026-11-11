@@ -1,5 +1,6 @@
 {
 	"no-deprecation-warnings-applies-in-macros": "",
 	"disabled-warning-applies-in-macros": "",
-	"deprecation-warning-without-the-define": "P.hx:2: characters 1-7 : Warning : (WDeprecatedEnumAbstract) `@:enum abstract` is deprecated in favor of `enum abstract`\nP.hx:2: characters 1-7 : Warning : (WDeprecatedEnumAbstract) `@:enum abstract` is deprecated in favor of `enum abstract`"
+	"deprecation-warning-without-the-define": "P.hx:2: characters 1-7 : Warning : (WDeprecatedEnumAbstract) `@:enum abstract` is deprecated in favor of `enum abstract`\nP.hx:2: characters 1-7 : Warning : (WDeprecatedEnumAbstract) `@:enum abstract` is deprecated in favor of `enum abstract`",
+	"deprecated-property-warning-spans-the-whole-field-access": "P.hx:12: characters 12-18 : Warning : (WDeprecated) A.zoom is deprecated\nP.hx:13: characters 12-20 : Warning : (WDeprecated) A.zoom is deprecated\nP.hx:14: characters 12-19 : Warning : (WDeprecated) A.szoom is deprecated\nP.hx:15: characters 12-15 : Warning : (WDeprecated) A.k is deprecated\nP.hx:16: characters 12-24 : Warning : (WDeprecated) A.zoom is deprecated"
 }

@@ -12,3 +12,23 @@ abstract E(Int) { var A; }
 class P { macro static function m() { var x = E.A; return macro null; } static function main() { m(); } }
 @:enum
 abstract E(Int) { var A; }
+
+--- deprecated-property-warning-spans-the-whole-field-access
+class A {
+	@:deprecated("A.zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	@:deprecated("A.szoom is deprecated") public static var szoom(get, never):Int;
+	static function get_szoom() return 1;
+	@:deprecated("A.k is deprecated") public static inline var k = 3;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var a = new A();
+		var x1 = a.zoom;
+		var x2 = (a).zoom;
+		var x3 = A.szoom;
+		var x4 = A.k;
+		var x5 = new A().zoom;
+	}
+}

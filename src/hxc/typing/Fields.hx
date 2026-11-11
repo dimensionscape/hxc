@@ -279,7 +279,7 @@ class Fields {
 						};
 						ok ? AKField(makeAccess(false)) : normalFailure();
 					case AccInline:
-						hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfield);
+						hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfull);
 						AKField(makeAccess(true));
 					// A property access the display position is on does not resolve to its accessor - it stays a
 					// plain field access to the property itself, which is the declaration the request is asking
@@ -307,7 +307,7 @@ class Fields {
 							}
 							AKField(makeAccess(false));
 						} else {
-							hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfield);
+							hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfull);
 							switch (fh) {
 								// A static access to a member property (already reported) has no receiver to thread; the
 								// plain accessor call then reports its own missing-this error.
