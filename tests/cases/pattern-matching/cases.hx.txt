@@ -102,3 +102,15 @@ class P {
 	}
 	static function main() { new P().f(None); }
 }
+
+--- enum-abstract-value-shares-its-name-with-a-deprecated-property
+enum abstract M(Int) { var zoom = 1; var other = 2; }
+class P {
+	@:deprecated("zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	function new() {}
+	function g(m:M):Int {
+		return switch m { case zoom: 1; case _: 0; }
+	}
+	static function main() { new P().g(other); }
+}

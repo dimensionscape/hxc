@@ -565,7 +565,7 @@ class PatternMaker {
 		var typed:Null<TExpr> = null;
 		// A deprecated property the probes reach (`case Fixed(_, zoom)` inside a class with a
 		// @:deprecated `zoom(get, set)`) queues its warning at typing; when the name ends up a capture,
-		// that use was never real and the queue gives it back below.
+		// that use was never real and the queue gives it back below, whatever the second probe finds.
 		var pendingBefore = hxc.filters.DeprecationCheck.pendingPropertyMark();
 		try {
 			// Pattern expressions type in untyped mode so a private enum-abstract constant still matches
@@ -595,6 +595,9 @@ class PatternMaker {
 			}
 			if (pat != null) return answerDisplay(pat);
 		}
+		// The first probe's value is not the pattern; a deprecated property it read must not warn even
+		// when the second probe below finds an enum-abstract value of the same name.
+		hxc.filters.DeprecationCheck.rollbackPendingProperties(pendingBefore);
 		// An ident that typed to a non-pattern value (e.g. a same-named local) or failed to type is
 		// resolved as a field of the subject's module type (an enum-abstract constant), and only captures
 		// when that fails too. The probe is speculative: diagnostics it records roll back unless it yields
