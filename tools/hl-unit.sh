@@ -19,6 +19,7 @@ hl="${HL:-C:/SDKs/hashlink/hl.exe}"
 export HAXE_STD_PATH="${HAXE_STD_PATH:-C:/HaxeToolkit/haxe/std}"
 native() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 
+[ -f "$hl" ] && [ -x "$hl" ] || { echo "hl.exe not found: $hl" >&2; exit 2; }
 unit="$conf/tests/unit"
 [ -f "$unit/compile-hl.hxml" ] || { echo "no $unit/compile-hl.hxml" >&2; exit 2; }
 work="$root/.hl-unit"
@@ -52,7 +53,9 @@ code=$?
 
 for side in h x; do
 	( cd "$work/$side" && timeout -k 5 300 "$hl" unit.hl > "$work/$side.run.txt" 2>&1 )
-	echo "[exit $?]" >> "$work/$side.run.txt"
+	rc=$?
+	echo "[exit $rc]" >> "$work/$side.run.txt"
+	if [ $rc = 126 ] || [ $rc = 127 ]; then echo "could not launch $hl (exit $rc)" >&2; exit 2; fi
 done
 if cmp -s <(grep -v 'Generated at:' "$work/h.run.txt" | tr -d '\r') <(grep -v 'Generated at:' "$work/x.run.txt" | tr -d '\r'); then
 	echo "runs: same"
