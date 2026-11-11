@@ -11,3 +11,4 @@ tests/hl/tmp/
 docs/superpowers/plans/*/serverapp/
 docs/superpowers/plans/*/measure/
 .hl-compare/
+.hl-unit/

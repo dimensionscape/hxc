@@ -7,16 +7,19 @@ using StringTools;
 // Compares the -D dump output of two HashLink compiles: dump/hlcode.txt table by table, then the functions
 // (matched by their `; file:line (Class.method)` label, not their index, with table references resolved to
 // what they refer to), then the typed AST in dump/hl/*.dump.
-// Usage: haxe -cp tools/hl --run HlCompare <expected dir> <actual dir>   (each holds a dump/ directory)
+// Usage: haxe -cp tools/hl --run HlCompare [--all] <expected dir> <actual dir>   (each holds a dump/ directory)
+// --all prints a line `differs: <label>` for every function whose body differs, before the first-difference block.
 // Exits 1 when anything differs. "first" is the expected side (Haxe), "second" the actual one (hxc).
 class HlCompare {
 	static var tables = ["strings", "bytes", "ints", "floats", "globals", "natives"];
 	static var differs = false;
+	static var all = false;
 
 	static function main() {
 		var args = Sys.args();
+		all = args.remove("--all");
 		if (args.length != 2) {
-			Sys.println("usage: HlCompare <expected dir> <actual dir>");
+			Sys.println("usage: HlCompare [--all] <expected dir> <actual dir>");
 			Sys.exit(2);
 		}
 		var a = args[0], b = args[1];
@@ -73,7 +76,10 @@ class HlCompare {
 			total++;
 			var x = fa.get(label), y = fb.get(label);
 			if (y != null && x.join("\n") == y.join("\n")) same++;
-			else if (firstBad == null && y != null) firstBad = label;
+			else if (y != null) {
+				if (firstBad == null) firstBad = label;
+				if (all) Sys.println("differs: " + label);
+			}
 		}
 		var missing = [for (k in fa.keys()) if (!fb.exists(k)) k];
 		var extra = [for (k in fb.keys()) if (!fa.exists(k)) k];
