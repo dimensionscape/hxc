@@ -95,7 +95,7 @@ rm -f "$marker"
 [ $status = 0 ] || exit $status
 
 # Haxe against itself: files that differ, or that only one Haxe build has, are left out of the comparison.
-unstable="$("$here/hlc-compare.sh" --list "$scratch/h.first" "$scratch/h")"
+unstable="$(bash "$here/hlc-compare.sh" --list "$scratch/h.first" "$scratch/h")"
 if [ -n "$unstable" ]; then
 	echo "Haxe differs from itself; left out of the comparison:"
 	printf '%s\n' "$unstable" | sed 's/^/  /'
@@ -106,7 +106,7 @@ fi
 rm -rf "${scratch:?}/h.first"
 
 n="$(cd "$scratch/h" && find . -type f | wc -l)"
-report="$("$here/hlc-compare.sh" "$scratch/h" "$scratch/x")"
+report="$(bash "$here/hlc-compare.sh" "$scratch/h" "$scratch/x")"
 code=$?
 if [ $code = 0 ]; then
 	echo "files: $n identical"
