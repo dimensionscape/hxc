@@ -1439,3 +1439,43 @@ class P {
 	}
 }
 ===
+
+# An inlined constructor's argument bound to a temp: each read of the temp keeps the read's own type.
+# handle_abstract_casts types the receiver of `map.keys()` (a @:multiType Map<K,V>) as IMap<K,V>, so the
+# inlined read is an IMap<Int, String> and the field access re-resolves to FInstance(IMap, [Int, String]).
+--- inline-ctor-multitype-receiver
+class P {
+	static function main() {
+		for (p in new KeyValueIterator([1 => 'hello'])) {}
+	}
+}
+
+private class KeyValueIterator<K, V> {
+	var map:Map<K, V>;
+	var keys:Iterator<K>;
+
+	public inline function new(map:Map<K, V>) {
+		this.map = map;
+		this.keys = map.keys();
+	}
+
+	public inline function hasNext():Bool {
+		return keys.hasNext();
+	}
+
+	public inline function next():KeyValuePair<K, V> {
+		var key = keys.next();
+		return new KeyValuePair<K, V>(key, map.get(key));
+	}
+}
+
+private class KeyValuePair<K, V> {
+	public var key(default, null):K;
+	public var value(default, null):Null<V>;
+
+	public inline function new(key:K, value:Null<V>) {
+		this.key = key;
+		this.value = value;
+	}
+}
+===

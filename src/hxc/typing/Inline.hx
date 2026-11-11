@@ -1346,9 +1346,13 @@ class Inline {
 					// A local-shaped substitution (a body-local clone or an argument temp) reads like any mapped
 					// node: each READ takes the remapped position, not the declaration's. A non-local argument
 					// value keeps its own position verbatim.
+					// Such a read also keeps its own type (`{e with eexpr = TLocal l.i_subst}`), not the
+					// substitute's: a filter may have retyped it, as handle_abstract_casts types the
+					// receiver of a @:multiType call as the underlying type (a Map<K,V> local read as
+					// IMap<K,V>), and the type map and field re-resolution below must start from that.
 					var read = switch (se.expr) {
 						case TLocal(sv) if (inlinerLocals.exists(sv.id)):
-							TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
+							TypeFunctions.mk(se.expr, e.type, keepPositions ? e.pos : inlinePos);
 						// A function expression inlined at a read has its locals duplicated, so each read
 						// declares
 						// its own - in inlineParams, after the map.
