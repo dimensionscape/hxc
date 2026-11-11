@@ -8,8 +8,9 @@
 # `git status --short` is the same before and after).
 # Haxe builds three times around hxc's build: Haxe -> hxc -> Haxe. Files where the two Haxe builds differ
 # are Haxe's own nondeterminism (or library sources moving under the build); they are listed and left out
-# of the comparison. Haxe runs without HAXE_STD_PATH; hxc gets HAXE_STD_PATH='C:\HaxeToolkit\haxe\std'
-# (backslashes, as Haxe spells its own std path, so debug file names agree).
+# of the comparison. Haxe ($HAXE, default haxe) runs without HAXE_STD_PATH; hxc gets that Haxe's own std,
+# its folder plus \std spelled with backslashes as Haxe spells it, so debug file names agree (default
+# C:\HaxeToolkit\haxe\std when the folder cannot be found).
 # Prints `files: <n> identical` and exits 0, or tools/hlc-compare.sh's report and exits 1.
 set -u
 hxc="${1:?usage: $0 <hxc exe> <scratch dir>}"
@@ -20,14 +21,22 @@ haxe="${HAXE:-haxe}"
 case "$hxc" in */*) hxc="$(cd "$(dirname "$hxc")" && pwd)/$(basename "$hxc")" ;; esac
 native() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 
+# hxc's HAXE_STD_PATH: the std next to the Haxe in use, in Windows spelling.
+hxcstd='C:\HaxeToolkit\haxe\std'
+haxebin="$(command -v "$haxe" 2>/dev/null)"
+if [ -n "$haxebin" ] && [ -d "$(dirname "$haxebin")/std" ]; then
+	hxcstd="$(cygpath -w "$(dirname "$haxebin")/std" 2>/dev/null || printf '%s' "$hxcstd")"
+fi
+
 mkdir -p "$scratch" || exit 2
 scratch="$(cd "$scratch" && pwd)"
 [ -f "$jc/build.android.hxml" ] || { echo "no $jc/build.android.hxml" >&2; exit 2; }
 
-# The first section, with the --hl line swapped for the scratch directory's.
+# The first section, with the --hl line swapped for the scratch directory's and its comments left out.
 section() {
 	awk -v out="$1" '
 		/^[ \t]*--next([ \t]|$)/ { exit }
+		/^[ \t]*#/ { next }
 		/^[ \t]*--hl[ \t]/ { print "--hl " out; next }
 		{ print }
 		END { print "-D no-compilation" }
@@ -35,6 +44,12 @@ section() {
 }
 grep -qE '^[[:space:]]*--hl[[:space:]]' <(awk '/^[ \t]*--next([ \t]|$)/ { exit } { print }' "$jc/build.android.hxml") \
 	|| { echo "the first section of build.android.hxml has no --hl line" >&2; exit 2; }
+# A backstop for the --hl swap: the section as built must not name JoeClash's bin/ anywhere.
+if section "$(native "$scratch/h/main.c")" | grep -q 'bin/'; then
+	echo "the build section still mentions bin/:" >&2
+	section "$(native "$scratch/h/main.c")" | grep 'bin/' | sed 's/^/  /' >&2
+	exit 2
+fi
 
 before="$(git -C "$jc" status --short)"
 marker="$scratch/.start"
@@ -60,7 +75,7 @@ build() {
 
 status=0
 build "Haxe" h env -u HAXE_STD_PATH "$haxe" || status=2
-[ $status = 0 ] && { mv "$scratch/h" "$scratch/h.first"; build "hxc" x env 'HAXE_STD_PATH=C:\HaxeToolkit\haxe\std' "$hxc" || status=2; }
+[ $status = 0 ] && { mv "$scratch/h" "$scratch/h.first"; build "hxc" x env "HAXE_STD_PATH=$hxcstd" "$hxc" || status=2; }
 [ $status = 0 ] && { build "Haxe again" h env -u HAXE_STD_PATH "$haxe" || status=2; }
 
 after="$(git -C "$jc" status --short)"
@@ -80,10 +95,7 @@ rm -f "$marker"
 [ $status = 0 ] || exit $status
 
 # Haxe against itself: files that differ, or that only one Haxe build has, are left out of the comparison.
-unstable="$( { diff -r -q "$scratch/h.first" "$scratch/h" 2>&1 || true; } \
-	| sed -n -e "s|^Files $scratch/h.first/\(.*\) and .* differ\$|\1|p" \
-		-e "s|^Only in $scratch/h.first\(/\?\)\(.*\): \(.*\)\$|\2\1\3|p" \
-		-e "s|^Only in $scratch/h\(/\?\)\(.*\): \(.*\)\$|\2\1\3|p" | sort -u)"
+unstable="$("$here/hlc-compare.sh" --list "$scratch/h.first" "$scratch/h")"
 if [ -n "$unstable" ]; then
 	echo "Haxe differs from itself; left out of the comparison:"
 	printf '%s\n' "$unstable" | sed 's/^/  /'
