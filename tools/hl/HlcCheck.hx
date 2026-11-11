@@ -205,6 +205,42 @@ class HlcCheck {
 		eq("ident (abstract x2, two declarations)", ids5.get(mixedDecl), "t$fun_b11d96e");
 		eq("ident abstract hlc_x", ids5.get(x), "t$hlc_x");
 
+		// A vfield's name string is its class field's cf_name, so fields with one nameOrigin share it (the
+		// hlc-shared-*-names and hlc-separate-field-names cases' types.c). two(a:Box<Int>, b:Box<String>):
+		// apply_params' copies keep Box's "value"; two(a:{value:Int}, b:{value:String}) has two strings.
+		var boxValue = {};
+		function boxes(o1:Null<{}>, o2:Null<{}>):HlType
+			return HFun([
+				HVirtual({vfields: [{name: "value", nameIndex: 47, t: HI32, nameOrigin: o1}], vindex: new Map()}),
+				HVirtual({vfields: [{name: "value", nameIndex: 47, t: str, nameOrigin: o2}], vindex: new Map()})
+			], HI32);
+		// One table each: make_types_idents' types_descs would give the later virtuals the first ones' descs.
+		function boxName(t:HlType):String {
+			var code = emptyCode();
+			code.globals = [t];
+			return HlcNames.makeTypesIdents(new HlTypeTable(code)).get(t);
+		}
+		eq("ident (Box<Int>,Box<String>):i32, one \"value\"", boxName(boxes(boxValue, boxValue)), "t$fun_9d35f87");
+		eq("ident ({value:Int},{value:String}):i32, two \"value\"", boxName(boxes({}, {})), "t$fun_f101870");
+		eq("ident (virtual(value),virtual(value)):i32, no origin", boxName(boxes(null, null)), "t$fun_f101870");
+		// interface IB extends IA { function g(a:IA):Int; }: IB's virtual holds IA's f itself, so "f" is shared
+		// with g's argument, IA's virtual.
+		var fOrigin = {};
+		var fType = HMethod([], HI32);
+		var ia = HVirtual({vfields: [{name: "f", nameIndex: 0, t: fType, nameOrigin: fOrigin}], vindex: new Map()});
+		var ib = HVirtual({
+			vfields: [
+				{name: "g", nameIndex: 0, t: HMethod([ia], HI32), nameOrigin: {}},
+				{name: "f", nameIndex: 0, t: fType, nameOrigin: fOrigin}
+			],
+			vindex: new Map()
+		});
+		var code7 = emptyCode();
+		code7.globals = [ib];
+		var ids7 = HlcNames.makeTypesIdents(new HlTypeTable(code7));
+		eq("ident IB, one \"f\"", ids7.get(ib), "t$vrt_992e488");
+		eq("ident IA", ids7.get(ia), "t$vrt_07f2cb0");
+
 		// make_global_names: the hlc-probe's globals.c, then the global-names probe's.
 		var gcode = stringConstants(["hello ", "s"]);
 		var gn = HlcNames.makeGlobalNames(gcode, ["", ""]);

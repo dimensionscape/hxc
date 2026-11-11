@@ -408,11 +408,14 @@ class HlcOcaml {
 	// are the same object give the same OBlockRef, so sharing that hxc keeps is sharing OCaml would see.
 	static var memo = new ObjectMap<{}, OValue>();
 	static var listMemo = new ObjectMap<{}, OValue>();
+	// HlField.nameOrigin -> the OStrings of the names its fields have (one, unless a field was renamed)
+	static var names = new ObjectMap<{}, Array<OString>>();
 
 	// Forgets every value ttypeValue made: call once per output, so one compile's types are not kept alive.
 	public static function resetMemo():Void {
 		memo = new ObjectMap();
 		listMemo = new ObjectMap();
+		names = new ObjectMap();
 	}
 
 	// ttype, from hlcode.ml: constant constructors are ints in declaration order (HVoid 0 .. HDynObj 12),
@@ -610,9 +613,23 @@ class HlcOcaml {
 		return node(l, k, v, r, OInt((hl >= hr ? hl : hr) + 1));
 	}
 
-	// (string * string index * ttype)
+	// (string * string index * ttype). Fields with one nameOrigin hold one OString, as OCaml's tuples hold one
+	// cf_name: an interface's virtual takes its parents' class fields themselves, and apply_params' copies of
+	// an anonymous type's fields keep their strings.
 	static function fieldTuple(f:HlField):OValue
-		return memoBlock(f, () -> [OStr(new OString(f.name)), OInt(f.nameIndex), ttypeValue(f.t)]);
+		return memoBlock(f, () -> [OStr(fieldName(f)), OInt(f.nameIndex), ttypeValue(f.t)]);
+
+	// One OString per origin and name: a field renamed after it was copied (Haxe sets cf_name to a new
+	// string) no longer shares its copies' string.
+	static function fieldName(f:HlField):OString {
+		if (f.nameOrigin == null) return new OString(f.name);
+		var known = names.get(f.nameOrigin);
+		if (known == null) names.set(f.nameOrigin, known = []);
+		for (s in known) if (s.s == f.name) return s;
+		var s = new OString(f.name);
+		known.push(s);
+		return s;
+	}
 
 	// (int * int)
 	static function bindingTuple(b:{fid:Int, fidx:Int}):OValue

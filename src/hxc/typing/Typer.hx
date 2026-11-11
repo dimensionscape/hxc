@@ -6040,6 +6040,7 @@ class Typer {
 		TypeFields.forceFieldBody(ctx.com, c, cf);
 		var body = cf.expr == null ? null : foldInlineStatics(ctx, cf.expr);
 		cf2 = new TClassField(cf.name, cf.type, cf.pos, cf.namePos, cf.doc, cf.meta.copy(), Method(MethNormal), cf.params.copy(), body, cf.exprUnoptimized, cf.overloads.copy(), cf.flags);
+		cf2.nameOrigin = TypeFunctions.nameOrigin(cf);
 		TypeFunctions.removeClassFieldFlag(cf2, CfExtern);
 		TypeFunctions.addClassFieldFlag(cf2, CfStatic);
 		c2.statics.set(cf2.name, cf2);

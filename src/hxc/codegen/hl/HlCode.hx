@@ -4,7 +4,10 @@ package hxc.codegen.hl;
 // fundecl, code). OCaml lists become arrays, tuples become anonymous structures, `string index` fields
 // keep their Int and (where hlcode.ml has the name too) the String beside it.
 
-typedef HlField = {name:String, nameIndex:Int, t:HlType};
+// nameOrigin stands for the OCaml string `name` is: two fields with the same origin hold one physical string,
+// which hl2c's Marshal of a type description writes once (HlcOcaml.fieldTuple). A vfield's is its class
+// field's TypeFunctions.nameOrigin; null gives the field a string of its own.
+typedef HlField = {name:String, nameIndex:Int, t:HlType, ?nameOrigin:{}};
 
 // hlcode.ml: class_proto
 typedef HlClassProto = {

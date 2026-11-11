@@ -637,7 +637,8 @@ class HlTypes {
 			case [Method(MethNormal | MethInline), HFun(args, ret)]: HMethod(args, ret);
 			case _: t;
 		}
-		return {name: cf.name, nameIndex: HlContext.allocString(ctx, cf.name), t: t};
+		// genhl's tuple holds cf.cf_name itself, the string `{cf with ...}` copies keep
+		return {name: cf.name, nameIndex: HlContext.allocString(ctx, cf.name), t: t, nameOrigin: TypeFunctions.nameOrigin(cf)};
 	}
 
 	// genhl.ml: field_type

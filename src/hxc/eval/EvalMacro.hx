@@ -529,6 +529,8 @@ class EvalMacro {
 							case _: throw new TypingError("map_anon_ref: expected function", curPos);
 						};
 						var nf = TypeFunctions.mkField(f.name, decodeType(ec, mappedV), f.pos, f.namePos);
+						// Haxe's map copies the field ({f with cf_type}), keeping its name string
+						nf.nameOrigin = TypeFunctions.nameOrigin(f);
 						nf.meta = f.meta;
 						nf.kind = f.kind;
 						nf.flags = f.flags;

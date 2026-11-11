@@ -459,3 +459,86 @@ class P {
 	}
 }
 ===
+
+--- hlc-shared-interface-names
+// A field name string that two virtuals share. genhl names a vfield by cf_name itself, and an interface's
+// virtual takes its parents' fields as the very class fields: IB's virtual holds IA's f, and so does IA's own
+// virtual, g's argument. Marshal writes the second "f" as a back-reference, which changes IB's t$vrt_ digest.
+// IC extends IA twice over (through IB and directly), so its virtual holds f twice.
+interface IA {
+	function f():Int;
+}
+
+interface IB extends IA {
+	function g(a:IA):Int;
+}
+
+interface IC extends IB extends IA {
+	function h():Int;
+}
+
+class Impl implements IC {
+	public function new() {}
+
+	public function f():Int
+		return 1;
+
+	public function g(a:IA):Int
+		return a.f() + 1;
+
+	public function h():Int
+		return 3;
+}
+
+class P {
+	static function main() {
+		var i = new Impl();
+		var b:IB = i;
+		var c:IC = i;
+		Sys.println(b.g(i) + c.h());
+	}
+}
+===
+
+--- hlc-shared-typedef-names
+// Field name strings shared through cf copies: Box<Int> and Box<String> are apply_params copies of Box's
+// anonymous type ({cf with cf_type}), so their two virtuals share the one "value" string, and `two`'s
+// t$fun_ digest has a back-reference. Ext's virtual takes Base's x as the same field (structure extension),
+// and so does the intersection Base & {y:String}.
+typedef Box<T> = {value:T};
+typedef Base = {x:Int};
+typedef Ext = {> Base, y:Int};
+
+class P {
+	static function two(a:Box<Int>, b:Box<String>):Int {
+		return a.value + b.value.length;
+	}
+
+	static function ext(a:Base, b:Ext):Int {
+		return a.x + b.x + b.y;
+	}
+
+	static function inter(a:Base, b:Base & {y:String}):Int {
+		return a.x + b.x + b.y.length;
+	}
+
+	static function main() {
+		var n = Std.random(5);
+		Sys.println(two({value: n}, {value: "ab"}) + ext({x: n}, {x: 1, y: 2}) + inter({x: n}, {x: 1, y: "c"}));
+	}
+}
+===
+
+--- hlc-separate-field-names
+// The control for the shared-name cases: two separately written anonymous types {value:Int} and
+// {value:String} have their own "value" strings, so `two`'s digest has no back-reference.
+class P {
+	static function two(a:{value:Int}, b:{value:String}):Int {
+		return a.value + b.value.length;
+	}
+
+	static function main() {
+		Sys.println(two({value: Std.random(5)}, {value: "ab"}));
+	}
+}
+===
