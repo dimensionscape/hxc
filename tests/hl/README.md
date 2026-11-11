@@ -35,3 +35,18 @@ With utest `a94f881` the suite runs to its summary: 0 errors, 0 failures, `ALL T
 haxe-conformance's `corpus unit-hl` builds both compilers against that commit (exported from the installed
 utest's git checkout into a cache, selected with `HAXELIB_PATH`), prints each run's error and failure counts,
 and ignores the `execution time:` line when comparing the runs.
+
+## JoeClash (M5)
+
+JoeClash, a Heaps game with hxsl shaders and HaxeUI, is the large program the HashLink target is checked on.
+Built from the same source and hxml, hxc's `game.hl` is byte-identical to Haxe 4.3.7's in three builds:
+
+- `build.hxml` (the desktop game, optimiser on);
+- the same with `-D hl_no_opt`;
+- `build.drive.hxml` (the same game plus the heaps-drive control channel).
+
+Give hxc `HAXE_STD_PATH` spelled with backslashes, as Haxe's default is, or the debug file names differ.
+
+hxc's driven build passes the game's smoke run on `hl.exe` 2.0.0 (`tools/drive-smoke.mjs`): a move, an end
+of turn and the enemy's turn, a turn to landscape and a tap, with an empty `app.err`. Checked 2026-11-10 at
+`5f21bea7`.
