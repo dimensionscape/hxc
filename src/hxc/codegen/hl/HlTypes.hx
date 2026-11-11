@@ -736,8 +736,8 @@ class HlTypes {
 			pnfields: -1,
 			pinterfaces: [],
 			pbindings: [],
-			pindexAdds: [],
-			pfunctionsAdds: []
+			pindexAdds: ctx.recordPMapAdds ? [] : null,
+			pfunctionsAdds: ctx.recordPMapAdds ? [] : null
 		};
 	}
 
@@ -810,12 +810,12 @@ class HlTypes {
 			var fid = fa.length + startField;
 			var str = HlContext.allocString(ctx, name);
 			p.pindex.set(name, {index: fid, t: HVoid});
-			p.pindexAdds.push({name: name, nameOrigin: origin, index: fid, t: HVoid});
+			if (p.pindexAdds != null) p.pindexAdds.push({name: name, nameOrigin: origin, index: fid, t: HVoid});
 			fa.push({name: name, nameIndex: str, t: HVoid, nameOrigin: origin});
 			ctx.ctDelayed.push(function() {
 				var t = getT();
 				p.pindex.set(name, {index: fid, t: t});
-				p.pindexAdds.push({name: name, nameOrigin: origin, index: fid, t: t});
+				if (p.pindexAdds != null) p.pindexAdds.push({name: name, nameOrigin: origin, index: fid, t: t});
 				p.pfields[fid - startField] = {name: name, nameIndex: str, t: t, nameOrigin: origin};
 			});
 			return fid;
@@ -826,7 +826,7 @@ class HlTypes {
 				case Method(m) if (m != MethDynamic && !statics):
 					var g = allocFid(ctx, c, f);
 					p.pfunctions.set(f.name, g);
-					p.pfunctionsAdds.push({name: f.name, nameOrigin: TypeFunctions.nameOrigin(f), index: g, t: HVoid});
+					if (p.pfunctionsAdds != null) p.pfunctionsAdds.push({name: f.name, nameOrigin: TypeFunctions.nameOrigin(f), index: g, t: HVoid});
 					var virt:Null<Int> = if (TypeFunctions.hasClassFieldFlag(f, CfOverride)) {
 						var idx = getIndex(f.name, p);
 						if (idx == null) HlContext.die();
@@ -837,7 +837,7 @@ class HlTypes {
 						var vid = virtuals.length;
 						virtuals.push(g);
 						p.pindex.set(f.name, {index: -vid - 1, t: HVoid});
-						p.pindexAdds.push({name: f.name, nameOrigin: TypeFunctions.nameOrigin(f), index: -vid - 1, t: HVoid});
+						if (p.pindexAdds != null) p.pindexAdds.push({name: f.name, nameOrigin: TypeFunctions.nameOrigin(f), index: -vid - 1, t: HVoid});
 						vid;
 					} else null;
 					pa.push({

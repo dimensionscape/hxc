@@ -26,8 +26,8 @@ typedef HlClassProto = {
 	pinterfaces:Array<{t:HlType, index:Int}>,
 	pbindings:Array<{fid:Int, fidx:Int}>,
 	// genhl's PMap.add calls on pindex and pfunctions, in order, for hl2c's type digest (HlcOcaml models the
-	// maps from them). HlTypes.classType keeps them; a proto made elsewhere has none, and its maps stay
-	// unmodelled.
+	// maps from them). HlTypes.classType keeps them for HL/C output (HlContext.recordPMapAdds); a proto made
+	// elsewhere, or for bytecode, has none, and its maps stay unmodelled.
 	?pindexAdds:Array<HlPMapAdd>,
 	?pfunctionsAdds:Array<HlPMapAdd>
 }

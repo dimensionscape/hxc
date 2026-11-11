@@ -404,6 +404,7 @@ class HlGenerate {
 		}
 		var ctx = new HlContext(com);
 		ctx.isMacro = isMacro;
+		ctx.recordPMapAdds = fileExtension(com.file) == "c";
 		ctx.optimize = !com.defines.rawDefined("hl_no_opt");
 		ctx.m = new HlMethodContext(0, HVoid, HlContext.nullCapture(), false);
 		ctx.arrayImpl = {

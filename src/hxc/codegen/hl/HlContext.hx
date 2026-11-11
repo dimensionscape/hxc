@@ -99,6 +99,9 @@ class HlContext {
 	public var overrides:Map<String, Bool> = new Map();
 	public var definedFuns:Map<Int, Bool> = new Map();
 	public var isMacro:Bool;
+	// Whether class protos keep genhl's PMap.add calls (HlClassProto.pindexAdds, pfunctionsAdds): only the
+	// type digests of HL/C (`--hl x.c`) read them.
+	public var recordPMapAdds = false;
 	public var cachedTypes:Map<String, HlType> = new Map();
 	public var m:HlMethodContext;
 	// A PMap under OCaml's polymorphic compare in genhl.ml, so an anon finds any structurally equal one, not
