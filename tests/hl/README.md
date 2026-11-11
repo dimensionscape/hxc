@@ -95,5 +95,7 @@ Not covered yet:
   class fields have one nameOrigin (TClassField.nameOrigin: the field itself, or the field a copy was made
   from), so an interface's inherited fields and the `{cf with ...}` copies of apply_params, structure
   extension and map_anon_ref share. Haxe also shares a name a macro takes out of a field and builds a new
-  field from (decode_string returns the same string), and the name of an object declaration typed twice;
-  hxc gives such fields names of their own.
+  field from (decode_string returns the same string), a string literal or variable a macro uses as the
+  name of fields it builds on separate calls (one string in the macro's code; for example, two typedefs
+  built by one `onTypeNotFound` macro, both as arguments of one function), and the name of an object
+  declaration typed twice; hxc gives such fields names of their own, so those type names differ from Haxe's.
