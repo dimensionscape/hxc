@@ -42,16 +42,8 @@ class HlIntrinsics {
 	}
 
 	// hlcode.ml: hl_hash, over the string's UTF-8 bytes up to the first NUL
-	static function hlHash(s:String):Int {
-		var b = haxe.io.Bytes.ofString(s);
-		var h = 0;
-		for (i in 0...b.length) {
-			var c = b.get(i);
-			if (c == 0) break;
-			h = h * 223 + c;
-		}
-		return h % 0x1FFFFF7B;
-	}
+	static inline function hlHash(s:String):Int
+		return HlcNames.hlHash(s);
 
 	// `$bsetui8`, `$bsetui16`, `$bseti32`, `$bseti64`, `$bsetf32`, `$bsetf64`
 	static function bset(ctx:HlContext, args:Array<TExpr>, vt:HlType, mk:(Int, Int, Int) -> HlOp):Int {

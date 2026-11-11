@@ -222,6 +222,72 @@ class HlcOcaml {
 		}
 	}
 
+	// Polymorphic `compare a b` (compare.c, total), as its sign: physically equal values are equal; an
+	// immediate is below any block and ints compare by value; blocks compare by tag (String_tag 252 and
+	// Double_tag 253 above every structured tag), then strings by bytes then length, doubles with nan equal
+	// to itself and below every other float, structured blocks by size and then field by field, depth first.
+	// Reaching the sentinel throws, as in equal. A walk deeper than 100000 throws too: OCaml would not end.
+	public static function compare(a:OValue, b:OValue):Int
+		return cmpRec(a, b, "root", 0);
+
+	static function cmpRec(a:OValue, b:OValue, path:String, depth:Int):Int {
+		if (depth > 100000) throw new Unmodelled(path + " (compare does not end)");
+		switch [a, b] {
+			case [OBlock(x), _] if (x == UNMODELLED):
+				throw new Unmodelled(path);
+			case [_, OBlock(y)] if (y == UNMODELLED):
+				throw new Unmodelled(path);
+			case [OInt(x), OInt(y)]:
+				return x < y ? -1 : x > y ? 1 : 0;
+			case [OInt(_), _]:
+				return -1;
+			case [_, OInt(_)]:
+				return 1;
+			default:
+		}
+		var ta = tagOf(a), tb = tagOf(b);
+		if (ta != tb) return ta < tb ? -1 : 1;
+		switch [a, b] {
+			case [OStr(x), OStr(y)]:
+				if (x == y) return 0;
+				var bx = x.bytes(), by = y.bytes();
+				var n = bx.length < by.length ? bx.length : by.length;
+				for (i in 0...n) {
+					var cx = bx.get(i), cy = by.get(i);
+					if (cx != cy) return cx < cy ? -1 : 1;
+				}
+				return bx.length < by.length ? -1 : bx.length > by.length ? 1 : 0;
+			case [ODouble(x), ODouble(y)]:
+				if (x < y) return -1;
+				if (x > y) return 1;
+				if (x != y) {
+					if (x == x) return 1;
+					if (y == y) return -1;
+				}
+				return 0;
+			case [OBlock(x), OBlock(y)]:
+				if (x == y) return 0;
+				var n = x.fields.length;
+				if (n != y.fields.length) return n < y.fields.length ? -1 : 1;
+				for (i in 0...n) {
+					var c = cmpRec(x.fields[i], y.fields[i], path + "." + i, depth + 1);
+					if (c != 0) return c;
+				}
+				return 0;
+			default:
+				throw "unreachable";
+		}
+	}
+
+	static function tagOf(v:OValue):Int {
+		return switch v {
+			case OStr(_): 252;
+			case ODouble(_): 253;
+			case OBlock(b): b.tag;
+			case OInt(_): -1;
+		}
+	}
+
 	// ---- runtime/extern.c ----
 
 	// Marshal.to_bytes v [Marshal.Closures]: the 20-byte small header (magic, data length, object count,

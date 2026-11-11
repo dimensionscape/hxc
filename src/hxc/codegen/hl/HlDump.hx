@@ -161,7 +161,7 @@ class HlDump {
 	}
 
 	// OCaml's String.escaped, on the UTF-8 bytes of the string
-	static function escaped(s:String):String {
+	public static function escaped(s:String):String {
 		var b = Bytes.ofString(s);
 		var out = new StringBuf();
 		for (i in 0...b.length) {

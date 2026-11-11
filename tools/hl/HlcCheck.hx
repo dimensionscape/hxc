@@ -1,6 +1,7 @@
 import haxe.io.Bytes;
 import hxc.codegen.hl.HlCode;
 import hxc.codegen.hl.HlcOcaml;
+import hxc.codegen.hl.HlcNames;
 import hxc.codegen.hl.HlDump.HlHashOrder;
 
 // Checks HlcOcaml's models of OCaml's Hashtbl.hash, Hashtbl and Marshal against values Haxe 4.3.7 produced:
@@ -94,6 +95,188 @@ class HlcCheck {
 			case [OStr(s), OInt(i)]: s.s + "," + i;
 			default: "?";
 		}
+	}
+
+	static function emptyCode():HlCodeData {
+		return {
+			version: 4,
+			entrypoint: 0,
+			strings: [],
+			ints: [],
+			floats: [],
+			bytes: [],
+			globals: [],
+			natives: [],
+			functions: [],
+			debugfiles: [],
+			constants: []
+		};
+	}
+
+	// A code whose globals are String constants with these values, in this order.
+	static function stringConstants(values:Array<String>):HlCodeData {
+		var code = emptyCode();
+		var str = HObj(proto("String"));
+		for (i in 0...values.length) {
+			code.strings.push(values[i]);
+			code.globals.push(str);
+			code.constants.push({global: i, fields: [i, values[i].length]});
+		}
+		return code;
+	}
+
+	// HlcNames against Haxe 4.3.7's HL/C output (scratch probes; the sources are in the Task 3 report).
+	static function namesChecks() {
+		var str = HObj(proto("String"));
+
+		// make_types_idents: the five function types of the hlc-probe's types.c, and the types under them.
+		var code = emptyCode();
+		var funs = [HFun([HI32], str), HFun([HBytes, HI32], str), HFun([HDyn], HBytes), HFun([HBytes], str), HFun([str, str], str)];
+		code.globals = funs.copy();
+		var ids = HlcNames.makeTypesIdents(new HlTypeTable(code));
+		eq("ident (i32):String", ids.get(funs[0]), "t$fun_431710a");
+		eq("ident (bytes,i32):String", ids.get(funs[1]), "t$fun_7daa93c");
+		eq("ident (dyn):bytes", ids.get(funs[2]), "t$fun_83f90f5");
+		eq("ident (bytes):String", ids.get(funs[3]), "t$fun_07b476c");
+		eq("ident (String,String):String", ids.get(funs[4]), "t$fun_2e5590a");
+		eq("ident String", ids.get(str), "t$String");
+		eq("ident i32", ids.get(HI32), "t$_i32");
+		eq("ident bytes", ids.get(HBytes), "t$_bytes");
+		eq("ident void", ids.get(HVoid), "t$_void");
+		// Names that are not function types (the hlc-probe and the sharing probe's types.c).
+		var nul = HNull(HI32);
+		var code2 = emptyCode();
+		var abs = HAbstract("hl_bytes_map", 0);
+		var dynObj = HObj(proto("$String"));
+		code2.globals = [nul, HRef(HBool), abs, dynObj, HObj(proto("hl.types.ArrayBase"))];
+		var ids2 = HlcNames.makeTypesIdents(new HlTypeTable(code2));
+		eq("ident null(i32)", ids2.get(nul), "t$nul_i32");
+		eq("ident ref(bool)", ids2.get(HRef(HBool)), "t$ref_bool");
+		eq("ident abstract", ids2.get(abs), "t$hl_bytes_map");
+		eq("ident $String", ids2.get(dynObj), "t$$String");
+		eq("ident dotted", ids2.get(code2.globals[4]), "t$hl_types_ArrayBase");
+
+		// Sharing inside a marshalled desc (the sharing probe's types.c). genhl's to_type builds each HNull and
+		// HRef afresh, so two in one function type are distinct blocks; a shared one is a back-reference and
+		// gives another name. The abstract's three uses are one object here (one name string in genhl), and
+		// one virtual proto reached twice is one DVirtual.
+		var code3 = emptyCode();
+		var nullsApart = HFun([HNull(HI32), HNull(HI32)], HNull(HI32));
+		var nullShared = HNull(HI32);
+		var oneApart = HFun([HNull(HI32)], HNull(HI32));
+		var oneShared = HFun([nullShared], nullShared);
+		var mixed = HFun([HNull(HF64), HRef(HF64), HNull(HF64), HRef(HF64)], HVoid);
+		var absFun = HFun([abs, abs], abs);
+		var inner = HVirtual({vfields: [{name: "x", nameIndex: 0, t: HI32}], vindex: new Map()});
+		var outer = HVirtual({vfields: [{name: "x", nameIndex: 0, t: HI32}, {name: "y", nameIndex: 0, t: inner}], vindex: new Map()});
+		var twice = HFun([outer, outer], HVoid);
+		var recProto:HlVirtualProto = {vfields: [], vindex: new Map()};
+		var rec = HVirtual(recProto);
+		recProto.vfields = [{name: "next", nameIndex: 0, t: rec}, {name: "v", nameIndex: 0, t: HI32}];
+		var recFun = HFun([rec, rec], HVoid);
+		code3.globals = [nullsApart, oneApart, mixed, absFun, twice, recFun];
+		var ids3 = HlcNames.makeTypesIdents(new HlTypeTable(code3));
+		eq("ident (null(i32),null(i32)):null(i32)", ids3.get(nullsApart), "t$fun_c61184d");
+		eq("ident (null(i32)):null(i32)", ids3.get(oneApart), "t$fun_5a98bcd");
+		eq("ident (null(f64),ref(f64),null(f64),ref(f64)):void", ids3.get(mixed), "t$fun_3c9cb46");
+		eq("ident (abstract x3)", ids3.get(absFun), "t$fun_cdd866e");
+		eq("ident virtual(x,y:virtual(x))", ids3.get(outer), "t$vrt_4edc966");
+		eq("ident virtual(x)", ids3.get(inner), "t$vrt_7ef285a");
+		eq("ident (virtual,virtual):void", ids3.get(twice), "t$fun_c8b47b0");
+		eq("ident virtual(next:...,v)", ids3.get(rec), "t$vrt_a19e6bb");
+		eq("ident (rec,rec):void", ids3.get(recFun), "t$fun_53f504f");
+		var code4 = emptyCode();
+		code4.globals = [oneShared];
+		check("shared null(i32) is a back-reference", HlcNames.makeTypesIdents(new HlTypeTable(code4)).get(oneShared) != "t$fun_5a98bcd");
+
+		// make_global_names: the hlc-probe's globals.c, then the global-names probe's.
+		var gcode = stringConstants(["hello ", "s"]);
+		var gn = HlcNames.makeGlobalNames(gcode, ["", ""]);
+		eq("global hello", gn[0], "s$hello_");
+		eq("global s", gn[1], "s$s");
+		var values = ["a b", "a_b", "a-b", "0123456789012345678901234567890123456789", "_", "84c4047", "(", "!", "?", "zz", "zz ", "h\u00e9llo", "x\ty",
+			StringTools.lpad("", "A", 80), "abcdefghijklmnopqrstuvwxyz012345", "abcdefghijklmnopqrstuvwxyz0123456", "q\"\\n\r\x01z"];
+		var want = ["s$0cc9cd4", "s$dbf08e0", "s$8ca2ed5", "s$9f0ae03", "s$b14a7b8", "s$84c4047_1", "s$84c4047", "s$9033e0e", "s$d1457b7", "s$zz", "s$zz_",
+			"s$h_llo", "s$x_y", "s$d1d9abe", "s$abcdefghijklmnopqrstuvwxyz012345", "s$2e34e06", "s$q_n_z"];
+		var gn2 = HlcNames.makeGlobalNames(stringConstants(values), [for (_ in values) ""]);
+		for (i in 0...values.length) eq("global " + HlcNames.ocamlEscaped(values[i]), gn2[i], want[i]);
+
+		// short_digest, the hash of a field name (types.c's field tables) and the collision loop (hl_hash of
+		// fcbzlgd and fhnmljx is the same; Haxe hashed fcbzlgd first).
+		eq("short_digest (", HlcNames.shortDigest("("), "84c4047");
+		eq("short_digest \\n", HlcNames.shortDigest("\n"), "68b329d");
+		eq("hl_hash __type__", HlcNames.hlHash("__type__"), -10071174);
+		eq("hl_hash bytes", HlcNames.hlHash("bytes"), -40368287);
+		eq("hl_hash toString", HlcNames.hlHash("toString"), 409915697);
+		eq("hl_hash __implementedBy__", HlcNames.hlHash("__implementedBy__"), 25734275);
+		var hc = new HashCache();
+		var hstrings = ["fcbzlgd", "fhnmljx"];
+		eq("hash fcbzlgd", hc.hash(hstrings, 0), -451069868);
+		eq("hash fhnmljx", hc.hash(hstrings, 1), -451069867);
+		eq("hash fcbzlgd again", hc.hash(hstrings, 0), -451069868);
+		eq("hash order", hc.order.join(","), "0,1");
+
+		// string: USTR with s_escape below 64 bytes, string$<digest> from 64 (globals.c).
+		var scode = emptyCode();
+		scode.strings = ["q\"\\n\r\x01z", "h\u00e9llo", StringTools.lpad("", "A", 80)];
+		var defs = [];
+		eq("string escaped", HlcNames.stringLiteral(scode, 0, defs.push), 'USTR("q\\"\\\\n\\r\\x01z")');
+		eq("string utf8", HlcNames.stringLiteral(scode, 1, defs.push), 'USTR("h\u00e9llo")');
+		eq("string long", HlcNames.stringLiteral(scode, 2, defs.push), "string$d1d9abe");
+		eq("string long define", defs.join("|"), "extern vbyte string$d1d9abe[];");
+
+		// The OFloat text (the float probes' _std/P.c).
+		var negZero = haxe.io.FPHelper.i64ToDouble(0, 0x80000000);
+		var floats:Array<{f:Float, s:String}> = [
+			{f: 0.1, s: "0.10000000000000001"},
+			{f: 1e300, s: "1.0000000000000001e+300"},
+			{f: 5e-324, s: "4.9406564584124654e-324"},
+			{f: negZero, s: "-0."},
+			{f: Math.POSITIVE_INFINITY, s: "inf."},
+			{f: Math.NEGATIVE_INFINITY, s: "-inf."},
+			{f: 1.0, s: "1."},
+			{f: 100.0, s: "100."},
+			{f: 1e21, s: "1e+021"},
+			{f: 1e-7, s: "9.9999999999999995e-008"},
+			{f: 1e18, s: "1000000000000000000."},
+			{f: 1e19, s: "1e+019"},
+			{f: 0.3, s: "0.29999999999999999"},
+			{f: 2.0 / 3.0, s: "0.66666666666666663"},
+			{f: 1e-5, s: "1.0000000000000001e-005"},
+			{f: 0.0001, s: "0.0001"},
+			{f: 2.5e-310, s: "2.5000000000000171e-310"},
+			{f: 1.7976931348623157e308, s: "1.7976931348623157e+308"},
+			{f: 3.0e15, s: "3000000000000000."},
+			{f: 123456789012345678901234.0, s: "1.2345678901234569e+023"},
+			// exact ties at the 17th digit round down
+			{f: 100000000000000.125, s: "100000000000000.12"},
+			{f: 100000000000000.375, s: "100000000000000.37"},
+			{f: 1000000000000000.75, s: "1000000000000000.7"},
+			{f: 1152921504606846976.0, s: "1152921504606847000."},
+			{f: 0.99999999999999999, s: "1."},
+			{f: 0.9999999999999999, s: "0.99999999999999989"},
+			{f: 2.2250738585072009e-308, s: "2.2250738585072009e-308"}
+		];
+		for (v in floats) eq("float " + v.s, HlcNames.floatLiteral(v.f), v.s);
+
+		// String.escaped (OCaml), on UTF-8 bytes.
+		eq("escaped", HlcNames.ocamlEscaped("a\"b\\c\n\t\x01\u00e9"), "a\\\"b\\\\c\\n\\t\\001\\195\\169");
+
+		// ident and the C types.
+		// (a keyword probe's _std/P.h: fields int, t and plain; the hlc-probe's __constructor__)
+		eq("ident int", HlcNames.ident("int"), "_hx_int");
+		eq("ident t", HlcNames.ident("t"), "_hx_t");
+		eq("ident plain", HlcNames.ident("plain"), "plain");
+		eq("ident __constructor__", HlcNames.ident("__constructor__"), "_hx___constructor__");
+		eq("var_type", HlcNames.varType("int", HI32), "int _hx_int");
+		eq("ctype String", HlcNames.ctype(str), "String");
+		eq("ctype $String", HlcNames.ctype(HObj(proto("$String"))), "$String");
+		eq("ctype hl.types.ArrayBase", HlcNames.ctype(HObj(proto("hl.types.ArrayBase"))), "hl__types__ArrayBase");
+		eq("ctype abstract", HlcNames.ctype(abs), "hl_bytes_map*");
+		eq("ctype ref(i32)", HlcNames.ctype(HRef(HI32)), "int*");
+		eq("ctype enum", HlcNames.ctype(HEnum({ename: "haxe.io.Error", eid: 1, eglobal: null, efields: []})), "venum*");
+		eq("args_repr", HlcNames.argsRepr([HBytes, HI32, HRef(HI32)]), "vbyte*,int,int*");
+		eq("args_repr void", HlcNames.argsRepr([]), "void");
 	}
 
 	static function main() {
@@ -196,6 +379,8 @@ class HlcCheck {
 		var apart = HlcOcaml.marshal(OBlock(new OBlockRef(0, [OStr(s), OStr(new OString("ab"))])));
 		eq("marshal apart", apart.sub(20, apart.length - 20).toHex(), "a0" + "226162" + "226162");
 		eq("marshal header", shared.sub(0, 20).toHex(), "8495a6be" + "00000006" + "00000002" + "00000005" + "00000005");
+
+		namesChecks();
 
 		if (failures > 0) {
 			Sys.println("HlcCheck: " + failures + " check(s) failed");
