@@ -1396,7 +1396,11 @@ class P {
 ===
 
 # Float literals keep their `_` separators in TFloat, and genhl reads them with float_of_string.
-# (A float constant cannot reach an Int, UI8 or UI16 slot from typable Haxe: Float should be Int.)
+# A float default cannot reach an Int, UI8 or UI16 slot (HlFunctions' Int paths) in Haxe 4.3.7: plain
+# Int, hl.UI8 and hl.UI16 give "Float should be Int" (or hl.UI8, hl.UI16, Null<...>), and so do abstracts
+# over Int or hl.UI8 with a @:from Float function ("Float should be A", "Float should be Null<A>");
+# `abstract A(Int) from Float` gives "You can only declare from/to with compatible types".
+# `.5e1_0` and `1_e5` are not lexed ("Expected , or )").
 --- float-separators
 class F {
 	public var d:Float;
@@ -1423,6 +1427,8 @@ class P {
 		trace(.3_4_5);
 		trace(1_2e3_4);
 		trace(1_2.3e4_5);
+		trace(1_2E3_4);
+		trace(1e-1_0);
 		trace(12.3_4f64);
 		trace(12.3_4_f64);
 		trace(-1_0.5);
