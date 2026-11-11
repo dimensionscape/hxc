@@ -246,13 +246,13 @@ class HlFunctions {
 					case HUI8 | HUI16 | HI32 | HI64:
 						switch c.expr {
 							case TConst(TInt(i)): ctx.op(OInt(t, ctx.allocI32(i)));
-							case TConst(TFloat(s)): ctx.op(OInt(t, ctx.allocI32(Std.int(Std.parseFloat(s)))));
+							case TConst(TFloat(s)): ctx.op(OInt(t, ctx.allocI32(Std.int(hxc.core.Numeric.parseFloatLit(s)))));
 							case _: HlContext.die();
 						}
 					case HF32 | HF64:
 						switch c.expr {
 							case TConst(TInt(i)): ctx.op(OFloat(t, ctx.allocFloat(i)));
-							case TConst(TFloat(s)): ctx.op(OFloat(t, ctx.allocFloat(Std.parseFloat(s))));
+							case TConst(TFloat(s)): ctx.op(OFloat(t, ctx.allocFloat(hxc.core.Numeric.parseFloatLit(s))));
 							case _: HlContext.die();
 						}
 					case HBool:
@@ -284,7 +284,7 @@ class HlFunctions {
 						ctx.op(OToDyn(r, tmp));
 					case TConst(TFloat(s)) if (underlying().match(HUI8 | HUI16 | HI32 | HI64)):
 						var tmp = ctx.allocTmp(HI32);
-						ctx.op(OInt(tmp, ctx.allocI32(Std.int(Std.parseFloat(s)))));
+						ctx.op(OInt(tmp, ctx.allocI32(Std.int(hxc.core.Numeric.parseFloatLit(s)))));
 						ctx.op(OToDyn(r, tmp));
 					case TConst(TInt(i)):
 						var tmp = ctx.allocTmp(HF64);
@@ -292,7 +292,7 @@ class HlFunctions {
 						ctx.op(OToDyn(r, tmp));
 					case TConst(TFloat(s)):
 						var tmp = ctx.allocTmp(HF64);
-						ctx.op(OFloat(tmp, ctx.allocFloat(Std.parseFloat(s))));
+						ctx.op(OFloat(tmp, ctx.allocFloat(hxc.core.Numeric.parseFloatLit(s))));
 						ctx.op(OToDyn(r, tmp));
 					case TConst(TBool(b)):
 						var tmp = ctx.allocTmp(HBool);

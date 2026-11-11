@@ -1394,3 +1394,42 @@ class P {
 	}
 }
 ===
+
+# Float literals keep their `_` separators in TFloat, and genhl reads them with float_of_string.
+# (A float constant cannot reach an Int, UI8 or UI16 slot from typable Haxe: Float should be Int.)
+--- float-separators
+class F {
+	public var d:Float;
+	public var n:Null<Float>;
+
+	public function new() {
+		d = 1_2.3_4;
+		n = 1_2.3_4;
+	}
+}
+
+class P {
+	static function defFloat(a:Float = 1_2.3_4, ?b:Float = 1_2.3_4) {
+		trace(a, b);
+	}
+
+	static function defNull(?a:Null<Float> = 1_2.5, ?b:Null<Float> = 1_2.3_4) {
+		trace(a, b);
+	}
+
+	static function main() {
+		trace(12.3_4);
+		trace(1_2.3_4);
+		trace(.3_4_5);
+		trace(1_2e3_4);
+		trace(1_2.3e4_5);
+		trace(12.3_4f64);
+		trace(12.3_4_f64);
+		trace(-1_0.5);
+		var f = new F();
+		trace(f.d, f.n);
+		defFloat();
+		defNull();
+	}
+}
+===

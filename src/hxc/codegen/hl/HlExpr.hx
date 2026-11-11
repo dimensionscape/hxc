@@ -60,7 +60,7 @@ class HlExpr {
 						return r;
 					case TFloat(f):
 						var r = ctx.allocTmp(HF64);
-						ctx.op(OFloat(r, ctx.allocFloat(Std.parseFloat(f))));
+						ctx.op(OFloat(r, ctx.allocFloat(hxc.core.Numeric.parseFloatLit(f))));
 						return r;
 					case TBool(b):
 						var r = ctx.allocTmp(HBool);
