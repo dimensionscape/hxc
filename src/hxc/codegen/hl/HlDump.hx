@@ -355,7 +355,7 @@ class HlDump {
 // (capacity - 1) and doubles when the size exceeds twice the capacity (a resize keeps the relative order
 // within a bucket), replacing a key keeps its position, and fold visits buckets ascending, each front to
 // back. This is hxc.core.NameHash.stringHash and HashTableOrder, copied because those pull in the rest of
-// hxc.core and this package must stand alone.
+// hxc.core and this package must stand alone; the hash itself is HlcOcaml's.
 class HlHashOrder {
 	var cap = 16;
 	var size = 0;
@@ -384,46 +384,7 @@ class HlHashOrder {
 		return out;
 	}
 
-	static inline function rotl(x:Int, n:Int):Int return ((x << n) | (x >>> (32 - n)));
-
-	static inline function mul32(a:Int, b:Int):Int {
-		var aLo = a & 0xFFFF, aHi = a >>> 16;
-		return ((aLo * b) + (((aHi * b) & 0xFFFF) << 16)) | 0;
-	}
-
-	static function mix(h:Int, d:Int):Int {
-		d = mul32(d, 0xcc9e2d51);
-		d = rotl(d, 15);
-		d = mul32(d, 0x1b873593);
-		h ^= d;
-		h = rotl(h, 13);
-		h = mul32(h, 5) + 0xe6546b64;
-		return h | 0;
-	}
-
-	static function stringHash(s:String):Int {
-		var b = Bytes.ofString(s);
-		var n = b.length;
-		var i = 0;
-		var h = 0;
-		while (i + 4 <= n) {
-			h = mix(h, b.get(i) | (b.get(i + 1) << 8) | (b.get(i + 2) << 16) | (b.get(i + 3) << 24));
-			i += 4;
-		}
-		var r = n & 3;
-		if (r != 0) {
-			var w = 0;
-			if (r == 3) w = b.get(i + 2) << 16;
-			if (r >= 2) w |= b.get(i + 1) << 8;
-			w |= b.get(i);
-			h = mix(h, w);
-		}
-		h ^= n;
-		h ^= h >>> 16;
-		h = mul32(h, 0x85ebca6b);
-		h ^= h >>> 13;
-		h = mul32(h, 0xc2b2ae35);
-		h ^= h >>> 16;
-		return h & 0x3FFFFFFF;
-	}
+	// Hashtbl.hash on a string: HlcOcaml's caml_hash mixing, from seed 0.
+	public static function stringHash(s:String):Int
+		return HlcOcaml.finalMix(HlcOcaml.mixString(0, Bytes.ofString(s))) & 0x3FFFFFFF;
 }
