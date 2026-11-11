@@ -8,30 +8,25 @@ same way: after `START` and about 0.6 s, `Uncaught exception: Null access`, call
 `utest.ui.text.PrintReport._trace` (PrintReport.hx:52), because `haxe.Log.trace` is null by then. It happens
 with Haxe's own `unit.hl`, so it is not an hxc problem.
 
-### Which test leaves `haxe.Log.trace` null, and why
+### Why `haxe.Log.trace` is null
 
 `tests/unit/src/unitstd/haxe/Log.unit.hx` (compiled to `unit.spec.haxe.TestLog.test`) sets
-`haxe.Log.trace = null`, calls `exc(function() trace("exc test"))`, and restores `haxe.Log.trace = old` on the
-next line. The restore never runs:
+`haxe.Log.trace = null`, calls `exc(function() trace("exc test"))`, and restores it on the next line. The
+restore never runs, because `unit.Test.exc` is `Assert.raises(f, pos)` and that call throws out of the test:
 
-- `unit.Test.exc` is `Assert.raises(f, pos)`, but `Assert.raises(method, ?type:Any, ?msgNotThrown, ?msgWrongType, ?pos)`
-  takes the type second. So the PosInfos object is passed as `type`.
-- `_raisesImpl` starts with `type != null ? "exception of type " + Type.getClassName(type) : ...`, before its
-  `try`. On HashLink `Type.getClassName` of an anonymous object throws `Can't cast dynobj to hl.Class`. Other
-  targets return null there.
-- So every `exc(...)` call throws out of the test body. utest records it as an error (20 of them in the whole
-  suite) and carries on with the next test. For TestLog this skips the restore, and the final report's
-  `haxe.Log.trace(s)` is a call of null.
+- The suite expects utest `a94f881`, the pin in Haxe 4.3.7's CI (`tests/RunCi.hx`). There
+  `raises(method, ?type:Class<Dynamic>, ...)`, so a PosInfos argument skips `type` and binds to `pos`.
+- The installed utest (`a055e05`, 2.0.0-alpha) is UTest 2, where `type` is `Any`. `pos` lands in `type`, and
+  `_raisesImpl`'s `Type.getClassName(type)`, before its `try`, throws `Can't cast dynobj to hl.Class` on
+  HashLink. That throw is a symptom, not the cause.
+- Every `exc(...)` call then aborts its test: utest records 20 errors and carries on. For TestLog the skipped
+  restore leaves `haxe.Log.trace` null, so the final report's `haxe.Log.trace(s)` is a call of null.
 
-Found with Haxe 4.3.7's own build, by replacing `Log.unit.hx` in a copy of tests/unit with `Sys.println` probes:
-`trace` was non-null after the first restore and null after `C set null`; a direct `try { trace("x") } catch`
-caught the null access fine, `Assert.raises(function() trace(...))` returned normally, and `exc(...)` threw
-`Can't cast dynobj to hl.Class`. Ruled out: `-D hl-ver=1.13.0`, the null call itself (it is caught), and
-other tests assigning `haxe.Log.trace` (only TestMain's JS branch and Log.unit.hx do).
+It happens with Haxe's own `unit.hl`, so it is not an hxc problem. Found with Haxe's build by replacing
+`Log.unit.hx` in a copy of tests/unit with `Sys.println` probes. Ruled out: `-D hl-ver=1.13.0`, and the null
+call itself (it is caught).
 
-Compiling with a copy of `unit/Test.hx` that has `Assert.raises(f, null, null, null, pos)` first on the
-class path (`-cp <dir>`; tests/ untouched) gives, with Haxe, `assertations: 10975, successes: 10975,
-errors: 0, failures: 0` and `ALL TESTS OK`.
-
-haxe-conformance's `corpus unit-hl` now does that for both compilers (branch hl-unit, aec50e4), prints
-each run's error and failure counts, and ignores the `execution time:` line when comparing the runs.
+With utest `a94f881` the suite runs to its summary: 0 errors, 0 failures, `ALL TESTS OK`, for Haxe and for hxc.
+haxe-conformance's `corpus unit-hl` builds both compilers against that commit (exported from the installed
+utest's git checkout into a cache, selected with `HAXELIB_PATH`), prints each run's error and failure counts,
+and ignores the `execution time:` line when comparing the runs.
