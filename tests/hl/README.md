@@ -95,16 +95,19 @@ before and after, and no file under bin/android is newer than the start.
 Not covered yet:
 
 - A type digest that reaches a PMap: `hl.Ref` of a class (`static function f(r:hl.Ref<C>)`), of an
-  anonymous type, or of an enum one of whose constructors takes a class or an anonymous type. A type
+  anonymous type, or of an enum one of whose constructors takes a class or an anonymous type (an argument
+  of type String counts: String is a class, so its proto and maps are marshalled too). A type
   description marshals a whole ttype only under HRef (and HNull, which holds no proto), and every class
   proto holds three PMaps (pindex, pfunctions, pinterfaces) and every virtual one (vindex). A PMap holds
   its `compare` closure, which `Marshal.Closures` writes as code pointers with the MD5 of haxe.exe's OCaml
   code as it is in memory. That code holds absolute addresses (`movabs` of C functions such as
   caml_compare) which Windows relocates to wherever it loads haxe.exe, so Haxe's own name for such a type
-  changes with the load address: a byte-identical copy of haxe.exe, loaded elsewhere, names
+  changes with the load address. haxe.exe's name is stable only while its load address is, that is per
+  boot, and a copy of haxe.exe elsewhere names such types differently: a byte-identical copy names
   `(ref(C)):void` t$fun_9e384e2 where haxe.exe names it t$fun_02c4ee9, and the copy's name changes from
-  one run to the next. HlcOcaml models the rest (the protos, their maps as genhl fills them, the sharing of
-  names and of PMap.empty, and the closure's layout in Haxe 4.3.7's Windows haxe.exe) and matches Haxe on
+  one run to the next. That is also why no hlc-output case covers them. HlcOcaml models the rest (the
+  protos, their maps as genhl fills them, the sharing of names and of PMap.empty, and the closure's layout
+  in Haxe 4.3.7's Windows haxe.exe) and matches Haxe on
   a class, a superclass, a graph of classes, methods, overrides, interfaces, toString, dynamic methods,
   std classes, an enum with a String and an anonymous type, with and without hl_no_opt, when given the MD5
   measured for the address haxe.exe was loaded at (HlcCheck keeps two such vectors). Without it hxc stops

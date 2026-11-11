@@ -563,10 +563,11 @@ class HlcOcaml {
 	// class_proto: pname, pid, pclassglobal, psuper, pvirtuals, pproto, pnfields, pfields, pindex, pfunctions,
 	// pinterfaces, pbindings. The PMaps are replayed from the adds HlTypes.classType kept (the sentinel for a
 	// proto made elsewhere): pindex maps a field's name to (index, ttype), the name of a method with
-	// overrides to (-vid-1, HVoid), and "" (genhl's one literal, for every interface field) to the last
-	// interface's; pfunctions maps a method's name to its findex; pinterfaces an interface's ttype to its
-	// field's index. A key is the name string its field tuple or field_proto holds, and pindex shares the
-	// ttype of its field's tuple.
+	// overrides to (-vid-1, HVoid), and "" (genhl's one literal, for every interface field) to the first
+	// interface's, since the delayed adds run newest first and the first interface's is added last;
+	// pfunctions maps a method's name to its findex; pinterfaces an interface's ttype to its field's index.
+	// A key is the name string its field tuple or field_proto holds, and pindex shares the ttype of its
+	// field's tuple.
 	static function classProto(p:HlClassProto):OValue {
 		var key:{} = p;
 		var known = memo.get(key);
@@ -843,7 +844,9 @@ private class Marshaller {
 		blocks.set(HlcOcaml.PMAP_CMP, objCounter++);
 		code32(0x10, HlcOcaml.PMAP_CMP_CURRY);
 		out.add(digest);
-		// CODE_INT64 of Long_val(closinfo): arity 2 in the top byte, environment start 3 below it.
+		// CODE_INT64 of Long_val(closinfo). The closinfo word is 0x0200000000000007 (arity 2 in its top byte,
+		// environment start 3 above the tag bit), and Long_val shifts it right by one: 0x0100000000000003, so
+		// the top byte written is 0x01.
 		out.addByte(0x03);
 		for (b in [0x01, 0, 0, 0, 0, 0, 0, 0x03]) out.addByte(b);
 		code32(0x10, HlcOcaml.PMAP_CMP_CODE);
