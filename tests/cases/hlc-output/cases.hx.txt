@@ -589,3 +589,34 @@ class P {
 	}
 }
 ===
+
+--- hlc-ref-enum
+// hl.Ref of enums: a type description marshals the ttype under HRef whole, here enum protos and no PMap.
+// Constructors with basic arguments, a recursive enum (its proto reached again inside itself), an enum
+// argument, and Option's type parameter (dyn). hl.Ref of a class or an anonymous type reaches a PMap's
+// compare closure, which Haxe writes with the MD5 of its own code as loaded; see tests/hl/README.md.
+enum E { A; B(i:Int); C(x:Float, y:Bool, z:Int); }
+enum L { Nil; Cons(v:Int, next:L); }
+enum W { Wrap(e:E, l:L); }
+
+class P {
+	static function one(r:hl.Ref<E>):Void {}
+
+	static function two(a:hl.Ref<L>, b:hl.Ref<W>):Int {
+		return 0;
+	}
+
+	static function opt(r:hl.Ref<haxe.ds.Option<Int>>, e:hl.Ref<E>):Void {}
+
+	static function main() {
+		var e = B(1);
+		var l = Cons(1, Nil);
+		var w = Wrap(C(1.5, true, 2), l);
+		var o = haxe.ds.Option.Some(3);
+		one(e);
+		Sys.println(two(l, w));
+		opt(o, e);
+		Sys.println(Std.string(e) + " " + Std.string(w));
+	}
+}
+===

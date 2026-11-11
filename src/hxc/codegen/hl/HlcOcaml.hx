@@ -11,9 +11,11 @@ import hxc.codegen.hl.HlCode;
 //   - the polymorphic Hashtbl (stdlib/hashtbl.ml): bucket order of add, replace, resize, iter and fold;
 //   - Marshal.to_bytes v [Marshal.Closures]: runtime/extern.c with sharing, small header.
 // Values are modelled by OValue. Physical identity, which Marshal's sharing and compare's shortcut see, is
-// Haxe object identity of OString and OBlockRef. A field OCaml holds but this model does not (a class proto's
-// PMaps) is the sentinel OBlock(HlcOcaml.UNMODELLED): reaching it in a hash walk, a compare or a marshal throws
-// Unmodelled. A virtual proto's vindex PMap is modelled, with its `compare` closure as OBlock(HlcOcaml.PMAP_CMP).
+// Haxe object identity of OString and OBlockRef. A field OCaml holds but this model does not (the PMaps of a
+// proto HlTypes.classType did not make) is the sentinel OBlock(HlcOcaml.UNMODELLED): reaching it in a hash
+// walk, a compare or a marshal throws Unmodelled. A class proto's pindex, pfunctions and pinterfaces and a
+// virtual proto's vindex are modelled, with their `compare` closure as OBlock(HlcOcaml.PMAP_CMP), which a
+// hash walk cannot mix and a marshal cannot write without Haxe's code MD5 (see PMAP_CMP).
 // This module imports nothing from hxc outside hxc.codegen.hl, so tools/hl/HlcCheck runs under haxe --run.
 
 // An OCaml string (String_tag block). The bytes are the UTF-8 of s.
@@ -58,13 +60,13 @@ enum OValue {
 	ODouble(f:Float);
 }
 
-// Thrown when a hash walk, a compare or a marshal reaches the sentinel. The message is the path from the
-// root, as field indexes ("root.2.0").
+// Thrown when a hash walk, a compare or a marshal reaches the sentinel or the PMap closure. path is where,
+// from the root, as field indexes ("root.2.0"); the message says what was reached, then the path.
 class Unmodelled extends haxe.Exception {
 	public final path:String;
 
-	public function new(path:String) {
-		super(path);
+	public function new(path:String, ?what:String) {
+		super((what == null ? "an OCaml value hxc does not model" : what) + " (" + path + ")");
 		this.path = path;
 	}
 }
@@ -75,7 +77,30 @@ class HlcOcaml {
 	// The `cmp` closure of every PMap built from PMap.empty (ExtLib's `{cmp = compare; map}`): one physical
 	// value (Closure_tag), so compare and equal skip it by identity. Compare raises on two different
 	// closures (not modelled: there is only this one), and a hash walk or a marshal throws Unmodelled on it.
+	// In Haxe 4.3.7's haxe.exe for Windows (OCaml 4.14.0, mingw64) it is the static closure camlPMap__24:
+	// caml_curry2, closure info (arity 2, environment at 3), camlPMap__fun_590, which calls caml_compare.
+	// Marshal.Closures writes a code pointer as its offset in the OCaml code area and the MD5 of that area as
+	// it is in memory. That code holds absolute addresses (movabs of C functions such as caml_compare), which
+	// Windows relocates to where it loads haxe.exe (ASLR, chosen per image and boot), so the MD5, and with it
+	// Haxe's own name for a type whose digest reaches a PMap, changes with the load address: a byte-identical
+	// copy of haxe.exe names `(ref(C)):void` differently. hxc cannot know it, so the hash walk throws
+	// Unmodelled here, and so does the marshal unless haxeCodeDigest is set.
 	public static final PMAP_CMP = new OBlockRef(247, []);
+
+	// PMap.empty: one record, which every proto starts its maps from and which an empty map still is.
+	public static final PMAP_EMPTY = new OBlockRef(0, [OBlock(PMAP_CMP), OInt(0)]);
+
+	// The MD5 of the code area as one haxe.exe process had it, which marshal writes with PMAP_CMP's code
+	// pointers when set. The compiler leaves it null; tools/hl/HlcCheck sets it to values measured for one
+	// load address, to check the rest of a digest that reaches a PMap against Haxe's.
+	public static var haxeCodeDigest:Null<Bytes> = null;
+
+	// The code pointers' offsets in Haxe 4.3.7's haxe.exe for Windows (caml_curry2 and camlPMap__fun_590 from
+	// caml_startup__code_begin, the lowest of caml_code_segments).
+	public static final PMAP_CMP_CURRY = 0x75d0;
+	public static final PMAP_CMP_CODE = 0x6425c0;
+
+	public static final PMAP_CMP_WHAT = "the compare closure of a PMap, which Haxe marshals with the MD5 of its own code as loaded, so Haxe's name changes with the address haxe.exe is loaded at";
 
 	// ---- runtime/hash.c ----
 
@@ -172,7 +197,9 @@ class HlcOcaml {
 					h = mixDouble(h, f);
 					num--;
 				case OBlock(b):
-					if (b == UNMODELLED || b == PMAP_CMP) throw new Unmodelled(queuePath(parent, slot, at));
+					if (b == UNMODELLED) throw new Unmodelled(queuePath(parent, slot, at));
+					// hash.c mixes a closure's code pointers, which are addresses.
+					if (b == PMAP_CMP) throw new Unmodelled(queuePath(parent, slot, at), PMAP_CMP_WHAT);
 					var len = b.fields.length;
 					h = mix(h, (len << 10) | b.tag);
 					for (i in 0...len) {
@@ -411,16 +438,38 @@ class HlcOcaml {
 	// HlField.nameOrigin -> the OStrings of the names its fields have (one, unless a field was renamed)
 	static var names = new ObjectMap<{}, Array<OString>>();
 
+	// A class proto's maps, built once the value they are in is complete (pinterfaces compares types).
+	static var pendingMaps:Array<() -> Void> = [];
+	static var depth = 0;
+
 	// Forgets every value ttypeValue made: call once per output, so one compile's types are not kept alive.
 	public static function resetMemo():Void {
 		memo = new ObjectMap();
 		listMemo = new ObjectMap();
 		names = new ObjectMap();
+		pendingMaps = [];
+		depth = 0;
 	}
 
 	// ttype, from hlcode.ml: constant constructors are ints in declaration order (HVoid 0 .. HDynObj 12),
 	// the others are blocks tagged in declaration order (HFun 0 .. HPacked 9).
 	public static function ttypeValue(t:HlType):OValue {
+		depth++;
+		var v = try ttypeRec(t) catch (e:haxe.Exception) {
+			depth--;
+			pendingMaps = [];
+			throw e;
+		}
+		depth--;
+		if (depth == 0) {
+			depth++;
+			while (pendingMaps.length > 0) pendingMaps.shift()();
+			depth--;
+		}
+		return v;
+	}
+
+	static function ttypeRec(t:HlType):OValue {
 		var c = constIndex(t);
 		if (c >= 0) return OInt(c);
 		var key:{} = cast t;
@@ -430,9 +479,9 @@ class HlcOcaml {
 		var v = OBlock(b);
 		memo.set(key, v);
 		b.fields = switch t {
-			case HFun(args, ret) | HMethod(args, ret): [listOf(args, ttypeValue), ttypeValue(ret)];
+			case HFun(args, ret) | HMethod(args, ret): [listOf(args, ttypeRec), ttypeRec(ret)];
 			case HObj(p) | HStruct(p): [classProto(p)];
-			case HRef(t) | HNull(t) | HPacked(t): [ttypeValue(t)];
+			case HRef(t) | HNull(t) | HPacked(t): [ttypeRec(t)];
 			case HVirtual(vp): [virtualProto(vp)];
 			// One string per HAbstract object: the front end makes one object per hl.Abstract<"..."> declaration,
 			// whose name genhl shares (HlContext.abstractTypes).
@@ -504,7 +553,12 @@ class HlcOcaml {
 	}
 
 	// class_proto: pname, pid, pclassglobal, psuper, pvirtuals, pproto, pnfields, pfields, pindex, pfunctions,
-	// pinterfaces, pbindings. The three PMaps are the sentinel.
+	// pinterfaces, pbindings. The PMaps are replayed from the adds HlTypes.classType kept (the sentinel for a
+	// proto made elsewhere): pindex maps a field's name to (index, ttype), the name of a method with
+	// overrides to (-vid-1, HVoid), and "" (genhl's one literal, for every interface field) to the last
+	// interface's; pfunctions maps a method's name to its findex; pinterfaces an interface's ttype to its
+	// field's index. A key is the name string its field tuple or field_proto holds, and pindex shares the
+	// ttype of its field's tuple.
 	static function classProto(p:HlClassProto):OValue {
 		var key:{} = p;
 		var known = memo.get(key);
@@ -526,7 +580,23 @@ class HlcOcaml {
 			OBlock(UNMODELLED),
 			listOf(p.pbindings, bindingTuple)
 		];
+		if (p.pindexAdds != null && p.pfunctionsAdds != null) pendingMaps.push(() -> {
+			b.fields[8] = pmapOf([
+				for (a in p.pindexAdds)
+					{k: OStr(nameString(a.name, a.nameOrigin)), d: OBlock(new OBlockRef(0, [OInt(a.index), ttypeRec(a.t)]))}
+			]);
+			b.fields[9] = pmapOf([for (a in p.pfunctionsAdds) {k: OStr(nameString(a.name, a.nameOrigin)), d: OInt(a.index)}]);
+			b.fields[10] = pmapOf([for (i in p.pinterfaces) {k: ttypeRec(i.t), d: OInt(i.index)}]);
+		});
 		return v;
+	}
+
+	// PMap.empty and the adds, in order, as one record: PMAP_EMPTY itself when there are none.
+	static function pmapOf(adds:Array<{k:OValue, d:OValue}>):OValue {
+		if (adds.length == 0) return OBlock(PMAP_EMPTY);
+		var map = OInt(0);
+		for (a in adds) map = pmapAdd(a.k, a.d, map);
+		return OBlock(new OBlockRef(0, [OBlock(PMAP_CMP), map]));
 	}
 
 	// enum_proto: ename, eid, eglobal, efields of (string * string index * ttype array).
@@ -541,24 +611,23 @@ class HlcOcaml {
 			OStr(new OString(e.ename)),
 			OInt(e.eid),
 			intOption(e.eglobal),
-			arrayOf(e.efields, f -> memoBlock(f, () -> [OStr(new OString(f.name)), OInt(f.nameIndex), arrayOf(f.t, ttypeValue)]))
+			arrayOf(e.efields, f -> memoBlock(f, () -> [OStr(new OString(f.name)), OInt(f.nameIndex), arrayOf(f.t, ttypeRec)]))
 		];
 		return v;
 	}
 
-	// field_proto: fname, fid, fmethod, fvirtual.
+	// field_proto: fname, fid, fmethod, fvirtual. fname is the method's cf_name, which its pfunctions key
+	// (and pindex key, for a method with overrides) holds too.
 	static function fieldProto(f:HlFieldProto):OValue
-		return memoBlock(f, () -> [OStr(new OString(f.fname)), OInt(f.fid), OInt(f.fmethod), intOption(f.fvirtual)]);
+		return memoBlock(f, () -> [OStr(nameString(f.fname, f.nameOrigin)), OInt(f.fid), OInt(f.fmethod), intOption(f.fvirtual)]);
 
 	// virtual_proto: vfields, vindex. genhl builds vindex by adding each vfield's name (the tuple's own string)
 	// with its index, in index order, to PMap.empty.
 	static function virtualProto(vp:HlVirtualProto):OValue {
 		return memoBlock(vp, () -> {
 			var fields = arrayOf(vp.vfields, fieldTuple);
-			var map = OInt(0);
 			var tuples = blockOf(fields).fields;
-			for (i in 0...tuples.length) map = pmapAdd(blockOf(tuples[i]).fields[0], OInt(i), map);
-			[fields, OBlock(new OBlockRef(0, [OBlock(PMAP_CMP), map]))];
+			[fields, pmapOf([for (i in 0...tuples.length) {k: blockOf(tuples[i]).fields[0], d: OInt(i)}])];
 		});
 	}
 
@@ -617,16 +686,16 @@ class HlcOcaml {
 	// cf_name: an interface's virtual takes its parents' class fields themselves, and apply_params' copies of
 	// an anonymous type's fields keep their strings.
 	static function fieldTuple(f:HlField):OValue
-		return memoBlock(f, () -> [OStr(fieldName(f)), OInt(f.nameIndex), ttypeValue(f.t)]);
+		return memoBlock(f, () -> [OStr(nameString(f.name, f.nameOrigin)), OInt(f.nameIndex), ttypeRec(f.t)]);
 
 	// One OString per origin and name: a field renamed after it was copied (Haxe sets cf_name to a new
 	// string) no longer shares its copies' string.
-	static function fieldName(f:HlField):OString {
-		if (f.nameOrigin == null) return new OString(f.name);
-		var known = names.get(f.nameOrigin);
-		if (known == null) names.set(f.nameOrigin, known = []);
-		for (s in known) if (s.s == f.name) return s;
-		var s = new OString(f.name);
+	static function nameString(name:String, origin:Null<{}>):OString {
+		if (origin == null) return new OString(name);
+		var known = names.get(origin);
+		if (known == null) names.set(origin, known = []);
+		for (s in known) if (s.s == name) return s;
+		var s = new OString(name);
 		known.push(s);
 		return s;
 	}
@@ -718,9 +787,12 @@ private class Marshaller {
 						strings.set(s, objCounter++);
 					}
 				case OBlock(b):
-					if (b == HlcOcaml.UNMODELLED || b == HlcOcaml.PMAP_CMP) throw new Unmodelled(path(stackB, stackI));
+					if (b == HlcOcaml.UNMODELLED) throw new Unmodelled(path(stackB, stackI));
 					var sz = b.fields.length;
-					if (sz == 0) {
+					if (b == HlcOcaml.PMAP_CMP) {
+						var pos = blocks.get(b);
+						if (pos != null) sharedReference(objCounter - pos) else pmapCmp(path(stackB, stackI));
+					} else if (sz == 0) {
 						header(0, b.tag);
 					} else {
 						var pos = blocks.get(b);
@@ -749,6 +821,25 @@ private class Marshaller {
 			v = stackB[top].fields[stackI[top]];
 			stackI[top]++;
 		}
+	}
+
+	// The closure as extern.c writes one: its header (3 fields, Closure_tag), then for its one function the
+	// code pointer, the closure info as an int and the full-application code pointer. A code pointer is
+	// CODE_CODEPOINTER, its offset and the MD5 of the code area.
+	function pmapCmp(at:String) {
+		var digest = HlcOcaml.haxeCodeDigest;
+		if (digest == null) throw new Unmodelled(at, HlcOcaml.PMAP_CMP_WHAT);
+		header(3, 247);
+		size32 += 1 + 3;
+		size64 += 1 + 3;
+		blocks.set(HlcOcaml.PMAP_CMP, objCounter++);
+		code32(0x10, HlcOcaml.PMAP_CMP_CURRY);
+		out.add(digest);
+		// CODE_INT64 of Long_val(closinfo): arity 2 in the top byte, environment start 3 below it.
+		out.addByte(0x03);
+		for (b in [0x01, 0, 0, 0, 0, 0, 0, 0x03]) out.addByte(b);
+		code32(0x10, HlcOcaml.PMAP_CMP_CODE);
+		out.add(digest);
 	}
 
 	static function path(stackB:Array<OBlockRef>, stackI:Array<Int>):String {

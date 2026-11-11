@@ -579,7 +579,7 @@ class HlGenerate {
 			try {
 				HlcWriter.writeC(com.file, code, gnames, hlcDefines(com), Globals.version);
 			} catch (e:hxc.codegen.hl.HlcOcaml.Unmodelled) {
-				throw "HL/C: hl2c's type digest reaches an OCaml value hxc does not model (" + e.path + ")";
+				throw "HL/C: hl2c's type digest reaches " + e.message;
 			}
 			var tNative = hxc.core.Timer.timer(["nativecompile", "hl"]);
 			if (!com.defines.rawDefined("no_compilation")

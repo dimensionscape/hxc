@@ -63,12 +63,12 @@ Both compilers are given `-D no-compilation`, since without the `hashlink` haxel
 the files are written ends in "Build failed". hxc's files are byte-identical to Haxe's on:
 
 - the hl-output and hl-opt cases, run with `tests/hl/run.sh --hlc`;
-- the hlc-output family (20 cases), whose family.json names `out/main.c`, so it runs in this mode without
+- the hlc-output family (21 cases), whose family.json names `out/main.c`, so it runs in this mode without
   `--hlc`; the cases cover string constants, naming, modules, closures, enums, virtuals and the other
   things hl2c.ml hashes or orders. hlc-digest-collision and hlc-digest-collision-reversed declare two
   function types whose digests share their first 7 digits, in both orders, so each side once keeps
   t$fun_f8d4f18 and once gets the full digest; the first also signs a function type twice through
-  `hl.Ref<Float->Bool>`;
+  `hl.Ref<Float->Bool>`. hlc-ref-enum takes `hl.Ref` of enums, whose digests marshal enum protos whole;
 - JoeClash's Android build (2800 files).
 
 In this mode (directory mode) `run.sh` has Haxe, hxc and hxc again each write an `out/` directory, kept as
@@ -88,11 +88,21 @@ before and after, and no file under bin/android is newer than the start.
 
 Not covered yet:
 
-- A class proto's maps, which HlcOcaml leaves unmodelled: a hash or marshal that reaches one throws
-  `Unmodelled`, and hxc stops with "HL/C: hl2c's type digest reaches an OCaml value hxc does not model". A
-  virtual proto's vindex map is modelled. A type description marshals a whole ttype only under HRef (and
-  HNull, which holds no proto), so `hl.Ref` of a class (`static function f(r:hl.Ref<C>)`) stops this way.
-  `hl.Ref` of an enum or an anonymous type is modelled but no case covers it.
+- A type digest that reaches a PMap: `hl.Ref` of a class (`static function f(r:hl.Ref<C>)`), of an
+  anonymous type, or of an enum one of whose constructors takes a class or an anonymous type. A type
+  description marshals a whole ttype only under HRef (and HNull, which holds no proto), and every class
+  proto holds three PMaps (pindex, pfunctions, pinterfaces) and every virtual one (vindex). A PMap holds
+  its `compare` closure, which `Marshal.Closures` writes as code pointers with the MD5 of haxe.exe's OCaml
+  code as it is in memory. That code holds absolute addresses (`movabs` of C functions such as
+  caml_compare) which Windows relocates to wherever it loads haxe.exe, so Haxe's own name for such a type
+  changes with the load address: a byte-identical copy of haxe.exe, loaded elsewhere, names
+  `(ref(C)):void` t$fun_9e384e2 where haxe.exe names it t$fun_02c4ee9, and the copy's name changes from
+  one run to the next. HlcOcaml models the rest (the protos, their maps as genhl fills them, the sharing of
+  names and of PMap.empty, and the closure's layout in Haxe 4.3.7's Windows haxe.exe) and matches Haxe on
+  a class, a superclass, a graph of classes, methods, overrides, interfaces, toString, dynamic methods,
+  std classes, an enum with a String and an anonymous type, with and without hl_no_opt, when given the MD5
+  measured for the address haxe.exe was loaded at (HlcCheck keeps two such vectors). Without it hxc stops
+  with "HL/C: hl2c's type digest reaches the compare closure of a PMap, ...".
 - Name strings shared other than through a class field or its copies: a vfield's name is shared when its
   class fields have one nameOrigin (TClassField.nameOrigin: the field itself, or the field a copy was made
   from), so an interface's inherited fields and the `{cf with ...}` copies of apply_params, structure

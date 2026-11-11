@@ -462,6 +462,34 @@ class HlcCheck {
 			threw = true;
 		check("hash reaches the PMap's closure", threw);
 
+		// hl.Ref of a class marshals its proto, maps and all (hlc-ref probes: class C { public var x:Int; }
+		// and static function f(r:hl.Ref<C>)). The maps' compare closure is written with the MD5 of haxe.exe's
+		// code as loaded, which differs with the load address: Haxe named (ref(C)):void t$fun_02c4ee9 when
+		// that MD5 was 97bc8dcb... and t$fun_9e384e2 (a copy of haxe.exe) when it was 445b13c4... . pid 34,
+		// $C global 3, "x" string 35; pindex is {x: (0, i32)} after genhl's two adds, and pfunctions and
+		// pinterfaces are PMap.empty, one record.
+		function refC():HlType {
+			var c = proto("C");
+			c.pid = 34;
+			c.pclassglobal = 3;
+			c.pnfields = 1;
+			var x = {};
+			c.pfields = [{name: "x", nameIndex: 35, t: HI32, nameOrigin: x}];
+			c.pindexAdds = [{name: "x", nameOrigin: x, index: 0, t: HVoid}, {name: "x", nameOrigin: x, index: 0, t: HI32}];
+			c.pfunctionsAdds = [];
+			return HFun([HRef(HObj(c))], HVoid);
+		}
+		var message = try {
+			funName(refC());
+			"no throw";
+		} catch (e:Unmodelled) e.message;
+		check("marshal reaches the PMap's closure", StringTools.startsWith(message, "the compare closure of a PMap") && StringTools.endsWith(message, "(root.0.0.0.0.0.8.0)"), message);
+		for (v in [["97bc8dcb49ae5139dfd2acd5b9f11deb", "t$fun_02c4ee9"], ["445b13c45744cefec91ef7bd19790bc1", "t$fun_9e384e2"]]) {
+			HlcOcaml.haxeCodeDigest = Bytes.ofHex(v[0]);
+			eq("(ref(C)):void with code MD5 " + v[0].substr(0, 8), funName(refC()), v[1]);
+		}
+		HlcOcaml.haxeCodeDigest = null;
+
 		// 70 adds: 16 -> 32 -> 64 buckets. iter goes by hash land 63, each bucket newest first.
 		var t = new CamlHashtbl<Int>();
 		for (i in 0...70) t.add(OInt(i), i);

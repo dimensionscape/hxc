@@ -735,9 +735,17 @@ class HlTypes {
 			pfunctions: new Map(),
 			pnfields: -1,
 			pinterfaces: [],
-			pbindings: []
+			pbindings: [],
+			pindexAdds: [],
+			pfunctionsAdds: []
 		};
 	}
+
+	// The two string literals genhl names proto entries with: add_field's "" for an interface's field (one
+	// string for every class) and the "__string" of a toString's field_proto. They stand for those strings
+	// as a class field's nameOrigin stands for its cf_name.
+	static final interfaceFieldName:{} = {};
+	static final toStringFieldName:{} = {};
 
 	// PMap.add on pinterfaces: replaces an equal key
 	static function addInterface(p:HlClassProto, t:HlType, index:Int):Void {
@@ -798,15 +806,17 @@ class HlTypes {
 		}
 		var fa:Array<HlField> = [];
 		var pa:Array<HlFieldProto> = [];
-		function addField(name:String, getT:Void->HlType):Int {
+		function addField(name:String, origin:{}, getT:Void->HlType):Int {
 			var fid = fa.length + startField;
 			var str = HlContext.allocString(ctx, name);
 			p.pindex.set(name, {index: fid, t: HVoid});
-			fa.push({name: name, nameIndex: str, t: HVoid});
+			p.pindexAdds.push({name: name, nameOrigin: origin, index: fid, t: HVoid});
+			fa.push({name: name, nameIndex: str, t: HVoid, nameOrigin: origin});
 			ctx.ctDelayed.push(function() {
 				var t = getT();
 				p.pindex.set(name, {index: fid, t: t});
-				p.pfields[fid - startField] = {name: name, nameIndex: str, t: t};
+				p.pindexAdds.push({name: name, nameOrigin: origin, index: fid, t: t});
+				p.pfields[fid - startField] = {name: name, nameIndex: str, t: t, nameOrigin: origin};
 			});
 			return fid;
 		}
@@ -816,6 +826,7 @@ class HlTypes {
 				case Method(m) if (m != MethDynamic && !statics):
 					var g = allocFid(ctx, c, f);
 					p.pfunctions.set(f.name, g);
+					p.pfunctionsAdds.push({name: f.name, nameOrigin: TypeFunctions.nameOrigin(f), index: g, t: HVoid});
 					var virt:Null<Int> = if (TypeFunctions.hasClassFieldFlag(f, CfOverride)) {
 						var idx = getIndex(f.name, p);
 						if (idx == null) HlContext.die();
@@ -826,16 +837,23 @@ class HlTypes {
 						var vid = virtuals.length;
 						virtuals.push(g);
 						p.pindex.set(f.name, {index: -vid - 1, t: HVoid});
+						p.pindexAdds.push({name: f.name, nameOrigin: TypeFunctions.nameOrigin(f), index: -vid - 1, t: HVoid});
 						vid;
 					} else null;
-					pa.push({fname: f.name, fid: HlContext.allocString(ctx, f.name), fmethod: g, fvirtual: virt});
+					pa.push({
+						fname: f.name,
+						fid: HlContext.allocString(ctx, f.name),
+						fmethod: g,
+						fvirtual: virt,
+						nameOrigin: TypeFunctions.nameOrigin(f)
+					});
 					null;
 				case Method(MethDynamic) if (TypeFunctions.hasClassFieldFlag(f, CfOverride)):
 					var idx = getIndex(f.name, p);
 					if (idx == null) HlContext.die();
 					idx.index;
 				case _:
-					addField(f.name, function() {
+					addField(f.name, TypeFunctions.nameOrigin(f), function() {
 						var t = toType(ctx, f.type);
 						if (TypeFunctions.hasMeta(":packed", f.meta)) {
 							switch t {
@@ -857,7 +875,7 @@ class HlTypes {
 			// add interfaces
 			for (i in c.interfaces) {
 				var rid = -1;
-				rid = addField("", function() {
+				rid = addField("", interfaceFieldName, function() {
 					var t = toType(ctx, TInst(i.c, i.params));
 					addInterface(p, t, rid);
 					return t;
@@ -866,7 +884,13 @@ class HlTypes {
 			// check toString
 			var cf = c.fields.get("toString");
 			if (cf != null && !(TypeFunctions.hasClassFieldFlag(cf, CfOverride) || c.fields.exists("__string") || !isToString(cf.type))) {
-				pa.push({fname: "__string", fid: HlContext.allocString(ctx, "__string"), fmethod: allocFunPath(ctx, c.path, "__string"), fvirtual: null});
+				pa.push({
+					fname: "__string",
+					fid: HlContext.allocString(ctx, "__string"),
+					fmethod: allocFunPath(ctx, c.path, "__string"),
+					fvirtual: null,
+					nameOrigin: toStringFieldName
+				});
 			}
 		} else {
 			var f = c.constructor;

@@ -22,9 +22,19 @@ typedef HlClassProto = {
 	// Lookups only: nothing in genhl.ml or hlcode.ml iterates these.
 	pindex:Map<String, {index:Int, t:HlType}>,
 	pfunctions:Map<String, Int>,
+	// in the order of genhl's PMap.add calls; one that replaces an equal key keeps the first one's place
 	pinterfaces:Array<{t:HlType, index:Int}>,
-	pbindings:Array<{fid:Int, fidx:Int}>
+	pbindings:Array<{fid:Int, fidx:Int}>,
+	// genhl's PMap.add calls on pindex and pfunctions, in order, for hl2c's type digest (HlcOcaml models the
+	// maps from them). HlTypes.classType keeps them; a proto made elsewhere has none, and its maps stay
+	// unmodelled.
+	?pindexAdds:Array<HlPMapAdd>,
+	?pfunctionsAdds:Array<HlPMapAdd>
 }
+
+// One PMap.add on a class proto's pindex (value (index, t)) or pfunctions (value index; t unused). The key is
+// `name`, the OCaml string nameOrigin stands for (see HlField).
+typedef HlPMapAdd = {name:String, nameOrigin:{}, index:Int, t:HlType}
 
 // hlcode.ml: enum_proto
 typedef HlEnumProto = {
@@ -34,12 +44,13 @@ typedef HlEnumProto = {
 	efields:Array<{name:String, nameIndex:Int, t:Array<HlType>}>
 }
 
-// hlcode.ml: field_proto
+// hlcode.ml: field_proto. nameOrigin stands for the OCaml string fname is, as in HlField.
 typedef HlFieldProto = {
 	fname:String,
 	fid:Int,
 	fmethod:Int,
-	fvirtual:Null<Int>
+	fvirtual:Null<Int>,
+	?nameOrigin:{}
 }
 
 // hlcode.ml: virtual_proto
