@@ -7,6 +7,7 @@
 set -u
 h="${1:?usage: $0 <h dir> <x dir>}"
 x="${2:?usage: $0 <h dir> <x dir>}"
+h="${h%/}"; x="${x%/}"
 [ -d "$h" ] && [ -d "$x" ] || { echo "both arguments must be directories" >&2; exit 2; }
 hl="$(cd "$h" && find . -type f | sort)"
 xl="$(cd "$x" && find . -type f | sort)"
@@ -19,14 +20,16 @@ while IFS= read -r f; do
 	[ -z "$f" ] && continue
 	echo "only in hxc: ${f#./}"; code=1
 done < <(comm -13 <(printf '%s\n' "$hl") <(printf '%s\n' "$xl"))
-while IFS= read -r f; do
-	[ -z "$f" ] && continue
-	if ! cmp -s "$h/$f" "$x/$f"; then
-		echo "first differing file: ${f#./}"
-		diff -u "$h/$f" "$x/$f" | head -40
-		code=1
-		break
-	fi
-done < <(comm -12 <(printf '%s\n' "$hl") <(printf '%s\n' "$xl"))
+# One `diff -r -q` pass finds the differing files (a cmp per file is minutes on JoeClash's 2800 files).
+first="$(diff -r -q "$h" "$x" 2>/dev/null | while IFS= read -r line; do
+	case "$line" in "Files $h/"*" differ") ;; *) continue ;; esac
+	line="${line#"Files $h/"}"
+	printf './%s\n' "${line%% and "$x/"*}"
+done | sort | head -1)"
+if [ -n "$first" ]; then
+	echo "first differing file: ${first#./}"
+	diff -u "$h/$first" "$x/$first" | head -40
+	code=1
+fi
 [ $code = 0 ] && echo identical
 exit $code
