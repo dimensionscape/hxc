@@ -1356,7 +1356,7 @@ class Calls {
 		}
 		// A single `overload` candidate is checked before it is tried.
 		if (!multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload)) maybeCheckAccess(candidates[0]);
-		var successes:Array<Overloads.OverloadCandidate<{expr:Void->TExpr, hover:Null<Dynamic>}>> = [];
+		var successes:Array<Overloads.OverloadCandidate<{expr:Void->TExpr, hover:Null<Dynamic>, props:Array<hxc.filters.DeprecationCheck.PendingPropertyUse>}>> = [];
 		var chosen:Null<{call:Void->TExpr, tf:T, args:Array<TExpr>, cf:TClassField}> = null;
 		// While overload candidates are being tried, a display answer is not raised - it is STORED per
 		// candidate and only the one belonging to the candidate resolution PICKS is committed.
@@ -1370,21 +1370,17 @@ class Calls {
 			// A call attempt follows the candidate's type: its lazy - and the body behind it - runs as the
 			// candidate is tried.
 			switch (cf.type) { case TLazy(_): TypeFunctions.follow(cf.type); case _: }
-			var diagBefore = ctx.com.diagnostics.length;
+			var specBefore = ctx.com.speculationMark();
 			if (multi) hxc.typing.Typer.hoverFound = outerHover;
 			var oldRaise = ctx.com.raiseTypingErrors;
 			if (multi) ctx.com.raiseTypingErrors = true;
 			inline function restore() {
 				if (multi) {
 					ctx.com.raiseTypingErrors = oldRaise;
-					if (ctx.com.diagnostics.length > diagBefore) {
-						// A failed attempt's WARNINGS stay (a $type inside a lambda reports once per typing
-						// attempt);
-						// only trial ERRORS roll back.
-						var kept = [for (i in diagBefore...ctx.com.diagnostics.length) if (ctx.com.diagnostics[i].severity != hxc.core.Globals.MessageSeverity.Error) ctx.com.diagnostics[i]];
-						ctx.com.diagnostics.resize(diagBefore);
-						for (d in kept) ctx.com.diagnostics.push(d);
-					}
+					// A failed attempt's WARNINGS stay (a $type inside a lambda reports once per typing
+					// attempt); only trial ERRORS roll back, with the property deprecations its arguments
+					// queued, since Haxe never sees those arguments in the final tree.
+					ctx.com.rollbackSpeculation(specBefore, true);
 				}
 			}
 			try {
@@ -1435,7 +1431,10 @@ class Calls {
 					chosen = {call: r.call, tf: r.tf, args: r.args, cf: cf};
 					break;
 				}
-				successes.push({cf: cf, tf: r.tf, args: r.args, payload: {expr: r.call, hover: hxc.typing.Typer.hoverFound}});
+				// The property deprecations this candidate's arguments queued wait out the resolution: only
+				// the candidate it keeps reaches the final tree.
+				var props = hxc.filters.DeprecationCheck.takePendingProperties(specBefore.properties);
+				successes.push({cf: cf, tf: r.tf, args: r.args, payload: {expr: r.call, hover: hxc.typing.Typer.hoverFound, props: props}});
 			} catch (e:UnifyError) {
 				restore();
 				if (multi) {
@@ -1490,6 +1489,7 @@ class Calls {
 		// (Overloads.reduceCompatible); with several equally good, each is reported and the first is
 		// kept.
 		var reduced = Overloads.reduceCompatible(successes);
+		if (reduced.length > 0) hxc.filters.DeprecationCheck.restorePendingProperties(reduced[0].payload.props);
 		if (reduced.length == 1) {
 			maybeCheckAccess(reduced[0].cf);
 			commit(reduced[0].payload.hover, reduced[0].cf);

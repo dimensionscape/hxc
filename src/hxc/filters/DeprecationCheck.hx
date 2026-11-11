@@ -7,13 +7,16 @@ import hxc.core.TypeFunctions;
 import hxc.core.WarningList;
 import hxc.context.Context;
 
+// A property use checked at typing, waiting for run().
+typedef PendingPropertyUse = {com:Context, classMeta:Metadata, fieldMeta:Metadata, cf:TClassField, p:Position};
+
 // Warns on every use of a @:deprecated type or field.
 class DeprecationCheck {
 	// One warning per usage position.
 	static var warnedPositions:Map<String, Bool> = new Map();
 	static var typedefTypePositions:Map<String, Bool> = new Map();
 	static var deprecatedEnums:Map<TEnum, Bool> = new Map();
-	static var pendingPropertyWarnings:Array<{com:Context, classMeta:Metadata, fieldMeta:Metadata, cf:TClassField, p:Position}> = [];
+	static var pendingPropertyWarnings:Array<PendingPropertyUse> = [];
 
 	// Cleared for each compilation, so a warm server warns again. The rest belongs to the compilation
 	// as well: a property use queued by a request that ended before run() (a display answer) would
@@ -100,11 +103,23 @@ class DeprecationCheck {
 
 	// The queue above stands in for a walk of the final typed tree, so a property use typed only
 	// speculatively, whose expression is then thrown away, must leave it again: Haxe never sees that
-	// expression and never warns. Context.rollbackDiagnostics does not reach this queue.
+	// expression and never warns. Context.rollbackDiagnostics does not reach this queue;
+	// Context.rollbackSpeculation takes back both.
 	public static function pendingPropertyMark():Int return pendingPropertyWarnings.length;
 
 	public static function rollbackPendingProperties(mark:Int):Void {
 		if (pendingPropertyWarnings.length > mark) pendingPropertyWarnings.resize(mark);
+	}
+
+	// The uses queued since `mark`, taken out of the queue to be put back with restorePendingProperties
+	// if the typing that queued them is the one kept (an overload candidate that typed but may lose the
+	// resolution).
+	public static function takePendingProperties(mark:Int):Array<PendingPropertyUse> {
+		return pendingPropertyWarnings.length > mark ? pendingPropertyWarnings.splice(mark, pendingPropertyWarnings.length - mark) : [];
+	}
+
+	public static function restorePendingProperties(uses:Array<PendingPropertyUse>):Void {
+		for (u in uses) pendingPropertyWarnings.push(u);
 	}
 
 	public static function run(com:Context):Void {

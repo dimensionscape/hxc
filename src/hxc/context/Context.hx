@@ -777,6 +777,28 @@ class Context {
 		diagnostics.resize(mark);
 	}
 
+	// Where a speculative typing starts: the diagnostics so far, and the property deprecations queued
+	// for DeprecationCheck's walk of the final tree, which the speculation's thrown-away expression
+	// never reaches.
+	public function speculationMark():SpeculationMark {
+		return {diagnostics: diagnostics.length, properties: hxc.filters.DeprecationCheck.pendingPropertyMark()};
+	}
+
+	// Take back what a speculative typing recorded since `mark`: its queued property deprecations, and
+	// its diagnostics through rollbackDiagnostics. With `keepWarnings` (an overload attempt, a macro
+	// cast) only its errors go and its warnings stay, in order.
+	public function rollbackSpeculation(mark:SpeculationMark, keepWarnings = false):Void {
+		hxc.filters.DeprecationCheck.rollbackPendingProperties(mark.properties);
+		if (!keepWarnings) {
+			rollbackDiagnostics(mark.diagnostics);
+			return;
+		}
+		if (diagnostics.length <= mark.diagnostics) return;
+		var kept = [for (i in mark.diagnostics...diagnostics.length) if (diagnostics[i].severity != Error) diagnostics[i]];
+		diagnostics.resize(mark.diagnostics);
+		for (d in kept) diagnostics.push(d);
+	}
+
 	// Printed errors use ordinary diagnostic routing but are excluded from diagnostics-report
 	// findings.
 	public function addPrintedError(message:String, pos:Position, depth:Int = 0):Void {
@@ -897,6 +919,9 @@ typedef UserDocEntry = {
 	var links:Array<String>;
 	var source:Null<String>;
 }
+
+// A mark for Context.rollbackSpeculation.
+typedef SpeculationMark = {diagnostics:Int, properties:Int};
 
 typedef CompilerDiagnostic = {
 	var message:String;

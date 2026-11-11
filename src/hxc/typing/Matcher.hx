@@ -602,7 +602,7 @@ class PatternMaker {
 		// resolved as a field of the subject's module type (an enum-abstract constant), and only captures
 		// when that fails too. The probe is speculative: diagnostics it records roll back unless it yields
 		// a pattern.
-		var diagBefore = pctx.ctx.com.diagnostics.length;
+		var specBefore = pctx.ctx.com.speculationMark();
 		try {
 			var mt = TypeFunctions.moduleTypeOfType(t);
 			var emt = TexprTools.makeTypeExpr(mt, p);
@@ -613,8 +613,7 @@ class PatternMaker {
 			if (pat != null) return answerDisplay(pat);
 		} catch (_:Dynamic) {}
 		hxc.parser.Parser.displaySuppressed = savedSuppressed;
-		pctx.ctx.com.rollbackDiagnostics(diagBefore);
-		hxc.filters.DeprecationCheck.rollbackPendingProperties(pendingBefore);
+		pctx.ctx.com.rollbackSpeculation(specBefore);
 		// Anything that is not a lower-case identifier (an uppercase name, a $-ident) is not a capture;
 		// generated-local and `_` prefixes are excluded.
 		if (i.length > 0 && !hxc.ast.Ast.isLowerIdent(i) && i.charCodeAt(0) != "`".code && i.charCodeAt(0) != "_".code) {

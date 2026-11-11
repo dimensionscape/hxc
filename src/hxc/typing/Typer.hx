@@ -398,9 +398,10 @@ class Typer {
 	}
 
 	static function callMacroCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
-		// The whole attempt is SPECULATIVE: a failing macro cast raises NotFound and leaves no diagnostics
-		// behind, so anything the macro run or its result's retype recorded rolls back.
-		var before = ctx.com.diagnostics.length;
+		// The whole attempt is SPECULATIVE: a failing macro cast raises NotFound and leaves no errors or
+		// queued property deprecations behind; the warnings the macro run or its result's retype recorded
+		// stay.
+		var before = ctx.com.speculationMark();
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var fa = FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p);
 		try {
@@ -410,12 +411,7 @@ class Typer {
 				throw new NotFound("Typer.hx:364");
 			};
 		} catch (err:haxe.Exception) {
-			if (ctx.com.diagnostics.length > before) {
-				// Warnings recorded during the trial survive; only trial ERRORS roll back.
-				var kept = [for (i in before...ctx.com.diagnostics.length) ctx.com.diagnostics[i]];
-				ctx.com.diagnostics.resize(before);
-				for (d in kept) if (!d.severity.match(Error)) ctx.com.diagnostics.push(d);
-			}
+			ctx.com.rollbackSpeculation(before, true);
 			throw err;
 		}
 	}

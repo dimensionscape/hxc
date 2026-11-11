@@ -32,3 +32,65 @@ class P {
 		var x5 = new A().zoom;
 	}
 }
+
+--- deprecated-property-in-a-rejected-overload-argument
+class A {
+	@:deprecated("A.zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	public function new() {}
+}
+class B {
+	public var zoom(get, never):Int;
+	function get_zoom() return 2;
+	public function new() {}
+}
+extern class E {
+	@:overload(function(g:B->Int):Void {})
+	static function f(g:A->String):Void;
+}
+class P {
+	extern overload static inline function h(g:A->String) { trace(g(new A())); }
+	extern overload static inline function h(g:B->Int) { trace(g(new B())); }
+	static function main() {
+		if (false) E.f(x -> x.zoom);
+		h(x -> x.zoom);
+		h(x -> Std.string(x.zoom));
+	}
+}
+
+--- deprecated-property-in-an-overload-the-resolution-passes-over
+class A {
+	@:deprecated("A.zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	public function new() {}
+}
+class B {
+	public var zoom(get, never):Int;
+	function get_zoom() return 2;
+	public function new() {}
+}
+class P {
+	extern overload static inline function h(a:Float, g:A->Int) { trace(g(new A())); }
+	extern overload static inline function h(a:Int, g:B->Int) { trace(g(new B())); }
+	static function main() {
+		h(1, x -> x.zoom);
+		h(1.5, x -> x.zoom);
+	}
+}
+
+--- deprecated-property-in-a-failed-macro-cast
+abstract Mid(Int) to Int {
+	inline function new(i:Int) this = i;
+	@:from static function fromString(s:String):Mid return new Mid(s.length);
+}
+abstract Ab(Int) from Mid {
+	@:from static macro function fromStr(e:haxe.macro.Expr.ExprOf<String>):haxe.macro.Expr return macro { var z = P.zoom; 1.5; };
+}
+class P {
+	@:deprecated("zoom is deprecated") public static var zoom(get, never):Int;
+	static function get_zoom() return 1;
+	static function main() {
+		var a:Ab = "abc";
+		var b:Int = zoom;
+	}
+}
