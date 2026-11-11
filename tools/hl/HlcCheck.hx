@@ -500,6 +500,24 @@ class HlcCheck {
 		}
 		HlcOcaml.haxeCodeDigest = null;
 
+		// A proto's maps are built once the walk that reached it is done. When that build throws (here
+		// pinterfaces compares two interfaces whose maps are the sentinel), the next walk still builds its own.
+		var two = proto("Two");
+		two.pindexAdds = [];
+		two.pfunctionsAdds = [];
+		two.pinterfaces = [{t: HObj(proto("I")), index: 0}, {t: HObj(proto("I")), index: 1}];
+		var mapsThrew = try {
+			HlcOcaml.ttypeValue(HObj(two));
+			false;
+		} catch (e:Unmodelled) true;
+		check("a proto's map build reaches the sentinel", mapsThrew);
+		var after = proto("After");
+		after.pindexAdds = [];
+		after.pfunctionsAdds = [];
+		var afterProto = block(block(HlcOcaml.ttypeValue(HObj(after))).fields[0]);
+		check("the next walk builds its proto's maps", !afterProto.fields[8].match(OBlock(_ == HlcOcaml.UNMODELLED => true)), Std.string(afterProto.fields[8]));
+		HlcOcaml.resetMemo();
+
 		// 70 adds: 16 -> 32 -> 64 buckets. iter goes by hash land 63, each bucket newest first.
 		var t = new CamlHashtbl<Int>();
 		for (i in 0...70) t.add(OInt(i), i);

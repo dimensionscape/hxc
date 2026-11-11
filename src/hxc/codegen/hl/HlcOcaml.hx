@@ -463,7 +463,15 @@ class HlcOcaml {
 		depth--;
 		if (depth == 0) {
 			depth++;
-			while (pendingMaps.length > 0) pendingMaps.shift()();
+			// A build that throws (HlcCheck catches Unmodelled and goes on) drops the rest, and the next walk
+			// starts from depth 0 with an empty queue.
+			try {
+				while (pendingMaps.length > 0) pendingMaps.shift()();
+			} catch (e:haxe.Exception) {
+				depth = 0;
+				pendingMaps = [];
+				throw e;
+			}
 			depth--;
 		}
 		return v;
