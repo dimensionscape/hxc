@@ -153,9 +153,138 @@ class P {
 ===
 
 --- hlc-locals
-// One function whose locals have 15 or more C types, so the local-declaration table resizes.
+// One function whose locals have 37 C types (each class is its own), more than the 32 that the
+// local-declaration table (Hashtbl.create 0: 16 buckets, resized past twice that) holds before it resizes.
 class C {
 	public function new() {}
+}
+
+class K0 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K1 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K2 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K3 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K4 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K5 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K6 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K7 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K8 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K9 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K10 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K11 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K12 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K13 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K14 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K15 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
 }
 
 enum E {
@@ -183,7 +312,24 @@ class P {
 		var arr = [i];
 		var t = hl.Type.getDynamic(dy);
 		var m = new Map<String, Int>();
+		var k0 = new K0(i + 0);
+		var k1 = new K1(i + 1);
+		var k2 = new K2(i + 2);
+		var k3 = new K3(i + 3);
+		var k4 = new K4(i + 4);
+		var k5 = new K5(i + 5);
+		var k6 = new K6(i + 6);
+		var k7 = new K7(i + 7);
+		var k8 = new K8(i + 8);
+		var k9 = new K9(i + 9);
+		var k10 = new K10(i + 10);
+		var k11 = new K11(i + 11);
+		var k12 = new K12(i + 12);
+		var k13 = new K13(i + 13);
+		var k14 = new K14(i + 14);
+		var k15 = new K15(i + 15);
 		Sys.println([f, s, b, u8, u16, l.toInt(), by != null, dy, str, e, na.length, fn(1), c != null, n, arr, t != null, m]);
+		Sys.println(k0.v + k1.v + k2.v + k3.v + k4.v + k5.v + k6.v + k7.v + k8.v + k9.v + k10.v + k11.v + k12.v + k13.v + k14.v + k15.v);
 	}
 }
 ===
