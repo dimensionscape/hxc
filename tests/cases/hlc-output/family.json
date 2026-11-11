@@ -1,0 +1,8 @@
+{
+	"name": "hlc-output",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "--main", "$module", "--hl", "out/main.c", "-D", "no-compilation", "--macro", "HlcDigest.after('out')"]
+}

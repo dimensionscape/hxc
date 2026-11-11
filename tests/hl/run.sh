@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the HashLink generator's cases in tests/cases/<family>/cases.hx.txt (default family hl-output).
-#   tests/hl/run.sh --compiler <hxc> [--family <name>] [--haxe <haxe>] [--hl <hl.exe>] [--std <dir>] [--case <pattern>] [-j <jobs>]
+#   tests/hl/run.sh --compiler <hxc> [--family <name>] [--haxe <haxe>] [--hl <hl.exe>] [--std <dir>] [--case <pattern>] [-j <jobs>] [--hlc]
 # --family hl-opt runs the optimiser's cases (family.json without -D hl_no_opt); the fixture is the family's own.
 # A case is `--- name [@ pack.Module] [+ extra compiler args]`, its source (module P unless `@` names another,
 # written at that module's path, next to the family's fixture files, and given to --main), `===` and nothing
@@ -14,6 +14,10 @@
 # only catch a crash or a program that does not run deterministically.
 # A case whose extra arguments have `-D dump` also compares dump/hlopt.txt (the first hxc compile's against
 # Haxe's, moved aside like the .hl): a difference, or either file missing, fails the case.
+# HL/C (directory mode): a family whose family.json names out/main.c (hlc-output), or any family run with --hlc, compiles
+# with `--hl out/main.c -D no-compilation` (plus -D hl_no_opt when the family has it) and Haxe, hxc and hxc again
+# each write their out/ directory, moved to h/, x/ and y/. The checks are the same, with `diff -r -q` for
+# the comparison (`differs from Haxe; see tools/hlc-compare.sh`); hl is not run. The -D dump check still applies.
 # --case runs the cases whose names match it, a shell pattern like `trace-*`. Cases run -j at a time
 # (default $HXC_TEST_JOBS, or 4) and report in case order. Case directories go under $HXC_TEST_TMP, by
 # default tests/hl/tmp (gitignored), and are kept for a failed case.
@@ -28,7 +32,8 @@ std=""
 only=""
 njobs="${HXC_TEST_JOBS:-4}"
 family="hl-output"
-usage="usage: $0 --compiler <hxc> [--family <name>] [--haxe <haxe>] [--hl <hl.exe>] [--std <dir>] [--case <pattern>] [-j <jobs>]"
+hlc=0
+usage="usage: $0 --compiler <hxc> [--family <name>] [--haxe <haxe>] [--hl <hl.exe>] [--std <dir>] [--case <pattern>] [-j <jobs>] [--hlc]"
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--compiler) compiler="$2"; shift 2 ;;
@@ -37,6 +42,7 @@ while [ $# -gt 0 ]; do
 		--hl) hl="$2"; shift 2 ;;
 		--std) std="$2"; shift 2 ;;
 		--case) only="$2"; shift 2 ;;
+		--hlc) hlc=1; shift ;;
 		-j | --jobs) njobs="$2"; shift 2 ;;
 		-j*) njobs="${1#-j}"; shift ;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -53,8 +59,13 @@ esac
 case "$compiler" in */*) compiler="$(cd "$(dirname "$compiler")" && pwd)/$(basename "$compiler")" ;; esac
 if [ -n "$std" ]; then export HAXE_STD_PATH="$std"; fi
 
+# Directory mode (HL/C): the family names out/main.c, or --hlc.
+dirmode=0
+grep -q "out/main.c" "$root/tests/cases/$family/family.json" 2>/dev/null && dirmode=1
+[ $hlc = 1 ] && dirmode=1
+
 # hl must run: without it every `runs differently` check would compare two identical failures.
-if ! "$hl" --version > /dev/null 2>&1; then
+if [ $dirmode = 0 ] && ! "$hl" --version > /dev/null 2>&1; then
 	echo "cannot run HashLink ('$hl'); give --hl <hl.exe> or set \$HL" >&2
 	exit 2
 fi
@@ -69,7 +80,7 @@ trap 'rm -rf "$resdir"' EXIT
 native() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 
 # The family's arguments without the digest macro: HlDigest is only for the conformance harness.
-cargs=(-cp . --hl out.hl)
+if [ $dirmode = 1 ]; then cargs=(-cp . --hl out/main.c -D no-compilation); else cargs=(-cp . --hl out.hl); fi
 [ -f "$root/tests/cases/$family/cases.hx.txt" ] || { echo "no family '$family' (tests/cases/$family/cases.hx.txt)" >&2; exit 2; }
 # -D hl_no_opt only when the family's own arguments have it (hl-output does, hl-opt does not).
 grep -q hl_no_opt "$root/tests/cases/$family/family.json" 2>/dev/null && cargs+=(-D hl_no_opt)
@@ -89,6 +100,9 @@ run_case() {
 	local name="$1" extra="$2" source="$3" d="$4" module="$5" problem="" hcode=0 xcode=0 ycode=0 hout xout
 	local dumped=0
 	case " $extra " in *" -D dump "*) dumped=1 ;; esac
+	# File mode: out.hl moves to h.hl, x.hl, y.hl. Directory mode (HL/C): out/ moves to h/, x/, y/.
+	local out=out.hl hp="$d/h.hl" xp="$d/x.hl" yp="$d/y.hl" ext=.hl probe=""
+	if [ $dirmode = 1 ]; then out=out; hp="$d/h"; xp="$d/x"; yp="$d/y"; ext=/; probe=/main.c; fi
 	local file="$d/src/${module//.//}.hx" src="$(native "$d/src")"
 	mkdir -p "$d/src"
 	cp -R "$root/tests/cases/$family/fixture/." "$d/src/"
@@ -96,29 +110,31 @@ run_case() {
 	printf '%s\n' "$source" > "$file"
 	set -f
 	hout="$("$haxe" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || hcode=$?
-	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/h.hl"
+	[ -e "$d/src/$out" ] && mv "$d/src/$out" "$hp"
 	[ $dumped = 1 ] && [ -f "$d/src/dump/hlopt.txt" ] && mv "$d/src/dump/hlopt.txt" "$d/h.opt.txt"
 	xout="$(timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || xcode=$?
-	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/x.hl"
+	[ -e "$d/src/$out" ] && mv "$d/src/$out" "$xp"
 	[ $dumped = 1 ] && [ -f "$d/src/dump/hlopt.txt" ] && mv "$d/src/dump/hlopt.txt" "$d/x.opt.txt"
 	timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra > /dev/null 2>&1 || ycode=$?
-	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/y.hl"
+	[ -e "$d/src/$out" ] && mv "$d/src/$out" "$yp"
 	set +f
-	if [ $hcode != 0 ] || [ ! -f "$d/h.hl" ]; then
+	# The two outputs are identical: byte for byte, or (directories) file for file.
+	same() { if [ $dirmode = 1 ]; then diff -r -q "$1" "$2" > /dev/null 2>&1; else cmp -s "$1" "$2"; fi; }
+	if [ $hcode != 0 ] || [ ! -f "$hp$probe" ]; then
 		problem="Haxe could not compile the case (exit $hcode): $hout"
-	elif [ $xcode != 0 ] || [ ! -f "$d/x.hl" ]; then
-		problem="hxc failed (exit $xcode$([ -f "$d/x.hl" ] || echo ', no x.hl'))${xout:+: $xout}"
-	elif [ $ycode != 0 ] || [ ! -f "$d/y.hl" ]; then
-		problem="hxc failed on the second compile (exit $ycode$([ -f "$d/y.hl" ] || echo ', no y.hl'))"
-	elif ! cmp -s "$d/x.hl" "$d/y.hl"; then
-		problem="nondeterministic: x.hl differs from y.hl"
-	elif ! cmp -s "$d/x.hl" "$d/h.hl"; then
-		problem="differs from Haxe; see tools/hl-compare.sh"
+	elif [ $xcode != 0 ] || [ ! -f "$xp$probe" ]; then
+		problem="hxc failed (exit $xcode$([ -f "$xp$probe" ] || echo ", no x$ext"))${xout:+: $xout}"
+	elif [ $ycode != 0 ] || [ ! -f "$yp$probe" ]; then
+		problem="hxc failed on the second compile (exit $ycode$([ -f "$yp$probe" ] || echo ", no y$ext"))"
+	elif ! same "$xp" "$yp"; then
+		problem="nondeterministic: x$ext differs from y$ext"
+	elif ! same "$xp" "$hp"; then
+		if [ $dirmode = 1 ]; then problem="differs from Haxe; see tools/hlc-compare.sh"; else problem="differs from Haxe; see tools/hl-compare.sh"; fi
 	elif [ $dumped = 1 ] && { [ ! -f "$d/h.opt.txt" ] || [ ! -f "$d/x.opt.txt" ]; }; then
 		problem="-D dump did not write dump/hlopt.txt in both$([ -f "$d/h.opt.txt" ] || echo ' (Haxe missing)')$([ -f "$d/x.opt.txt" ] || echo ' (hxc missing)')"
 	elif [ $dumped = 1 ] && ! cmp -s "$d/x.opt.txt" "$d/h.opt.txt"; then
 		problem="dump/hlopt.txt differs from Haxe; see HL_OPT=1 tools/hl-compare.sh"
-	else
+	elif [ $dirmode = 0 ]; then
 		run_hl "$d/src" ../h.hl
 		hout="$ran"
 		hrun=$rancode

@@ -1,0 +1,12 @@
+# The files Haxe writes for --hl out/main.c, as one line each: relative path, length and MD5 (HlcDigest).
+--- empty-main
+class P { static function main() {} }
+===
+
+--- trace-hello
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
