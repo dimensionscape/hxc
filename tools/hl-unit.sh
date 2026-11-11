@@ -4,7 +4,9 @@
 #   tools/hl-unit.sh [<haxe-conformance dir>]      (default D:/_github/haxe-conformance)
 # Work happens in <hxc>/.hl-unit/ (gitignored): compile.hxml is compile-hl.hxml minus its `hl-check` lines;
 # h/ (Haxe) and x/ (hxc) each get unit.hl and dump/; h.run.txt and x.run.txt are what hl.exe printed.
-# The compiles run in <dir>/tests/unit, which is left as it was (no bin/unit.hl, no dump/).
+# The compiles run in <dir>/tests/unit, which is left as it was (no bin/unit.hl, no dump/, and no bin/ unless
+# it was there before). It builds against the installed utest, not the pin in Haxe's CI, so both runs end in
+# utest 2's `Null access` crash (see tests/hl/README.md); `corpus unit-hl` is the gate that uses the pin.
 # The output is HlCompare's (with one `differs: <label>` line per differing function), then `runs: same` or
 # `runs: differ` (the `Generated at:` lines are dropped before comparing).
 # Environment: HXC (default bin/hxc-windows-x64.exe), HAXE (default haxe), HL (default
@@ -22,6 +24,8 @@ native() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 [ -f "$hl" ] && [ -x "$hl" ] || { echo "hl.exe not found: $hl" >&2; exit 2; }
 unit="$conf/tests/unit"
 [ -f "$unit/compile-hl.hxml" ] || { echo "no $unit/compile-hl.hxml" >&2; exit 2; }
+unitbin_existed=0; [ -e "$unit/bin" ] && unitbin_existed=1
+trap '[ $unitbin_existed = 0 ] && rmdir "$unit/bin" 2>/dev/null' EXIT
 work="$root/.hl-unit"
 rm -rf "$work"
 mkdir -p "$work/h" "$work/x"
