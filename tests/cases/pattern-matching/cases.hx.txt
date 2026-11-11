@@ -88,3 +88,17 @@ class P {
 	static macro function second() return macro $v{depth(new Node(Leaf))};
 	static function main() { #if !macro trace(first()); trace(second()); #end }
 }
+
+--- capture-shares-its-name-with-a-deprecated-property
+enum Mode { Fixed(w:Int, zoom:Float); Auto(szoom:Float); None; }
+class P {
+	@:deprecated("zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	@:deprecated("szoom is deprecated") public static var szoom(get, never):Int;
+	static function get_szoom() return 1;
+	function new() {}
+	function f(m:Mode):Float {
+		return switch m { case Fixed(_, zoom): zoom; case Auto(szoom): szoom; case None: zoom; }
+	}
+	static function main() { new P().f(None); }
+}

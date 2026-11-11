@@ -7,5 +7,6 @@
 	"final-wildcard-after-every-argument": "P.hx:3: characters 50-60 : Too many arguments",
 	"non-final-wildcard-still-needs-every-argument": "P.hx:3: characters 55-62 : Not enough arguments",
 	"too-many-arguments-before-a-final-wildcard": "P.hx:3: characters 46-56 : Too many arguments",
-	"macro-world-capture-shares-its-name-with-a-field-of-the-payload-class": ""
+	"macro-world-capture-shares-its-name-with-a-field-of-the-payload-class": "",
+	"capture-shares-its-name-with-a-deprecated-property": "P.hx:9: characters 84-88 : Warning : (WDeprecated) zoom is deprecated"
 }

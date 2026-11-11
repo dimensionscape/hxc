@@ -98,6 +98,15 @@ class DeprecationCheck {
 		pendingPropertyWarnings.push({com: ctx.com, classMeta: classMeta, fieldMeta: fieldMeta, cf: cf, p: p});
 	}
 
+	// The queue above stands in for a walk of the final typed tree, so a property use typed only
+	// speculatively, whose expression is then thrown away, must leave it again: Haxe never sees that
+	// expression and never warns. Context.rollbackDiagnostics does not reach this queue.
+	public static function pendingPropertyMark():Int return pendingPropertyWarnings.length;
+
+	public static function rollbackPendingProperties(mark:Int):Void {
+		if (pendingPropertyWarnings.length > mark) pendingPropertyWarnings.resize(mark);
+	}
+
 	public static function run(com:Context):Void {
 		// Pending property warnings interleave into the WALK-phase diagnostics only; the
 		// messages accumulated before this filter stay ahead of them.

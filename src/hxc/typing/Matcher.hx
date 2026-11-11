@@ -563,6 +563,10 @@ class PatternMaker {
 		// would fall through to be reported as an unknown identifier instead of as the type mismatch it
 		// is.
 		var typed:Null<TExpr> = null;
+		// A deprecated property the probes reach (`case Fixed(_, zoom)` inside a class with a
+		// @:deprecated `zoom(get, set)`) queues its warning at typing; when the name ends up a capture,
+		// that use was never real and the queue gives it back below.
+		var pendingBefore = hxc.filters.DeprecationCheck.pendingPropertyMark();
 		try {
 			// Pattern expressions type in untyped mode so a private enum-abstract constant still matches
 			// from another module.
@@ -607,6 +611,7 @@ class PatternMaker {
 		} catch (_:Dynamic) {}
 		hxc.parser.Parser.displaySuppressed = savedSuppressed;
 		pctx.ctx.com.rollbackDiagnostics(diagBefore);
+		hxc.filters.DeprecationCheck.rollbackPendingProperties(pendingBefore);
 		// Anything that is not a lower-case identifier (an uppercase name, a $-ident) is not a capture;
 		// generated-local and `_` prefixes are excluded.
 		if (i.length > 0 && !hxc.ast.Ast.isLowerIdent(i) && i.charCodeAt(0) != "`".code && i.charCodeAt(0) != "_".code) {
