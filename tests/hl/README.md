@@ -50,3 +50,35 @@ Give hxc `HAXE_STD_PATH` spelled with backslashes, as Haxe's default is, or the 
 hxc's driven build passes the game's smoke run on `hl.exe` 2.0.0 (`tools/drive-smoke.mjs`): a move, an end
 of turn and the enemy's turn, a turn to landscape and a tap, with an empty `app.err`. Checked 2026-11-10 at
 `5f21bea7`.
+
+## HL/C (M6)
+
+`--hl out/main.c` writes the C files Haxe 4.3.7 writes (hxc ports hl2c.ml): main.c, hlc.h, hlc_main.c, the
+per-module files under hl/ and the rest. Both compilers are given `-D no-compilation`, since without the
+`hashlink` haxelib the C build step after the files are written ends in "Build failed". hxc's files are
+byte-identical to Haxe's on:
+
+- the hl-output and hl-opt cases, run with `tests/hl/run.sh --hlc`;
+- the hlc-output family (15 cases), whose family.json names `out/main.c`, so it runs in this mode without
+  `--hlc`; the cases cover string constants, naming, modules, closures, enums, virtuals and the other
+  things hl2c.ml hashes or orders;
+- JoeClash's Android build (2800 files).
+
+In this mode (directory mode) `run.sh` has Haxe, hxc and hxc again each write an `out/` directory, kept as
+`h/`, `x/` and `y/` in the case's folder. It compares them with `diff -r -q`; hl is not run. The two hxc
+runs must agree, and the `-D dump` check applies as before.
+
+`tools/hlc-compare.sh <h dir> <x dir>` explains a difference: the files only one side has, then the first
+differing file with 40 lines of `diff -u`. With `--list` it prints every file that differs or is missing on
+one side, one per line.
+
+`tools/hlc-joeclash.sh <hxc exe> <scratch dir>` builds the first section of JoeClash's `build.android.hxml`
+with Haxe, hxc and Haxe again, with `--hl` pointed into the scratch dir and `-D no-compilation` added, and
+compares them. Files where the two Haxe builds differ are Haxe's own nondeterminism; they are listed and
+left out. It prints `files: <n> identical` on a match and writes nothing into JoeClash's folder.
+
+Not covered yet:
+
+- 7-character type-digest collisions: no case reaches one, so the collision handling is untested.
+- A class proto's maps, which HlcOcaml leaves unmodelled: a hash or marshal that reaches one throws
+  `Unmodelled`. A virtual proto's vindex map is modelled.
