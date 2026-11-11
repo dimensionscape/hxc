@@ -624,6 +624,8 @@ class Typeload {
 			if (TypeFunctions.hasMeta(":optional", f.cffMeta)) t = ctx.basic.tnull(t);
 
 			var cf = TypeFunctions.mkField(n, t, f.cffPos, f.cffName.pos, pub, false);
+			// cf_name = fst f.cff_name, a string a macro may have given
+			cf.nameOrigin = Ast.fieldNameOrigin(f);
 			cf.kind = access;
 			cf.doc = f.cffDoc;
 			cf.meta = f.cffMeta;

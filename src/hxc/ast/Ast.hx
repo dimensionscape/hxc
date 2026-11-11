@@ -175,6 +175,9 @@ class ClassField {
 	public var cffMeta:Metadata;
 	public var cffAccess:Array<PlacedAccess>;
 	public var cffKind:ClassFieldKind;
+	// What the name's OCaml string stands for when a macro gave the name (EvalMacro.nameOriginOf), or a
+	// copy kept it; null for a parsed field, whose name is its own string (Ast.fieldNameOrigin).
+	public var cffNameOrigin:Null<{}> = null;
 
 	public function new(cffName:PlacedName, cffDoc:Documentation, cffPos:Position, cffMeta:Metadata, cffAccess:Array<PlacedAccess>,
 			cffKind:ClassFieldKind) {
@@ -196,7 +199,9 @@ typedef EVar = {
 	evMeta:Metadata,
 };
 
-typedef ObjectField = {name:String, pos:Position, quotes:QuoteStatus, expr:Expr};
+// nameOrigin: what the name's OCaml string stands for when a macro gave it, or a copy kept it
+// (Ast.objectFieldNameOrigin).
+typedef ObjectField = {name:String, pos:Position, quotes:QuoteStatus, expr:Expr, ?nameOrigin:{}};
 
 typedef SwitchCase = {values:Array<Expr>, guard:Null<Expr>, expr:Null<Expr>, pos:Position};
 
@@ -771,6 +776,17 @@ class Ast {
 		return n;
 	}
 
+	// What a field's name string stands for, in OCaml terms (TClassField.nameOrigin, which hl2c's type
+	// digest reads): the string a macro gave the name, or the field itself, whose name the parser made. A
+	// TClassField made from the field, the field encoded for a macro and the names the macro takes from
+	// it hold this one string, as Haxe's cf_name, encode_string and decode_string do.
+	public static inline function fieldNameOrigin(f:ClassField):{}
+		return f.cffNameOrigin != null ? f.cffNameOrigin : f;
+
+	// fieldNameOrigin for an object declaration's field.
+	public static inline function objectFieldNameOrigin(f:ObjectField):{}
+		return f.nameOrigin != null ? f.nameOrigin : f;
+
 	public static function mapExpr(loop:Expr->Expr, e:Expr):Expr {
 		var def = switch e.expr {
 			case EConst(_): e.expr;
@@ -778,7 +794,8 @@ class Ast {
 			case EBinop(op, e1, e2): EBinop(op, loop(e1), loop(e2));
 			case EField(e1, f, efk): EField(loop(e1), f, efk);
 			case EParenthesis(e1): EParenthesis(loop(e1));
-			case EObjectDecl(fl): EObjectDecl([for (of in fl) {name: of.name, pos: of.pos, quotes: of.quotes, expr: loop(of.expr)}]);
+			// map_expr keeps each key, and so its name string
+			case EObjectDecl(fl): EObjectDecl([for (of in fl) {name: of.name, pos: of.pos, quotes: of.quotes, expr: loop(of.expr), nameOrigin: objectFieldNameOrigin(of)}]);
 			case EArrayDecl(el): EArrayDecl([for (x in el) loop(x)]);
 			case ECall(e1, el): ECall(loop(e1), [for (x in el) loop(x)]);
 			case ENew(t, el): ENew(meTpath(loop, t), [for (x in el) loop(x)]);

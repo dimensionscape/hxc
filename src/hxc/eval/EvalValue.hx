@@ -105,6 +105,12 @@ class VString {
 	// Whether every byte is below 0x80, worked out on first need (EvalString.isAscii): 0 not yet, 1 yes,
 	// 2 no. A string's bytes never change.
 	public var sascii:Int = 0;
+	// For a string Haxe's eval makes by wrapping a compiler string without copying it (a string literal's
+	// value, a field's or object field's name the macro API encodes), what that OCaml string stands for:
+	// the literal's TString, the field's TClassField.nameOrigin. Null for a string made from new bytes.
+	// EvalMacro.nameOriginOf reads it when a decoded name becomes a field's (hl2c's type digest marshals
+	// one OCaml string once). Left unset by the constructor: no cost to other strings.
+	public var origin:Null<{}>;
 
 	public function new(sstring:hxc.eval.EvalString.ByteString, slength:Int) {
 		this.sstring = sstring;

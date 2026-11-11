@@ -4359,7 +4359,34 @@ class EvalMacro {
 		// A null is what posOf rejects as an invalid expression.
 		var npv = EvalField.field(ec, v, EvalNames.hNameUnderscorePos());
 		var np = npv == VNull ? Position.nullPos : try posOf(ec, npv, dp) catch (_:Dynamic) Position.nullPos;
-		return {name: strOf(EvalField.field(ec, v, EvalNames.hField())), pos: np, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp)};
+		var nv = EvalField.field(ec, v, EvalNames.hField());
+		return {name: strOf(nv), pos: np, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp),
+			nameOrigin: nameOriginOf(nv)};
+	}
+
+	// What a decoded name's OCaml string stands for (TClassField.nameOrigin). decode_string hands the
+	// compiler the macro string's own bytes, and eval wraps an existing string without copying it, so names
+	// decoded from one eval string are one OCaml string. The string's origin says which: a string literal's
+	// TString (EvalEmitter.evalConst), however many calls or inlined copies use it, and the name of a field
+	// or object field the macro took it out of (encodeClassField, encodeField, encodeObjField). A string
+	// with no origin (made by concatenation, substr and the like) stands for itself: strings made
+	// separately are separate, even when equal.
+	static function nameOriginOf(v:EvalValue):Null<{}> {
+		return switch (v) {
+			case VString(s): s.origin != null ? s.origin : s;
+			case _: null;
+		};
+	}
+
+	// mkString for a compiler name Haxe's encode_string wraps without copying: the string remembers what
+	// the name's OCaml string stands for (nameOriginOf).
+	static function mkName(s:String, origin:Null<{}>):EvalValue {
+		var v = mkString(s);
+		if (origin != null) switch (v) {
+			case VString(vs): vs.origin = origin;
+			case _:
+		}
+		return v;
 	}
 
 	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {
@@ -4375,7 +4402,8 @@ class EvalMacro {
 	}
 
 	static function decodeField(ec:EvalContext, v:EvalValue, dp:Position):ClassField {
-		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
+		var nv = EvalField.field(ec, v, EvalNames.hName());
+		var name = strOf(nv);
 		// The field's own pos (used for the field position and, unless the field gives its own namePos,
 		// the name position). A macro-built field carries its real source pos here; dp is only the fallback
 		// when the field omits pos.
@@ -4388,7 +4416,9 @@ class EvalMacro {
 		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalNames.hMeta()), pos);
 		// `namePos`, defaulting to the field's pos.
 		var namePos = posDefault(ec, EvalField.field(ec, v, EvalNames.hNameUnderscorePos()), pos);
-		return new ClassField({name: name, pos: namePos}, decodeDoc(EvalField.field(ec, v, EvalNames.hDoc())), pos, meta, access, kind);
+		var cff = new ClassField({name: name, pos: namePos}, decodeDoc(EvalField.field(ec, v, EvalNames.hDoc())), pos, meta, access, kind);
+		cff.cffNameOrigin = nameOriginOf(nv);
+		return cff;
 	}
 
 	// The string becomes the doc's own text, with nothing inherited.
@@ -4800,7 +4830,7 @@ class EvalMacro {
 
 	static function encodeField(ec:EvalContext, f:ClassField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalNames.hName(), mkString(f.cffName.name));
+		fields.set(EvalNames.hName(), mkName(f.cffName.name, Ast.fieldNameOrigin(f)));
 		// `namePos` carries the placed name's position, and decoding the field restores it, so a field a
 		// build macro hands back unchanged keeps its name where the parser put it - which the build's
 		// placed-name equality check relies on.
@@ -4908,7 +4938,7 @@ class EvalMacro {
 
 	static function encodeObjField(ec:EvalContext, f:ObjectField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalNames.hField(), mkString(f.name));
+		fields.set(EvalNames.hField(), mkName(f.name, Ast.objectFieldNameOrigin(f)));
 		// The field name's own position is encoded as `namePos` and decoded back. Without it every field
 		// of a structure that went through a build macro would come back carrying the enclosing literal's
 		// position, which the typer then unions into pos - so --json would print `{x: x, y: y}` as the
@@ -5746,7 +5776,8 @@ class EvalMacro {
 
 	static function encodeClassField(ec:EvalContext, cf:TClassField, ?owner:TClass):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalNames.hName(), mkString(cf.name));
+		// encode_string cf.cf_name: decoding it gives back the field's own name string
+		f.set(EvalNames.hName(), mkName(cf.name, TypeFunctions.nameOrigin(cf)));
 		// A field's type is encoded LAZILY - a body not yet typed stays behind TLazy.
 		f.set(EvalNames.hType(), encodeLazyType(ec, cf.type));
 		f.set(EvalNames.hIsPublic(), TypeFunctions.hasClassFieldFlag(cf, CfPublic) ? VTrue : VFalse);

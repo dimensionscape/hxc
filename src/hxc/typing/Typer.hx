@@ -1536,8 +1536,11 @@ class Typer {
 						if (isValidIdentifier(f.name)) extraFields.unshift({name: f.name, pos: f.pos});
 						te = typeExpr(ctx, f.expr, WithTypeTools.value);
 					}
-					if (isValidIdentifier(f.name))
-						anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos));
+					if (isValidIdentifier(f.name)) {
+						var anonField = TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos);
+						anonField.nameOrigin = Ast.objectFieldNameOrigin(f);
+						anonFields.set(f.name, anonField);
+					}
 					byName.set(f.name, te);
 				}
 				if (!ctx.untypedMode) {
@@ -1658,6 +1661,8 @@ class Typer {
 						// and only namePos is the name; --json prints pos as the structure field's
 						// span.
 						var anonField = TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos);
+						// mk_field n: the declaration's own name string, which a macro may have given
+						anonField.nameOrigin = Ast.objectFieldNameOrigin(f);
 						if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
 						anonFields.set(f.name, anonField);
 					}

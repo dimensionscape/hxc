@@ -620,3 +620,346 @@ class P {
 	}
 }
 ===
+
+--- hlc-macro-literal-names + --macro P.init()
+// Field names a macro gives from string literals. An onTypeNotFound macro builds Built and Built2, two
+// structures, on separate calls: eval's value of a literal is the literal's own string, and decode_string
+// hands it to the field, so both structures' "x" and "y" are one string each, and mac's t$fun_ digest has
+// back-references. hlc-macro-separate-names is the control.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name == "Built" || name == "Built2") return build(name);
+			return null;
+		});
+	}
+
+	static function build(name:String):TypeDefinition {
+		var t:ComplexType = name == "Built" ? (macro :Int) : (macro :String);
+		var p = Context.currentPos();
+		return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous([
+			{name: "x", kind: FVar(t), pos: p},
+			{name: "y", kind: FVar(macro :Int), pos: p}
+		]))};
+	}
+	#else
+	static function mac(a:Built, b:Built2):Int
+		return a.y + b.y;
+
+	static function main() {
+		Sys.println(mac({x: 1, y: 2}, {x: "a", y: 3}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-variable-names + --macro P.init()
+// hlc-macro-literal-names with "x" held in a variable first: the variable holds the literal's string.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name == "Built" || name == "Built2") return build(name);
+			return null;
+		});
+	}
+
+	static function build(name:String):TypeDefinition {
+		var n = "x";
+		var t:ComplexType = name == "Built" ? (macro :Int) : (macro :String);
+		var p = Context.currentPos();
+		return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous([
+			{name: n, kind: FVar(t), pos: p},
+			{name: "y", kind: FVar(macro :Int), pos: p}
+		]))};
+	}
+	#else
+	static function mac(a:Built, b:Built2):Int
+		return a.y + b.y;
+
+	static function main() {
+		Sys.println(mac({x: 1, y: 2}, {x: "a", y: 3}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-separate-names + --macro P.init()
+// The control for the macro-given names: Built's and Built2's "x" come from two literals of the same text,
+// and their "y" from concatenations made on each call, so every name is a string of its own and mac's
+// t$fun_ digest has no back-reference.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name == "Built" || name == "Built2") return build(name);
+			return null;
+		});
+	}
+
+	static function build(name:String):TypeDefinition {
+		var p = Context.currentPos();
+		var x:Field = name == "Built" ? {name: "x", kind: FVar(macro :Int), pos: p} : {name: "x", kind: FVar(macro :String), pos: p};
+		return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous([
+			x,
+			{name: "y" + name.substr(0, 0), kind: FVar(macro :Int), pos: p}
+		]))};
+	}
+	#else
+	static function mac(a:Built, b:Built2):Int
+		return a.y + b.y;
+
+	static function main() {
+		Sys.println(mac({x: 1, y: 2}, {x: "a", y: 3}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-field-names + --macro P.init()
+// Field names a macro takes out of a typed field: Built's fields are named after Src's (Context.getType),
+// and encode_string and decode_string hand back Src's own name strings, so mac's two virtuals share them.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+typedef Src = {x:Int, y:Int};
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name != "Built") return null;
+			var p = Context.currentPos();
+			var fields:Array<Field> = switch (Context.follow(Context.getType("P.Src"))) {
+				case TAnonymous(a): [for (f in a.get().fields) {name: f.name, kind: FVar(macro :String), pos: p}];
+				case _: throw "no";
+			}
+			return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous(fields))};
+		});
+	}
+	#else
+	static function mac(a:Src, b:Built):Int
+		return a.y + b.y.length;
+
+	static function main() {
+		Sys.println(mac({x: 1, y: 2}, {x: "a", y: "b"}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-build-field-names
+// Field names a build macro takes out of the parsed fields it leaves as they are: Mirror's field is named
+// after IA's f (Context.getBuildFields), the very string IA's class field holds, so `two`'s digest has a
+// back-reference.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+#if !macro
+@:build(P.mirror()) interface IA {
+	function f():Int;
+}
+
+class Impl implements IA {
+	public function new() {}
+
+	public function f():Int
+		return 1;
+}
+#end
+
+class P {
+	#if macro
+	static function mirror():Null<Array<Field>> {
+		var p = Context.currentPos();
+		var fields = [for (f in Context.getBuildFields()) ({name: f.name, kind: FVar(macro :String), pos: p} : Field)];
+		Context.defineType({pack: [], name: "Mirror", pos: p, fields: [], kind: TDAlias(TAnonymous(fields))});
+		return null;
+	}
+	#else
+	static function main() {
+		function two(a:IA, b:Mirror):Int
+			return a.f() + b.f.length;
+		Sys.println(two(new Impl(), {f: "ab"}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-interface-names
+// Class fields a build macro adds from one literal: IA and IB each get an f named by the literal, so IB's
+// virtual (which holds g's argument, IA's virtual) has f twice as one string.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+#if !macro
+@:build(P.addF()) interface IA {}
+
+@:build(P.addF()) interface IB {
+	function g(a:IA):Int;
+}
+
+class Impl implements IA implements IB {
+	public function new() {}
+
+	public function f():Int
+		return 1;
+
+	public function g(a:IA):Int
+		return a.f();
+}
+#end
+
+class P {
+	#if macro
+	static function addF():Array<Field> {
+		var fields = Context.getBuildFields();
+		fields.push({name: "f", kind: FFun({args: [], ret: macro :Int, expr: null}), pos: Context.currentPos()});
+		return fields;
+	}
+	#else
+	static function two(a:IA, b:IB):Int
+		return a.f() + b.g(a);
+
+	static function main() {
+		var i = new Impl();
+		Sys.println(two(i, i));
+	}
+	#end
+}
+===
+
+--- hlc-macro-object-names
+// Object declarations a macro returns on two calls: the reified `{x: 1, y: $e}` names its fields with
+// literals in the macro's code, so a's and b's structures share "x" and "y", and h's digest has
+// back-references.
+import haxe.macro.Expr;
+
+class P {
+	macro static function obj(e:Expr):Expr
+		return macro {x: 1, y: $e};
+
+	#if !macro
+	static function main() {
+		var a = obj(2);
+		var b = obj("s");
+		function h(p, q) return 0;
+		Sys.println(a.x + b.x + a.y + b.y.length + h(a, b));
+	}
+	#end
+}
+===
+
+--- hlc-macro-object-twice
+// One object declaration typed twice: the macro puts its argument in two places, and the names Haxe
+// encoded and decoded are the parsed ones, so a's and b's structures share "x" and "y".
+import haxe.macro.Expr;
+
+class P {
+	macro static function twice(e:Expr):Expr
+		return macro {
+			var a = $e;
+			var b = $e;
+			a.x.push(1);
+			b.x.push("s");
+			function h(p, q) return 0;
+			Sys.println(a.x.length + b.x.length + a.y + b.y + h(a, b));
+		};
+
+	#if !macro
+	static function main() {
+		twice({x: [], y: 1});
+	}
+	#end
+}
+===
+
+--- hlc-macro-object-field-names
+// Field names a build macro takes out of a parsed object declaration it leaves as it is: Mirror's x is
+// Q.a's own "x", so `two`'s digest has a back-reference.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+#if !macro
+@:build(P.mirror()) class Q {
+	public static var a = {x: 1};
+}
+#end
+
+class P {
+	#if macro
+	static function mirror():Null<Array<Field>> {
+		var p = Context.currentPos();
+		for (f in Context.getBuildFields()) switch (f.kind) {
+			case FVar(_, {expr: EObjectDecl(fl)}):
+				var fields = [for (o in fl) ({name: o.field, kind: FVar(macro :String), pos: p} : Field)];
+				Context.defineType({pack: [], name: "Mirror", pos: p, fields: [], kind: TDAlias(TAnonymous(fields))});
+			case _:
+		}
+		return null;
+	}
+	#else
+	static function main() {
+		function two(p, b:Mirror):Int
+			return b.x.length;
+		Sys.println(Q.a.x + two(Q.a, {x: "ab"}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-inline-names + --macro P.init()
+// A literal in an inline function the macro calls twice: both inlined copies are the one literal, so
+// Built's and Built2's "x" are one string.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name != "Built") return null;
+			var p = Context.currentPos();
+			Context.defineType({pack: [], name: "Built2", pos: p, fields: [], kind: TDAlias(TAnonymous([field(macro :String, p)]))});
+			return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous([field(macro :Int, p)]))};
+		});
+	}
+
+	static inline function field(t:ComplexType, p:Position):Field
+		return {name: "x", kind: FVar(t), pos: p};
+	#else
+	static function mac(a:Built, b:Built2):Int
+		return a.x + b.x.length;
+
+	static function main() {
+		Sys.println(mac({x: 1}, {x: "a"}));
+	}
+	#end
+}
+===

@@ -354,11 +354,13 @@ class TClassField {
 	// A bodiless method's (an interface's or an abstract one's) argument @:strict entries, which no
 	// argument variable keeps: the .NET generator refuses them, as it does a method argument's.
 	public var hxcArgStrict:Null<Array<MetadataEntry>> = null;
-	// The field whose name string this one's is, in OCaml terms: Haxe's `{cf with ...}` copies keep the
-	// cf_name string physically, so a copy (copyField, withCfType) points here at the field it was copied
-	// from, or at that field's own origin. Null for a field whose name is its own. Only HL/C reads it:
-	// hl2c's type digest marshals vfield names with sharing (TypeFunctions.nameOrigin).
-	public var nameOrigin:Null<TClassField> = null;
+	// What this field's name string is, in OCaml terms. Haxe's `{cf with ...}` copies keep the cf_name
+	// string physically, so a copy (copyField, withCfType) points here at the field it was copied from, or
+	// at that field's own origin. A field made from a parsed field or object field holds what its name
+	// stands for (Ast.fieldNameOrigin, Ast.objectFieldNameOrigin): that AST field, or what a macro's
+	// string stood for (EvalMacro.nameOriginOf). Null for a field whose name is its own. Only HL/C reads
+	// it: hl2c's type digest marshals vfield names with sharing (TypeFunctions.nameOrigin).
+	public var nameOrigin:Null<{}> = null;
 	// The interpreter's id for `name` (hxc.eval.EvalHash.fieldHash), and the name it was taken for.
 	@:noCompletion public var evalHashName:Null<String> = null;
 	@:noCompletion public var evalHashId:Int = -1;

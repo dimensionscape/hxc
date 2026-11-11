@@ -223,6 +223,16 @@ class HlcCheck {
 		eq("ident (Box<Int>,Box<String>):i32, one \"value\"", boxName(boxes(boxValue, boxValue)), "t$fun_9d35f87");
 		eq("ident ({value:Int},{value:String}):i32, two \"value\"", boxName(boxes({}, {})), "t$fun_f101870");
 		eq("ident (virtual(value),virtual(value)):i32, no origin", boxName(boxes(null, null)), "t$fun_f101870");
+		// mac(a:Built, b:Built2) of hlc-macro-literal-names (one "x" and one "y", the macro's literals) and of
+		// hlc-macro-separate-names (four strings), with -D hl_no_opt.
+		function built(xs:Array<{}>, ys:Array<{}>):HlType
+			return HFun([
+				HVirtual({vfields: [{name: "x", nameIndex: 47, t: HI32, nameOrigin: xs[0]}, {name: "y", nameIndex: 48, t: HI32, nameOrigin: ys[0]}], vindex: new Map()}),
+				HVirtual({vfields: [{name: "x", nameIndex: 47, t: str, nameOrigin: xs[1]}, {name: "y", nameIndex: 48, t: HI32, nameOrigin: ys[1]}], vindex: new Map()})
+			], HI32);
+		var litX = {}, litY = {};
+		eq("ident (Built,Built2):i32, macro literals", boxName(built([litX, litX], [litY, litY])), "t$fun_1355c99");
+		eq("ident (Built,Built2):i32, separate strings", boxName(built([{}, {}], [{}, {}])), "t$fun_2da0c0a");
 		// interface IB extends IA { function g(a:IA):Int; }: IB's virtual holds IA's f itself, so "f" is shared
 		// with g's argument, IA's virtual.
 		var fOrigin = {};

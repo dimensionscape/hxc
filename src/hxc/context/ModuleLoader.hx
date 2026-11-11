@@ -296,8 +296,12 @@ class ModuleLoader {
 					case FProp(get, set, _, e): kind = FProp(get, set, patch.typeHint, e);
 					case FFun(f): kind = FFun({fParams: f.fParams, fArgs: f.fArgs, fType: patch.typeHint, fExpr: f.fExpr});
 				}
-				if (!patch.remove) next.push(new ClassField(field.cffName, field.cffDoc, field.cffPos, field.cffMeta.concat(patch.meta),
-					field.cffAccess, kind));
+				if (!patch.remove) {
+					var patched = new ClassField(field.cffName, field.cffDoc, field.cffPos, field.cffMeta.concat(patch.meta),
+						field.cffAccess, kind);
+					patched.cffNameOrigin = Ast.fieldNameOrigin(field);
+					next.push(patched);
+				}
 			}
 			result = next;
 		}
@@ -1282,6 +1286,8 @@ class ModuleLoader {
 			// member semantics and checks.
 			var addAsStatic = isStatic || (isMacroField && ctx != null && ctx.isMacro);
 			var cf = TypeFunctions.mkField(cff.cffName.name, TypeFunctions.mkMono(), cff.cffPos, cff.cffName.pos, isPublic, addAsStatic);
+			// cf_name = fst cff.cff_name, a string a macro may have given
+			cf.nameOrigin = Ast.fieldNameOrigin(cff);
 			cf.doc = cff.cffDoc;
 			// Its own array, as the type's (createModuleTypes_): the declaration may be the cached parse.
 			cf.meta = cff.cffMeta.copy();

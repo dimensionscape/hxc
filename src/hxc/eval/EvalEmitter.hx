@@ -360,8 +360,13 @@ class EvalEmitter {
 		return switch (c) {
 			case TInt(i): hxc.eval.EvalValue.EvalValueTools.vint(i);
 			case TFloat(s): VFloat(hxc.core.Numeric.parseFloatLit(s));
-			// The compiler's string as the lexer left it, as UTF-8 bytes (EvalString.createUnknown).
-			case TString(s): hxc.eval.EvalString.EvalString.vOfText(s);
+			// The compiler's string as the lexer left it, as UTF-8 bytes (EvalString.createUnknown). Haxe's
+			// value holds the AST's string itself, so every value of this constant, and of the copies
+			// inlining makes of it (which keep the TString), is one OCaml string (EvalMacro.nameOriginOf).
+			case TString(s):
+				var vs = hxc.eval.EvalString.EvalString.ofText(s);
+				vs.origin = cast c;
+				VString(vs);
 			case TBool(b): b ? VTrue : VFalse;
 			case TNull: VNull;
 			case TThis: VNull;

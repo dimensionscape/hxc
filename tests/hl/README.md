@@ -63,12 +63,17 @@ Both compilers are given `-D no-compilation`, since without the `hashlink` haxel
 the files are written ends in "Build failed". hxc's files are byte-identical to Haxe's on:
 
 - the hl-output and hl-opt cases, run with `tests/hl/run.sh --hlc`;
-- the hlc-output family (21 cases), whose family.json names `out/main.c`, so it runs in this mode without
+- the hlc-output family (31 cases), whose family.json names `out/main.c`, so it runs in this mode without
   `--hlc`; the cases cover string constants, naming, modules, closures, enums, virtuals and the other
   things hl2c.ml hashes or orders. hlc-digest-collision and hlc-digest-collision-reversed declare two
   function types whose digests share their first 7 digits, in both orders, so each side once keeps
   t$fun_f8d4f18 and once gets the full digest; the first also signs a function type twice through
-  `hl.Ref<Float->Bool>`. hlc-ref-enum takes `hl.Ref` of enums, whose digests marshal enum protos whole;
+  `hl.Ref<Float->Bool>`. hlc-ref-enum takes `hl.Ref` of enums, whose digests marshal enum protos whole.
+  The hlc-macro-* cases give fields names from a macro, which Haxe's eval hands over as the very OCaml
+  string the macro holds: a string literal used on two calls, from a variable or from an inline function
+  (literal, variable, inline), a field's name taken by Context.getType or Context.getBuildFields (field,
+  build-field, object-field), names in class fields a build macro adds (interface) and in object
+  declarations a macro returns (object, object-twice); hlc-macro-separate-names is the control;
 - JoeClash's Android build (2800 files).
 
 In this mode (directory mode) `run.sh` has Haxe, hxc and hxc again each write an `out/` directory, kept as
@@ -103,11 +108,13 @@ Not covered yet:
   std classes, an enum with a String and an anonymous type, with and without hl_no_opt, when given the MD5
   measured for the address haxe.exe was loaded at (HlcCheck keeps two such vectors). Without it hxc stops
   with "HL/C: hl2c's type digest reaches the compare closure of a PMap, ...".
-- Name strings shared other than through a class field or its copies: a vfield's name is shared when its
-  class fields have one nameOrigin (TClassField.nameOrigin: the field itself, or the field a copy was made
-  from), so an interface's inherited fields and the `{cf with ...}` copies of apply_params, structure
-  extension and map_anon_ref share. Haxe also shares a name a macro takes out of a field and builds a new
-  field from (decode_string returns the same string), a string literal or variable a macro uses as the
-  name of fields it builds on separate calls (one string in the macro's code; for example, two typedefs
-  built by one `onTypeNotFound` macro, both as arguments of one function), and the name of an object
-  declaration typed twice; hxc gives such fields names of their own, so those type names differ from Haxe's.
+- Name strings shared in ways hxc does not track. A vfield's name is shared when its class fields have one
+  nameOrigin (TClassField.nameOrigin): the field itself, the field a `{cf with ...}` copy was made from
+  (an interface's inherited fields, apply_params, structure extension, map_anon_ref), the parsed field or
+  object field it was typed from (Ast.fieldNameOrigin), or what the macro string that named it stands for
+  (EvalMacro.nameOriginOf: a string literal's TString, or the field or object field the macro API encoded
+  the name from, as eval's encode_string and decode_string pass the OCaml string through). Haxe also
+  shares a name in a macro string that eval takes from elsewhere without copying, such as its field-name
+  hash table (`Reflect.fields`, whose names are the strings first hashed), and a string literal typed twice
+  (one AST string, where hxc makes a TString per typing); hxc gives such names strings of their own, so
+  those type names differ.

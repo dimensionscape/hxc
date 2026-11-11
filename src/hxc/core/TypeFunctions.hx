@@ -556,8 +556,9 @@ class TypeFunctions {
 		return r;
 	}
 
-	// The field that first held cf's name string: cf itself, or the field a chain of copies started from.
-	public static inline function nameOrigin(cf:TClassField):TClassField
+	// What cf's name string stands for (TClassField.nameOrigin): cf itself, the field a chain of copies
+	// started from, or the parsed field or macro string the name came from.
+	public static inline function nameOrigin(cf:TClassField):{}
 		return cf.nameOrigin != null ? cf.nameOrigin : cf;
 
 	public static var applyParamsStack:Ref<Array<{subject:T, applied:TParams}>> = new Ref([]);
