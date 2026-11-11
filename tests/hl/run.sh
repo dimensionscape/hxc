@@ -2,7 +2,8 @@
 # Runs the HashLink generator's cases in tests/cases/<family>/cases.hx.txt (default family hl-output).
 #   tests/hl/run.sh --compiler <hxc> [--family <name>] [--haxe <haxe>] [--hl <hl.exe>] [--std <dir>] [--case <pattern>] [-j <jobs>] [--hlc]
 # --family hl-opt runs the optimiser's cases (family.json without -D hl_no_opt); the fixture is the family's own.
-# A case is `--- name [@ pack.Module] [+ extra compiler args]`, its source (module P unless `@` names another,
+# A case is `--- name [@ pack.Module] [+ extra compiler args]` (split as the harness splits them: `"` groups),
+# its source (module P unless `@` names another,
 # written at that module's path, next to the family's fixture files, and given to --main), `===` and nothing
 # after it (the expected result is Haxe's own). Each case is compiled with the family's arguments
 # (its family.json, less the digest macro) in one directory, src/, by Haxe and then by hxc twice (one directory, so that paths baked in
@@ -95,10 +96,45 @@ run_hl() {
 	ran="${ran//$'\r'/}"
 }
 
+# Splits $1 into the array $split as the conformance harness splits extra arguments (Family.splitArgs):
+# whitespace separates them, `"` groups (and is dropped), `'` outside a group protects spaces and is kept,
+# and `\"` is a literal double quote.
+split_args() {
+	split=()
+	local s="$1" cur="" any=0 quoted=0 grouped=0 i=0 ch
+	while [ $i -lt ${#s} ]; do
+		ch="${s:$i:1}"
+		i=$((i + 1))
+		if [ "$ch" = "\\" ] && [ "${s:$i:1}" = '"' ]; then
+			cur="$cur\""
+			i=$((i + 1))
+			any=1
+		elif [ "$ch" = '"' ]; then
+			grouped=$((1 - grouped))
+			any=1
+		elif [ $grouped = 0 ] && [ "$ch" = "'" ]; then
+			quoted=$((1 - quoted))
+			cur="$cur$ch"
+			any=1
+		elif [ $quoted = 0 ] && [ $grouped = 0 ] && { [ "$ch" = " " ] || [ "$ch" = $'\t' ]; }; then
+			[ $any = 1 ] && split+=("$cur")
+			cur=""
+			any=0
+		else
+			cur="$cur$ch"
+			any=1
+		fi
+	done
+	[ $any = 1 ] && split+=("$cur")
+	return 0
+}
+
 # Runs case $1 (extra args $2, source $3, module $5) in directory $4 and prints its report line(s).
 run_case() {
 	local name="$1" extra="$2" source="$3" d="$4" module="$5" problem="" hcode=0 xcode=0 ycode=0 hout xout
-	local dumped=0
+	local dumped=0 xa
+	split_args "$extra"
+	xa=("${split[@]}")
 	case " $extra " in *" -D dump "*) dumped=1 ;; esac
 	# File mode: out.hl moves to h.hl, x.hl, y.hl. Directory mode (HL/C): out/ moves to h/, x/, y/.
 	local out=out.hl hp="$d/h.hl" xp="$d/x.hl" yp="$d/y.hl" ext=.hl probe=""
@@ -108,16 +144,14 @@ run_case() {
 	cp -R "$root/tests/cases/$family/fixture/." "$d/src/"
 	mkdir -p "$(dirname "$file")"
 	printf '%s\n' "$source" > "$file"
-	set -f
-	hout="$("$haxe" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || hcode=$?
+	hout="$("$haxe" --cwd "$src" "${cargs[@]}" --main "$module" "${xa[@]}" 2>&1)" || hcode=$?
 	[ -e "$d/src/$out" ] && mv "$d/src/$out" "$hp"
 	[ $dumped = 1 ] && [ -f "$d/src/dump/hlopt.txt" ] && mv "$d/src/dump/hlopt.txt" "$d/h.opt.txt"
-	xout="$(timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || xcode=$?
+	xout="$(timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" "${xa[@]}" 2>&1)" || xcode=$?
 	[ -e "$d/src/$out" ] && mv "$d/src/$out" "$xp"
 	[ $dumped = 1 ] && [ -f "$d/src/dump/hlopt.txt" ] && mv "$d/src/dump/hlopt.txt" "$d/x.opt.txt"
-	timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra > /dev/null 2>&1 || ycode=$?
+	timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" "${xa[@]}" > /dev/null 2>&1 || ycode=$?
 	[ -e "$d/src/$out" ] && mv "$d/src/$out" "$yp"
-	set +f
 	# The two outputs are identical: byte for byte, or (directories) file for file.
 	same() { if [ $dirmode = 1 ]; then diff -r -q "$1" "$2" > /dev/null 2>&1; else cmp -s "$1" "$2"; fi; }
 	if [ $hcode != 0 ] || [ ! -f "$hp$probe" ]; then
