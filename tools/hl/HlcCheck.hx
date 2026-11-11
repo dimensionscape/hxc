@@ -216,6 +216,11 @@ class HlcCheck {
 			"s$h_llo", "s$x_y", "s$d1d9abe", "s$abcdefghijklmnopqrstuvwxyz012345", "s$2e34e06", "s$q_n_z"];
 		var gn2 = HlcNames.makeGlobalNames(stringConstants(values), [for (_ in values) ""]);
 		for (i in 0...values.length) eq("global " + HlcNames.ocamlEscaped(values[i]), gn2[i], want[i]);
+		// The hlc-global-names case's constants, with the names in Haxe's hl/globals.c for it.
+		var caseValues = ["a b", "a_b", "a-b", "_", "0123456789012345678901234567890123456789"];
+		var caseWant = ["s$0cc9cd4", "s$dbf08e0", "s$8ca2ed5", "s$b14a7b8", "s$9f0ae03"];
+		var gn3 = HlcNames.makeGlobalNames(stringConstants(caseValues), [for (_ in caseValues) ""]);
+		for (i in 0...caseValues.length) eq("hlc-global-names " + caseValues[i], gn3[i], caseWant[i]);
 
 		// short_digest, the hash of a field name (types.c's field tables) and the collision loop (hl_hash of
 		// fcbzlgd and fhnmljx is the same; Haxe hashed fcbzlgd first).

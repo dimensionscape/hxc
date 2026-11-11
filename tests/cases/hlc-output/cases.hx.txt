@@ -10,3 +10,287 @@ class P {
 	}
 }
 ===
+
+--- hlc-long-strings
+// String constants of 63, 64 and 200 bytes: USTR below string_data_limit, string$<digest> with its UTF-16
+// bytes and `// ...` comment from 64. The 200-byte one has a quote, a backslash and a tab (String.escaped in
+// the comment), an e-acute at bytes 59-60 (the comment's 60-byte cut splits it), a euro sign and an emoji
+// (a UTF-16 surrogate pair).
+class P {
+	static function main() {
+		var a = ["012345678901234567890123456789012345678901234567890123456789abc", "012345678901234567890123456789012345678901234567890123456789abcd",
+			"He said \"hi\" \\ then a tab\tand more, 0123456789abcdefghijkxxé euro € grin 😀 defghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqr"];
+		for (s in a) Sys.println(s.length + " " + s);
+	}
+}
+===
+
+--- hlc-bytes + --macro P.addResources()
+// hl.Bytes constants (code.bytes, which only resources reach): 10 bytes inline in globals.c, and 1200 bytes
+// in hl/bytes_<md5>.h with its #include.
+class P {
+	#if macro
+	static function addResources() {
+		haxe.macro.Context.addResource("small", haxe.io.Bytes.ofString("123456789"));
+		var big = haxe.io.Bytes.alloc(1200);
+		for (i in 0...big.length) big.set(i, (i * 7) & 255);
+		haxe.macro.Context.addResource("big", big);
+	}
+	#end
+
+	static function main() {
+		Sys.println(haxe.Resource.getString("small"));
+		Sys.println(haxe.Resource.getBytes("big").length);
+	}
+}
+===
+
+--- hlc-global-names
+// String globals: "a b", "a_b" and "a-b" share the identifier a_b, so each gets short_digest; "_" and a
+// 40-character constant get short_digest too.
+class P {
+	static function main() {
+		var a = ["a b", "a_b", "a-b", "_", "0123456789012345678901234567890123456789"];
+		Sys.println(a.join("|"));
+	}
+}
+===
+
+--- hlc-type-names
+// Type names (make_types_idents): repeated Null<Int> arguments, a recursive anonymous type, nested anonymous
+// types with the same field names, a closure context (t$ctx_) used by one module, and the abstract probe:
+// one hl.Abstract used three times through a typedef (one name string in genhl), three separately written
+// hints (three strings), and the two mixed.
+typedef R = {next:Null<R>, v:Int};
+typedef X = hl.Abstract<"hlc_x">;
+
+class P {
+	static function nulls(a:Null<Int>, b:Null<Int>):Int {
+		return a == null ? (b == null ? 0 : b) : a;
+	}
+
+	static function chain(r:R):Int {
+		return r.next == null ? r.v : r.v + chain(r.next);
+	}
+
+	static function nested(o:{a:{a:Int}}):Int {
+		return o.a.a;
+	}
+
+	static function direct(a:hl.Abstract<"hlc_d">, b:hl.Abstract<"hlc_d">):hl.Abstract<"hlc_d"> {
+		return a;
+	}
+
+	static function viaTypedef(a:X, b:X):X {
+		return b;
+	}
+
+	static function mixedDecl(a:X, b:hl.Abstract<"hlc_x">):Void {}
+
+	static function main() {
+		var x = Std.random(5), y = Std.random(3) * 0.5;
+		var f = () -> x + y;
+		Sys.println(nulls(x, null) + chain({next: {next: null, v: 2}, v: 1}) + nested({a: {a: 3}}) + f());
+		direct(null, null);
+		viaTypedef(null, null);
+		mixedDecl(null, null);
+	}
+}
+===
+
+--- hlc-ctx-modules
+// One closure context type, the tuple (Int, Float), taken by closures of two modules (P and Q): hl2c puts it
+// in its own module, hl/ctx/<digest>.
+class Q {
+	public static function adder(a:Int, b:Float):Void->Float {
+		return () -> a + b;
+	}
+}
+
+class P {
+	static function main() {
+		var x = Std.random(5), y = Std.random(3) * 0.5;
+		var f = () -> x * y;
+		Sys.println(f() + Q.adder(x, y)());
+	}
+}
+===
+
+--- hlc-floats
+// OFloat text: %.19g as msvcrt prints it, and hl2c's special cases (-0., inf., -inf.).
+class P {
+	static function main() {
+		var a:Array<Float> = [0.1, 1e300, 5e-324, -0.0, 1e999, -1e999, 1.0, 100.0, 1e21, 1e-7, 1e18, 1e19, 0.3, 2.0 / 3.0, 1e-5, 0.0001, 2.5e-310,
+			1.7976931348623157e308, 3.0e15, 123456789012345678901234.0, 100000000000000.125, 100000000000000.375, 1000000000000000.75,
+			1152921504606846976.0, 0.99999999999999999, 0.9999999999999999, 2.2250738585072009e-308];
+		Sys.println(a);
+	}
+}
+===
+
+--- hlc-dynamic-fields
+// Dynamic field reads, writes and calls on Dynamic and on anonymous objects: hl/hashes.c, and the hash
+// collision loop (fcbzlgd and fhnmljx have the same hl_hash).
+class P {
+	static function make():Dynamic {
+		return {fcbzlgd: 1, fhnmljx: 2, call: (s:String) -> s + "!"};
+	}
+
+	static function main() {
+		var d = make();
+		d.fcbzlgd = d.fhnmljx + 1;
+		d.extra = 3.5;
+		Sys.println(d.fcbzlgd + d.extra);
+		Sys.println(d.call("hey"));
+		var o:{fhnmljx:Int, fcbzlgd:Int, call:String->String} = d;
+		o.fhnmljx = o.fcbzlgd * 2;
+		Sys.println(o.call("o") + o.fhnmljx);
+		var od:Dynamic = {name: "x", f: (i:Int) -> i * 2};
+		od.name = "y";
+		Sys.println(od.f(od.name.length));
+	}
+}
+===
+
+--- hlc-locals
+// One function whose locals have 15 or more C types, so the local-declaration table resizes.
+class C {
+	public function new() {}
+}
+
+enum E {
+	A;
+	B(i:Int);
+}
+
+class P {
+	static function main() {
+		var i = Std.random(3);
+		var f = i * 1.5;
+		var s:Single = f;
+		var b = i > 1;
+		var u8:hl.UI8 = i;
+		var u16:hl.UI16 = i;
+		var l:hl.I64 = i;
+		var by = new hl.Bytes(4);
+		var dy:Dynamic = i;
+		var str = "s" + i;
+		var e = i > 0 ? B(i) : A;
+		var na = new hl.NativeArray<Int>(2);
+		var fn = (x:Int) -> x + i;
+		var c = i > 1 ? new C() : null;
+		var n:Null<Int> = i > 0 ? i : null;
+		var arr = [i];
+		var t = hl.Type.getDynamic(dy);
+		var m = new Map<String, Int>();
+		Sys.println([f, s, b, u8, u16, l.toInt(), by != null, dy, str, e, na.length, fn(1), c != null, n, arr, t != null, m]);
+	}
+}
+===
+
+--- hlc-source-header + -D "source-header=custom header"
+// trace-hello with a source header of its own: the first line of every file.
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
+
+--- hlc-long-path @ hlc.deep.AVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleName
+// A class whose module name is longer than 128 characters: hl2c names its folder entry by the name's MD5.
+package hlc.deep;
+
+class AVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleName {
+	static function main() {
+		trace("long");
+	}
+}
+===
+
+--- hlc-hl-ver + -D hl-ver=1.13.0
+// trace-hello with hl-ver given.
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
+
+--- hlc-ops
+// generate_function arms the HL cases don't reach. Each operation is a function of its own, so the analyzer
+// can't fold it into main: integer OSDiv (I32 and I64), OUMod, OUShr (I32 and I64), OXor, OToUFloat, fmod and
+// fmodf, OJNotLt and OJNotGte, HNull CNeq, dynamic CGt and CGte, virtual against virtual and against an
+// object (both ways round), OVirtualClosure on an object, virtual field reads and ODynGet of F64, F32 and
+// I64 (through a type parameter constrained to an anonymous type).
+typedef V = {x:Int};
+
+class C {
+	public var x:Int;
+
+	public function new(x:Int) {
+		this.x = x;
+	}
+
+	public function m():Int {
+		return x;
+	}
+}
+
+class D extends C {
+	override public function m():Int {
+		return x + 1;
+	}
+}
+
+class P {
+	static function sdiv(a:Int, b:Int):Int return Std.int(a / b);
+	static function umod(a:UInt, b:UInt):UInt return a % b;
+	static function ushr(a:Int, b:Int):Int return a >>> b;
+	static function xor(a:Int, b:Int):Int return a ^ b;
+	static function ufloat(a:UInt):Float return a;
+	static function fmod(a:Float, b:Float):Float return a % b;
+	static function fmodf(a:Single, b:Single):Single return a % b;
+	static function ldiv(a:hl.I64, b:hl.I64):hl.I64 return a / b;
+	static function lushr(a:hl.I64, b:Int):hl.I64 return a >>> b;
+	static function notLt(a:Float, b:Float):Int {
+		if (a < b) return 1;
+		return 0;
+	}
+	static function notGte(a:Float, b:Float):Int {
+		if (a >= b) return 1;
+		return 0;
+	}
+	static function nullNe(a:Null<Int>, b:Null<Int>):Bool return a != b;
+	static function dynGt(a:Dynamic, b:Dynamic):Bool return a > b;
+	static function dynGte(a:Dynamic, b:Dynamic):Int {
+		if (a > b) return 1;
+		return 0;
+	}
+	static function virtEq(a:V, b:V):Bool return a == b;
+	static function virtNe(a:V, b:V):Bool return a != b;
+	static function virtOther(a:V, b:{x:Int, y:Int}):Bool return a == b;
+	static function virtObjEq(a:V, b:C):Bool return a == b;
+	static function virtObjNe(a:V, b:C):Bool return a != b;
+	static function objVirtEq(a:C, b:V):Bool return a == b;
+	static function objVirtNe(a:C, b:V):Bool return a != b;
+	static function method(c:C):Void->Int return c.m;
+	static function virtFields(o:{f:Float, s:Single, l:hl.I64}):Float return o.f + o.s + o.l.toInt();
+	static function getF<T:{p:Float}>(t:T):Float return t.p;
+	static function getS<T:{p:Single}>(t:T):Single return t.p;
+	static function getL<T:{p:hl.I64}>(t:T):hl.I64 return t.p;
+
+	static function main() {
+		var a = Std.random(100) + 1, b = Std.random(7) + 1;
+		var fa = a * 0.5, fb = b * 0.25;
+		var la:hl.I64 = a, lb:hl.I64 = b;
+		var sa:Single = fa, sb:Single = fb;
+		var c = a > 50 ? new C(a) : new D(b);
+		var v:V = {x: a};
+		Sys.println([sdiv(a, b), umod(a, b), ushr(a, b), xor(a, b), ldiv(la, lb).toInt(), lushr(la, b).toInt(), notLt(fa, fb), notGte(fa, fb), dynGte(fa, fb)]);
+		Sys.println([ufloat(a), fmod(fa, fb), fmodf(sa, sb), virtFields({f: fa, s: sa, l: la}), getF({p: fa}), getS({p: sa}), getL({p: la}).toInt()]);
+		Sys.println([nullNe(a, null), dynGt(fa, fb), virtEq(v, {x: b}), virtNe(v, v), virtOther(v, {x: a, y: b}), virtObjEq(v, c), virtObjNe(v, c), objVirtEq(c, v), objVirtNe(c, v)]);
+		Sys.println(method(c)());
+	}
+}
+===
