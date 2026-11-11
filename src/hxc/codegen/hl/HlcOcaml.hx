@@ -221,6 +221,7 @@ class HlcOcaml {
 			case [OBlock(x), OBlock(y)]:
 				if (x == y) return true;
 				if (x.tag != y.tag || x.fields.length != y.fields.length) return false;
+				// Unreachable while PMAP_CMP is the only Closure_tag block: two are identical, others differ by tag.
 				if (x == PMAP_CMP || y == PMAP_CMP) throw new Unmodelled(path + " (functional value)");
 				for (i in 0...x.fields.length) if (!eqRec(x.fields[i], y.fields[i], path + "." + i)) return false;
 				return true;
@@ -274,6 +275,7 @@ class HlcOcaml {
 				return 0;
 			case [OBlock(x), OBlock(y)]:
 				if (x == y) return 0;
+				// Unreachable while PMAP_CMP is the only Closure_tag block: two are identical, others differ by tag.
 				if (x == PMAP_CMP || y == PMAP_CMP) throw new Unmodelled(path + " (functional value)");
 				var n = x.fields.length;
 				if (n != y.fields.length) return n < y.fields.length ? -1 : 1;
@@ -551,7 +553,8 @@ class HlcOcaml {
 		return memoBlock(vp, () -> {
 			var fields = arrayOf(vp.vfields, fieldTuple);
 			var map = OInt(0);
-			for (i in 0...vp.vfields.length) map = pmapAdd(blockOf(fieldTuple(vp.vfields[i])).fields[0], OInt(i), map);
+			var tuples = blockOf(fields).fields;
+			for (i in 0...tuples.length) map = pmapAdd(blockOf(tuples[i]).fields[0], OInt(i), map);
 			[fields, OBlock(new OBlockRef(0, [OBlock(PMAP_CMP), map]))];
 		});
 	}
