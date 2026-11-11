@@ -351,8 +351,80 @@ class HlcOcaml {
 		b.set(pos + 3, v);
 	}
 
-	public static function md5Hex(b:Bytes):String
-		return haxe.crypto.Md5.make(b).toHex();
+	// Digest.to_hex (Digest.bytes b). haxe.crypto.Md5 copies the input into an Array<Int> of words first,
+	// which made the digests of JoeClash's embedded resources (about 12 MB, hashed twice) a tenth of hl2c's
+	// time; this reads the words straight from the bytes.
+	public static function md5Hex(b:Bytes):String {
+		var len = b.length;
+		var a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+		var m = new haxe.ds.Vector<Int>(16);
+		// the whole blocks, then the tail with its 0x80 and the bit length, padded to one or two blocks
+		var whole = len >> 6;
+		var tailLen = len - (whole << 6);
+		var tail = Bytes.alloc(tailLen < 56 ? 64 : 128);
+		tail.fill(0, tail.length, 0);
+		tail.blit(0, b, whole << 6, tailLen);
+		tail.set(tailLen, 0x80);
+		tail.setInt32(tail.length - 8, len << 3);
+		tail.setInt32(tail.length - 4, len >>> 29);
+		var blocks = whole + (tail.length >> 6);
+		for (blk in 0...blocks) {
+			var src = blk < whole ? b : tail;
+			var base = blk < whole ? blk << 6 : (blk - whole) << 6;
+			for (i in 0...16) m[i] = src.getInt32(base + (i << 2));
+			var a = a0, bb = b0, c = c0, d = d0;
+			for (i in 0...64) {
+				var f, g;
+				if (i < 16) {
+					f = (bb & c) | (~bb & d);
+					g = i;
+				} else if (i < 32) {
+					f = (d & bb) | (~d & c);
+					g = (5 * i + 1) & 15;
+				} else if (i < 48) {
+					f = bb ^ c ^ d;
+					g = (3 * i + 5) & 15;
+				} else {
+					f = c ^ (bb | ~d);
+					g = (7 * i) & 15;
+				}
+				f = (f + a + MD5_K[i] + m[g]) | 0;
+				a = d;
+				d = c;
+				c = bb;
+				var s = MD5_S[i];
+				bb = (bb + ((f << s) | (f >>> (32 - s)))) | 0;
+			}
+			a0 = (a0 + a) | 0;
+			b0 = (b0 + bb) | 0;
+			c0 = (c0 + c) | 0;
+			d0 = (d0 + d) | 0;
+		}
+		var out = Bytes.alloc(16);
+		out.setInt32(0, a0);
+		out.setInt32(4, b0);
+		out.setInt32(8, c0);
+		out.setInt32(12, d0);
+		return out.toHex();
+	}
+
+	static final MD5_S:Array<Int> = [
+		7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+		5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+		4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+		6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
+	];
+
+	static final MD5_K:Array<Int> = [
+		0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+		0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+		0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+		0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+		0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+		0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+		0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+		0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391
+	];
 
 	// ---- stdlib/array.ml ----
 

@@ -583,7 +583,9 @@ class HlcWriter {
 		var allTypes = table.types;
 		var typesIds = HlcNames.makeTypesIdents(table);
 		var gnames = HlcNames.makeGlobalNames(code, gnames);
-		var bnames = [for (b in code.bytes) "bytes$" + HlcNames.shortDigest(HlcOcaml.md5Hex(b))];
+		// each one's digest, made once: the large ones name their hl/bytes_<digest>.h below too
+		var bdigests = [for (b in code.bytes) HlcOcaml.md5Hex(b)];
+		var bnames = [for (d in bdigests) "bytes$" + HlcNames.shortDigest(d)];
 		var sourceHeader = "";
 		for (d in defines) if (d.key == "source_header") sourceHeader = d.value;
 		var dir = dirname(file);
@@ -689,7 +691,7 @@ class HlcWriter {
 		for (i in 0...code.bytes.length) {
 			var bytes = code.bytes[i];
 			if (bytes.length > 1000) {
-				var bytesFile = "hl/bytes_" + HlcOcaml.md5Hex(bytes) + ".h";
+				var bytesFile = "hl/bytes_" + bdigests[i] + ".h";
 				var absFile = ctx.dir + "/" + bytesFile;
 				if (!sys.FileSystem.exists(absFile)) {
 					var buf = new StringBuf();
