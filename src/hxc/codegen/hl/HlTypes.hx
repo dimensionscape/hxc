@@ -406,6 +406,7 @@ class HlTypes {
 	public static function anonKey(ctx:HlContext, a:TAnon):String {
 		var anons:Array<TAnon> = [];
 		var monos:Array<TMono> = [];
+		var pure = true;
 		function id(o:{}):Int {
 			var i = ctx.anonKeyIds.get(o);
 			if (i == null) {
@@ -492,7 +493,10 @@ class HlTypes {
 			return switch t {
 				case TMono(r):
 					var c = r.downConstraints.length == 0 && r.upConstraints.length == 0 ? "" : "#" + id(r);
-					if (r.type == null) "_" + c else {
+					if (r.type == null) {
+						pure = false;
+						"_" + c;
+					} else {
 						var depth = monos.indexOf(r);
 						if (depth >= 0) "M@" + depth else {
 							monos.push(r);
@@ -513,11 +517,15 @@ class HlTypes {
 				case TLazy(f):
 					switch f.get() {
 						case LAvailable(t): "L(" + typeKey(t) + ")";
-						case _: "L#" + id(f);
+						case _:
+							pure = false;
+							"L#" + id(f);
 					}
 			}
 		}
-		return anon(a);
+		var key = anon(a);
+		ctx.anonKeyPure = pure;
+		return key;
 	}
 
 	// genhl.ml: to_type
@@ -526,8 +534,19 @@ class HlTypes {
 			case TMono(r):
 				return r.type == null ? HDyn : toType(ctx, r.type, tref);
 			case TType(td, tl):
-				var t = getRecCache(ctx, t, () -> HlContext.abort("Unsupported recursive type", td.pos),
-					tref -> toType(ctx, TypeFunctions.applyTypedef(td, tl), tref));
+				var o:{} = cast t;
+				var known = ctx.typedefTypes.get(o);
+				var t = known != null ? known : getRecCache(ctx, t, () -> HlContext.abort("Unsupported recursive type", td.pos), tref -> {
+					var at = TypeFunctions.applyTypedef(td, tl);
+					var r = toType(ctx, at, tref);
+					switch at {
+						case TAnon(a):
+							var m = ctx.anonTypes.get(a);
+							if (m != null && m.t == r) ctx.typedefTypes.set(o, r);
+						case _:
+					}
+					r;
+				});
 				if (td.path.pack.length == 2 && td.path.pack[0] == "haxe" && td.path.pack[1] == "macro")
 					ctx.macroTypedefs.set(td.path.name, t);
 				return t;
@@ -550,13 +569,21 @@ class HlTypes {
 					case _:
 				}
 				if (!a.fields.keys().hasNext()) return HDyn;
+				var status = a.status.get();
+				var known = ctx.anonTypes.get(a);
+				if (known != null && known.status == status) return known.t;
 				var key = anonKey(ctx, a);
+				var pure = ctx.anonKeyPure;
 				var cached = ctx.anonsCache.get(key);
-				if (cached != null) return cached;
+				if (cached != null) {
+					if (pure) ctx.anonTypes.set(a, {status: status, t: cached});
+					return cached;
+				}
 				var vp:HlVirtualProto = {vfields: [], vindex: new Map()};
 				var t = HVirtual(vp);
 				if (tref != null) tref.v = t;
 				ctx.anonsCache.set(key, t);
+				if (pure) ctx.anonTypes.set(a, {status: status, t: t});
 				// PMap.fold visits the names in increasing order; the list is then sorted by name
 				var fields = [for (n in hxc.core.PMapOrder.sortedKeys(a.fields)) cfieldType(ctx, a.fields.get(n))];
 				vp.vfields = fields;

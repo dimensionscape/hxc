@@ -112,6 +112,15 @@ class HlContext {
 	// anonKey's numbering of the declarations, monos and lazies it keys by identity
 	public var anonKeyIds:ObjectMap<{}, Int> = new ObjectMap();
 	public var anonKeyNext = 0;
+	// Whether the last anonKey met nothing that can still change: no unbound monomorph and no lazy type
+	// still to type. Such a key stays the anon's key, so its result is remembered by identity (anonTypes) and
+	// a typedef expanding to it too (typedefTypes): genhl turns the same type objects into HL types over and
+	// over, and building the key was a sixth of its time.
+	public var anonKeyPure = false;
+	// TAnon -> its HL type and the status it had (a status change makes a new key)
+	public var anonTypes:ObjectMap<{}, {status:AnonStatus, t:HlType}> = new ObjectMap();
+	// TType value -> the HL type of its expansion, when that is an anon remembered in anonTypes
+	public var typedefTypes:ObjectMap<{}, HlType> = new ObjectMap();
 	// HAbstract by the hl.Abstract<"name"> constant class it comes from. genhl takes the name from that class's
 	// expression, so every use of one declaration shares one OCaml string and HL/C's t$fun_ digests see a
 	// back-reference; one HlType object per class gives HlcOcaml.ttypeValue that sharing.
