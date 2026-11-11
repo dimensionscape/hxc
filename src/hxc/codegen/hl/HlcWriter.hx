@@ -8,7 +8,7 @@ import hxc.codegen.hl.HlcOcaml;
 
 // HL/C output: a port of Haxe 4.3.7's hl2c.ml context (59), its file and declaration helpers (230-352),
 // generate_reflection (365-520), make_modules, generate_module_types and write_c (1256-1833).
-// generate_function (520-1099) is HlcFunctions' (Task 5); until then a function body writes nothing.
+// generate_function (520-1099) is HlcFunctions'.
 // This module imports nothing from hxc outside hxc.codegen.hl, so tools/hl/HlcCheck can run it under
 // haxe --run. Text is built as Haxe strings whose UTF-8 is the bytes hl2c writes.
 
@@ -214,9 +214,6 @@ class HlcWriter {
 		ctx.funIndex = 0;
 		ctx.filePrefix = HlcNames.shortDigest(file) + "_";
 	}
-
-	// generate_function. A stub until HlcFunctions ports it (Task 5): a function body writes nothing.
-	static function generateFunction(ctx:HlcContext, f:HlFunction):Void {}
 
 	// ---- generate_reflection (hl2c.ml 365-520) ----
 
@@ -887,7 +884,7 @@ class HlcWriter {
 					var d = compareStrings(p1.file, p2.file);
 					d != 0 ? d : (p1.line < p2.line ? -1 : (p1.line > p2.line ? 1 : 0));
 				});
-				for (fe in funcs) if (fe.decl != null) generateFunction(ctx, fe.decl);
+				for (fe in funcs) if (fe.decl != null) HlcFunctions.generateFunction(ctx, fe.decl);
 			}
 		}
 
@@ -911,7 +908,7 @@ class HlcWriter {
 		expr("hl_type *hl_functions_types[] = {" + ftypes.join(",\\\n\t") + "}");
 		line("");
 		for (f in ctx.ftable)
-			if (f.module == null && f.decl != null) generateFunction(ctx, f.decl);
+			if (f.module == null && f.decl != null) HlcFunctions.generateFunction(ctx, f.decl);
 
 		openFile(ctx, "hl/hashes.c");
 		define("#define HLC_BOOT");
