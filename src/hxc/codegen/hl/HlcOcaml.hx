@@ -317,6 +317,81 @@ class HlcOcaml {
 	public static function md5Hex(b:Bytes):String
 		return haxe.crypto.Md5.make(b).toHex();
 
+	// ---- stdlib/array.ml ----
+
+	// OCaml's Array.sort: a ternary heap sort, so equal elements do not keep their order.
+	public static function arraySort<X>(a:Array<X>, cmp:X->X->Int):Void {
+		// maxson's `raise (Bottom i)` is answered as -1 - i
+		function maxson(l:Int, i:Int):Int {
+			var i31 = i + i + i + 1;
+			var x = i31;
+			if (i31 + 2 < l) {
+				if (cmp(a[i31], a[i31 + 1]) < 0) x = i31 + 1;
+				if (cmp(a[x], a[i31 + 2]) < 0) x = i31 + 2;
+				return x;
+			}
+			return if (i31 + 1 < l && cmp(a[i31], a[i31 + 1]) < 0) i31 + 1 else if (i31 < l) i31 else -1 - i;
+		}
+		function trickle(l:Int, i:Int, e:X):Void {
+			while (true) {
+				var j = maxson(l, i);
+				if (j < 0) {
+					a[-1 - j] = e;
+					return;
+				}
+				if (cmp(a[j], e) > 0) {
+					a[i] = a[j];
+					i = j;
+				} else {
+					a[i] = e;
+					return;
+				}
+			}
+		}
+		function bubble(l:Int, i:Int):Int {
+			while (true) {
+				var j = maxson(l, i);
+				if (j < 0) return -1 - j;
+				a[i] = a[j];
+				i = j;
+			}
+		}
+		function trickleup(i:Int, e:X):Void {
+			while (true) {
+				var father = Std.int((i - 1) / 3);
+				if (cmp(a[father], e) < 0) {
+					a[i] = a[father];
+					if (father > 0) i = father;
+					else {
+						a[0] = e;
+						return;
+					}
+				} else {
+					a[i] = e;
+					return;
+				}
+			}
+		}
+		var l = a.length;
+		var i = Std.int((l + 1) / 3) - 1;
+		while (i >= 0) {
+			trickle(l, i, a[i]);
+			i--;
+		}
+		i = l - 1;
+		while (i >= 2) {
+			var e = a[i];
+			a[i] = a[0];
+			trickleup(bubble(i, 0), e);
+			i--;
+		}
+		if (l > 1) {
+			var e = a[1];
+			a[1] = a[0];
+			a[0] = e;
+		}
+	}
+
 	// ---- ttype in its hlcode.ml layout ----
 
 	// One OCaml value per source object: a type, a proto, a field tuple, an array or a list. hxc objects that
