@@ -94,7 +94,8 @@ class Lexer {
 		// -1, the overwhelming case) pays one predictable comparison. Reported at the start of the file.
 		if (malformedAt >= 0 && i >= malformedAt)
 			throw new LexerError(MalformedFile, new Position(file, 0, 0));
-		return i < len ? src.charCodeAt(i) : -1;
+		// fastCodeAt: the index is in range here, and charCodeAt's Null<Int> is boxed and unboxed on cpp
+		return i < len ? StringTools.fastCodeAt(src, i) : -1;
 	}
 
 	inline function text(start:Int):String
