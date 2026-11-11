@@ -53,13 +53,17 @@ of turn and the enemy's turn, a turn to landscape and a tap, with an empty `app.
 
 ## HL/C (M6)
 
-`--hl out/main.c` writes the C files Haxe 4.3.7 writes (hxc ports hl2c.ml): main.c, hlc.h, hlc_main.c, the
-per-module files under hl/ and the rest. Both compilers are given `-D no-compilation`, since without the
-`hashlink` haxelib the C build step after the files are written ends in "Build failed". hxc's files are
-byte-identical to Haxe's on:
+`--hl out/main.c` writes the files Haxe 4.3.7 writes (hxc ports hl2c.ml): main.c (named after the `--hl`
+file) and hlc.json at the top; each module's .h and .c under its package path (`_std/` for the top-level
+package, `haxe/`, `hl/types/`, ...); and in hl/ the shared natives.h, globals.c, types.c, reflect.c,
+functions.c, hashes.c and init.c, with hl/ctx/<digest>.h for a closure context several modules share and
+hl/bytes_<md5>.h for a large bytes constant. hlc.h and hlc_main.c are not written: they come with HashLink.
+
+Both compilers are given `-D no-compilation`, since without the `hashlink` haxelib the C build step after
+the files are written ends in "Build failed". hxc's files are byte-identical to Haxe's on:
 
 - the hl-output and hl-opt cases, run with `tests/hl/run.sh --hlc`;
-- the hlc-output family (15 cases), whose family.json names `out/main.c`, so it runs in this mode without
+- the hlc-output family (18 cases), whose family.json names `out/main.c`, so it runs in this mode without
   `--hlc`; the cases cover string constants, naming, modules, closures, enums, virtuals and the other
   things hl2c.ml hashes or orders;
 - JoeClash's Android build (2800 files).
@@ -75,10 +79,21 @@ one side, one per line.
 `tools/hlc-joeclash.sh <hxc exe> <scratch dir>` builds the first section of JoeClash's `build.android.hxml`
 with Haxe, hxc and Haxe again, with `--hl` pointed into the scratch dir and `-D no-compilation` added, and
 compares them. Files where the two Haxe builds differ are Haxe's own nondeterminism; they are listed and
-left out. It prints `files: <n> identical` on a match and writes nothing into JoeClash's folder.
+left out. It prints `files: <n> identical` on a match. It writes its output into the scratch dir and checks
+three things about JoeClash's folder: the section as built names no `bin/`, `git status --short` is the same
+before and after, and no file under bin/android is newer than the start.
 
 Not covered yet:
 
 - 7-character type-digest collisions: no case reaches one, so the collision handling is untested.
 - A class proto's maps, which HlcOcaml leaves unmodelled: a hash or marshal that reaches one throws
-  `Unmodelled`. A virtual proto's vindex map is modelled.
+  `Unmodelled`, and hxc stops with "HL/C: hl2c's type digest reaches an OCaml value hxc does not model". A
+  virtual proto's vindex map is modelled. A type description marshals a whole ttype only under HRef (and
+  HNull, which holds no proto), so `hl.Ref` of a class (`static function f(r:hl.Ref<C>)`) stops this way.
+  `hl.Ref` of an enum or an anonymous type is modelled but no case covers it.
+- Name strings shared other than through a class field or its copies: a vfield's name is shared when its
+  class fields have one nameOrigin (TClassField.nameOrigin: the field itself, or the field a copy was made
+  from), so an interface's inherited fields and the `{cf with ...}` copies of apply_params, structure
+  extension and map_anon_ref share. Haxe also shares a name a macro takes out of a field and builds a new
+  field from (decode_string returns the same string), and the name of an object declaration typed twice;
+  hxc gives such fields names of their own.
