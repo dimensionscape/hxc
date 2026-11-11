@@ -1396,7 +1396,7 @@ class P {
 ===
 
 # Float literals keep their `_` separators in TFloat, and genhl reads them with float_of_string.
-# A float default cannot reach an Int, UI8 or UI16 slot (HlFunctions' Int paths) in Haxe 4.3.7: plain
+# A float default is unreachable from Haxe 4.3.7 source in an Int, UI8 or UI16 slot (HlFunctions' Int paths): plain
 # Int, hl.UI8 and hl.UI16 give "Float should be Int" (or hl.UI8, hl.UI16, Null<...>), and so do abstracts
 # over Int or hl.UI8 with a @:from Float function ("Float should be A", "Float should be Null<A>");
 # `abstract A(Int) from Float` gives "You can only declare from/to with compatible types".
