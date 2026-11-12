@@ -95,6 +95,27 @@ class P {
 	}
 }
 
+--- deprecated-property-in-a-macro-typing-that-fails
+import haxe.macro.Context;
+class A {
+	@:deprecated("A.zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	public function new() {}
+}
+class P {
+	macro static function m() {
+		try Context.typeExpr(macro a.zoom + nope) catch (_) null;
+		try Context.typeof(macro a.zoom + nope) catch (_) null;
+		try Context.storeExpr(macro a.zoom + nope) catch (_) null;
+		try Context.typeAndStoreExpr(macro { var q = a.zoom; q + nope; }) catch (_) null;
+		return macro a.zoom;
+	}
+	static function main() {
+		var a = new A();
+		var x = m();
+	}
+}
+
 --- deprecated-property-in-a-body-an-overload-attempt-types
 extern class E {
 	@:overload(function(g:Int->Int):Void {})
@@ -117,5 +138,25 @@ class B {
 	public static function f() { var a = new A(); return a.zoom; }
 }
 class C {
+	public static function f() { var a = new A(); return a.zoom; }
+}
+
+--- deprecated-property-in-a-body-a-failed-macro-typing-types
+import haxe.macro.Context;
+class P {
+	macro static function m() {
+		try Context.typeExpr(macro B.f() + nope) catch (_) null;
+		return macro null;
+	}
+	static function main() {
+		m();
+	}
+}
+class A {
+	@:deprecated("A.zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	public function new() {}
+}
+class B {
 	public static function f() { var a = new A(); return a.zoom; }
 }

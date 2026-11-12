@@ -4201,10 +4201,13 @@ class EvalMacro {
 	// block is recorded as a diagnostic by typeBlock's recovery instead of thrown, but a macro's typeExpr
 	// has to propagate that error to the caller so the macro can catch it. Surface the first new error
 	// diagnostic as a throw (the builtin wrapper turns it into a catchable haxe.macro.Error) and roll the
-	// trial diagnostics back so a caught error does not leak into the final compiler output.
+	// trial diagnostics back so a caught error does not leak into the final compiler output. A typing that
+	// fails also takes back the property deprecations it queued (rollbackSpeculation): the macro never gets
+	// that expression, so it never reaches the final tree Haxe's check walks.
 	static function typeMacroExpr(ctx:TyperContext, e:Expr):TExpr {
 		var com = ctx.com;
-		var before = com.diagnostics.length;
+		var spec = com.speculationMark();
+		var before = spec.diagnostics;
 		var oldRaise = com.raiseTypingErrors;
 		// Typing an expression is typingTimer with the type needed.
 		var oldPass = needTypePass(com, true);
@@ -4217,7 +4220,7 @@ class EvalMacro {
 			com.raiseTypingErrors = oldRaise;
 			com.currentPass = oldPass;
 			restoreReport();
-			if (com.diagnostics.length > before) com.diagnostics.resize(before);
+			com.rollbackSpeculation(spec);
 			throw err;
 		};
 		com.raiseTypingErrors = oldRaise;
@@ -4229,7 +4232,7 @@ class EvalMacro {
 		while (i < com.diagnostics.length) {
 			var d = com.diagnostics[i];
 			if (d.severity == hxc.core.Globals.MessageSeverity.Error) {
-				com.diagnostics.resize(before);
+				com.rollbackSpeculation(spec);
 				throw new TypingError(d.message, d.pos, d.depth);
 			}
 			i++;
