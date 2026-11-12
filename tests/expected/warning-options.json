@@ -5,5 +5,6 @@
 	"deprecated-property-warning-spans-the-whole-field-access": "P.hx:12: characters 12-18 : Warning : (WDeprecated) A.zoom is deprecated\nP.hx:13: characters 12-20 : Warning : (WDeprecated) A.zoom is deprecated\nP.hx:14: characters 12-19 : Warning : (WDeprecated) A.szoom is deprecated\nP.hx:15: characters 12-15 : Warning : (WDeprecated) A.k is deprecated\nP.hx:16: characters 12-24 : Warning : (WDeprecated) A.zoom is deprecated",
 	"deprecated-property-in-a-rejected-overload-argument": "P.hx:21: characters 21-27 : Warning : (WDeprecated) A.zoom is deprecated",
 	"deprecated-property-in-an-overload-the-resolution-passes-over": "P.hx:16: characters 15-21 : Warning : (WDeprecated) A.zoom is deprecated",
-	"deprecated-property-in-a-failed-macro-cast": "P.hx:13: characters 15-19 : Warning : (WDeprecated) zoom is deprecated"
+	"deprecated-property-in-a-failed-macro-cast": "P.hx:13: characters 15-19 : Warning : (WDeprecated) zoom is deprecated",
+	"deprecated-property-in-a-body-an-overload-attempt-types": "P.hx:19: characters 55-61 : Warning : (WDeprecated) A.zoom is deprecated\nP.hx:22: characters 55-61 : Warning : (WDeprecated) A.zoom is deprecated"
 }

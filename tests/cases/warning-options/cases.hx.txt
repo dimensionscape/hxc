@@ -94,3 +94,28 @@ class P {
 		var b:Int = zoom;
 	}
 }
+
+--- deprecated-property-in-a-body-an-overload-attempt-types
+extern class E {
+	@:overload(function(g:Int->Int):Void {})
+	static function f(g:Int->String):Void;
+}
+class P {
+	extern overload static inline function h(a:Float, g:Int->Int) { trace(g(1)); }
+	extern overload static inline function h(a:Int, g:Int->Int) { trace(g(2)); }
+	static function main() {
+		if (false) E.f(x -> B.f());
+		h(1, x -> C.f());
+	}
+}
+class A {
+	@:deprecated("A.zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	public function new() {}
+}
+class B {
+	public static function f() { var a = new A(); return a.zoom; }
+}
+class C {
+	public static function f() { var a = new A(); return a.zoom; }
+}
