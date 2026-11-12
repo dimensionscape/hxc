@@ -117,9 +117,13 @@ class HlContext {
 	// a typedef expanding to it too (typedefTypes): genhl turns the same type objects into HL types over and
 	// over, and building the key was a sixth of its time.
 	public var anonKeyPure = false;
-	// TAnon -> its HL type and the status it had (a status change makes a new key)
-	public var anonTypes:ObjectMap<{}, {status:AnonStatus, t:HlType}> = new ObjectMap();
-	// TType value -> the HL type of its expansion, when that is an anon remembered in anonTypes
+	// TAnon -> its HL type and the status it had (a status change makes a new key). hxc has no open anon
+	// (Haxe 4.3 has no AOpened), but a Const one (an object literal's) still takes an optional field it is
+	// unified with (TypeUnification.unifyAnons) and keeps its status, so for one of those the number of
+	// fields it had is kept too, and a hit needs the same number; `fields` is -1 for any other anon.
+	public var anonTypes:ObjectMap<{}, {status:AnonStatus, fields:Int, t:HlType}> = new ObjectMap();
+	// TType value -> the HL type of its expansion, when that is an anon remembered in anonTypes and not a
+	// Const one (a typedef hit looks at nothing else)
 	public var typedefTypes:ObjectMap<{}, HlType> = new ObjectMap();
 	// HAbstract by the hl.Abstract<"name"> constant class it comes from. genhl takes the name from that class's
 	// expression, so every use of one declaration shares one OCaml string and HL/C's t$fun_ digests see a

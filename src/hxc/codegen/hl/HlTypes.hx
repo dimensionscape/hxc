@@ -528,6 +528,12 @@ class HlTypes {
 		return key;
 	}
 
+	static function countFields(a:TAnon):Int {
+		var n = 0;
+		for (_ in a.fields.keys()) n++;
+		return n;
+	}
+
 	// genhl.ml: to_type
 	public static function toType(ctx:HlContext, t:T, ?tref:{v:Null<HlType>}):HlType {
 		switch t {
@@ -542,7 +548,7 @@ class HlTypes {
 					switch at {
 						case TAnon(a):
 							var m = ctx.anonTypes.get(a);
-							if (m != null && m.t == r) ctx.typedefTypes.set(o, r);
+							if (m != null && m.t == r && m.fields < 0) ctx.typedefTypes.set(o, r);
 						case _:
 					}
 					r;
@@ -570,20 +576,21 @@ class HlTypes {
 				}
 				if (!a.fields.keys().hasNext()) return HDyn;
 				var status = a.status.get();
+				var fieldCount = status.match(Const) ? countFields(a) : -1;
 				var known = ctx.anonTypes.get(a);
-				if (known != null && known.status == status) return known.t;
+				if (known != null && known.status == status && known.fields == fieldCount) return known.t;
 				var key = anonKey(ctx, a);
 				var pure = ctx.anonKeyPure;
 				var cached = ctx.anonsCache.get(key);
 				if (cached != null) {
-					if (pure) ctx.anonTypes.set(a, {status: status, t: cached});
+					if (pure) ctx.anonTypes.set(a, {status: status, fields: fieldCount, t: cached});
 					return cached;
 				}
 				var vp:HlVirtualProto = {vfields: [], vindex: new Map()};
 				var t = HVirtual(vp);
 				if (tref != null) tref.v = t;
 				ctx.anonsCache.set(key, t);
-				if (pure) ctx.anonTypes.set(a, {status: status, t: t});
+				if (pure) ctx.anonTypes.set(a, {status: status, fields: fieldCount, t: t});
 				// PMap.fold visits the names in increasing order; the list is then sorted by name
 				var fields = [for (n in hxc.core.PMapOrder.sortedKeys(a.fields)) cfieldType(ctx, a.fields.get(n))];
 				vp.vfields = fields;
