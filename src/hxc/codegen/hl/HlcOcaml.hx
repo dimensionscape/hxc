@@ -513,6 +513,11 @@ class HlcOcaml {
 	// A class proto's maps, built once the value they are in is complete (pinterfaces compares types).
 	static var pendingMaps:Array<() -> Void> = [];
 	static var depth = 0;
+	// The memo and listMemo keys the walk in progress added. A walk that throws leaves values in the making
+	// (a proto whose maps are still the sentinel, and every value that holds it), so it takes them back out
+	// and a later walk reaching the same source builds them again.
+	static var walkKeys:Array<{}> = [];
+	static var walkListKeys:Array<{}> = [];
 
 	// Forgets every value ttypeValue made: call once per output, so one compile's types are not kept alive.
 	public static function resetMemo():Void {
@@ -521,6 +526,22 @@ class HlcOcaml {
 		names = new ObjectMap();
 		pendingMaps = [];
 		depth = 0;
+		walkKeys = [];
+		walkListKeys = [];
+	}
+
+	static function remember(key:{}, v:OValue):Void {
+		memo.set(key, v);
+		walkKeys.push(key);
+	}
+
+	// A walk threw: forget what it memoized, and the maps it left to build.
+	static function forgetWalk():Void {
+		for (k in walkKeys) memo.remove(k);
+		for (k in walkListKeys) listMemo.remove(k);
+		walkKeys.resize(0);
+		walkListKeys.resize(0);
+		pendingMaps = [];
 	}
 
 	// ttype, from hlcode.ml: constant constructors are ints in declaration order (HVoid 0 .. HDynObj 12),
@@ -529,22 +550,25 @@ class HlcOcaml {
 		depth++;
 		var v = try ttypeRec(t) catch (e:haxe.Exception) {
 			depth--;
-			pendingMaps = [];
+			forgetWalk();
 			throw e;
 		}
 		depth--;
 		if (depth == 0) {
 			depth++;
 			// A build that throws (HlcCheck catches Unmodelled and goes on) drops the rest, and the next walk
-			// starts from depth 0 with an empty queue.
+			// starts from depth 0 with an empty queue and none of this walk's values: a proto whose maps were
+			// never built is made again, not found in the memo with the sentinel in them.
 			try {
 				while (pendingMaps.length > 0) pendingMaps.shift()();
 			} catch (e:haxe.Exception) {
 				depth = 0;
-				pendingMaps = [];
+				forgetWalk();
 				throw e;
 			}
 			depth--;
+			walkKeys.resize(0);
+			walkListKeys.resize(0);
 		}
 		return v;
 	}
@@ -557,7 +581,7 @@ class HlcOcaml {
 		if (known != null) return known;
 		var b = new OBlockRef(blockTag(t), []);
 		var v = OBlock(b);
-		memo.set(key, v);
+		remember(key, v);
 		b.fields = switch t {
 			case HFun(args, ret) | HMethod(args, ret): [listOf(args, ttypeRec), ttypeRec(ret)];
 			case HObj(p) | HStruct(p): [classProto(p)];
@@ -646,7 +670,7 @@ class HlcOcaml {
 		if (known != null) return known;
 		var b = new OBlockRef(0, []);
 		var v = OBlock(b);
-		memo.set(key, v);
+		remember(key, v);
 		b.fields = [
 			OStr(new OString(p.pname)),
 			OInt(p.pid),
@@ -687,7 +711,7 @@ class HlcOcaml {
 		if (known != null) return known;
 		var b = new OBlockRef(0, []);
 		var v = OBlock(b);
-		memo.set(key, v);
+		remember(key, v);
 		b.fields = [
 			OStr(new OString(e.ename)),
 			OInt(e.eid),
@@ -791,7 +815,7 @@ class HlcOcaml {
 		if (known != null) return known;
 		var b = new OBlockRef(0, []);
 		var v = OBlock(b);
-		memo.set(src, v);
+		remember(src, v);
 		b.fields = fields();
 		return v;
 	}
@@ -811,6 +835,7 @@ class HlcOcaml {
 		var i = items.length;
 		while (i-- > 0) l = OBlock(new OBlockRef(0, [items[i], l]));
 		listMemo.set(key, l);
+		walkListKeys.push(key);
 		return l;
 	}
 

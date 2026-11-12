@@ -516,6 +516,20 @@ class HlcCheck {
 		after.pfunctionsAdds = [];
 		var afterProto = block(block(HlcOcaml.ttypeValue(HObj(after))).fields[0]);
 		check("the next walk builds its proto's maps", !afterProto.fields[8].match(OBlock(_ == HlcOcaml.UNMODELLED => true)), Std.string(afterProto.fields[8]));
+		// A later walk that reaches the proto whose build threw makes it again rather than finding the
+		// half-built one, maps still the sentinel, in the memo: a subclass's walk throws the same way, and once
+		// the interfaces no longer compare, the proto comes back with its maps.
+		var sub = proto("Sub");
+		sub.psuper = two;
+		var subThrew = try {
+			HlcOcaml.ttypeValue(HObj(sub));
+			false;
+		} catch (e:Unmodelled) true;
+		check("a later walk reaching the proto builds it again", subThrew);
+		two.pinterfaces = [{t: HObj(proto("I")), index: 0}];
+		var twoProto = block(block(HlcOcaml.ttypeValue(HObj(two))).fields[0]);
+		for (i in 8...11)
+			check("the proto reached again has map " + i, !twoProto.fields[i].match(OBlock(_ == HlcOcaml.UNMODELLED => true)), Std.string(twoProto.fields[i]));
 		HlcOcaml.resetMemo();
 
 		// 70 adds: 16 -> 32 -> 64 buckets. iter goes by hash land 63, each bucket newest first.
