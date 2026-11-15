@@ -1,0 +1,8 @@
+{
+	"name": "comprehension-presize",
+	"oracle": "haxe",
+	"kind": "run",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "--main", "$module", "--interp", "-D", "comprehension-presize"]
+}

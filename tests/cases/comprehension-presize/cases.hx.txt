@@ -1,0 +1,72 @@
+--- ranges-and-arrays-give-the-same-elements
+class P {
+	static var log:Array<String> = [];
+
+	static function bound(name:String, v:Int):Int {
+		log.push(name);
+		return v;
+	}
+
+	static function main() {
+		var n = 5;
+		trace([for (i in 0...n) i * i]);
+		trace([for (i in 2...n) "s" + i]);
+		trace([for (_ in 0...3) null]);
+		trace([for (i in 0...40) i].length);
+		trace([for (i in n...0) i]);
+		trace([for (i in bound("from", 1)...bound("to", 4)) { var d = i * 2; d + 1; }]);
+		trace(log);
+		var src = ["a", "b", "c"];
+		trace([for (s in src) s + s]);
+		trace([for (s in src.copy()) s.length]);
+		trace([for (s in ["x", "y"]) s]);
+		trace([for (f in [1.5, 2.5]) f * 2]);
+		var grid = [for (_ in 0...2) [for (c in 0...3) c]];
+		grid[0][1] = 9;
+		trace(grid);
+		var empty:Array<Int> = [];
+		trace([for (x in empty) x]);
+	}
+}
+
+--- a-loop-that-ends-short-is-trimmed
+class P {
+	static function main() {
+		trace([for (i in 0...6) { if (i == 3) break; i; }]);
+		trace([for (i in 0...6) { if (i % 2 == 0) continue; i; }]);
+		var r = try [for (i in 0...4) { if (i == 2) throw "stop"; i; }] catch (e:String) [-1];
+		trace(r);
+		var w = 0;
+		trace([for (i in 0...4) { w += i; w; }]);
+	}
+}
+
+--- a-source-that-changes-while-walked
+class P {
+	static function main() {
+		var a = [1, 2, 3];
+		trace([for (x in a) { if (a.length < 6) a.push(x + 10); x; }]);
+		var b = [1, 2, 3, 4];
+		trace([for (x in b) { b.pop(); x; }]);
+	}
+}
+
+--- shapes-that-keep-the-plain-lowering
+class P {
+	static function main() {
+		trace([for (i in 0...6) if (i % 2 == 0) i]);
+		trace([for (i in 0...2) for (j in 0...2) i * 10 + j]);
+		trace([for (k => v in ["a" => 1]) k + v]);
+		var m = [for (i in 0...3) i => i * 2];
+		trace(m.get(2));
+		var l = new List<Int>();
+		l.add(4);
+		l.add(5);
+		trace([for (x in l) x + 1]);
+		var i = 0;
+		trace([while (i < 3) i++]);
+		trace([for (c in "hey".split("")) c.toUpperCase()]);
+		var typed:Array<Float> = [for (i in 0...3) i];
+		trace(typed);
+	}
+}

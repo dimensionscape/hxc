@@ -5955,12 +5955,147 @@ class Typer {
 		// constructor cannot take an expectation whose parameters are still open monomorphs.
 		var tea = typeExpr(ctx, init, mapped.isMap ? WithTypeTools.value : withType);
 		TypeUnification.unifyDefault(v.type, tea.type);
+		if (!mapped.isMap && ctx.com.defines.rawDefined("comprehension_presize")) {
+			var sized = typePresizedComprehension(ctx, v, tea, mapped.expr, p);
+			if (sized != null) return sized;
+		}
 		var efor = typeExpr(ctx, mapped.expr, WithTypeTools.noValue);
 		return TypeFunctions.mk(TBlock([
 			TypeFunctions.mk(TVarExpr(v, tea), ctx.com.basic.tvoid, p),
 			efor,
 			TypeFunctions.mk(TLocal(v), v.type, p),
 		]), v.type, p);
+	}
+
+	// -D comprehension-presize: `[for (i in a...b) x]` and `[for (x in array) y]` allocate the result
+	// once. The accumulator is resized to the loop's count before the loop, each push becomes a write
+	// at a running index, and the result is trimmed if the loop ended short (break, continue, a
+	// throw caught outside never sees the array). A write past the hint grows the array as any
+	// out-of-range write does, so a source array that grows while it is walked still gives every
+	// element. Only a loop whose body ends in a plain element qualifies: a filter (`if` without
+	// `else`) or a nested loop gives no usable count. Returns null, with nothing typed, when the
+	// syntax does not qualify; once the loop's source has been typed the result is never null, so
+	// the source is typed exactly once.
+	// Not Haxe's output: the default lowering stays byte-identical, this is opt-in.
+	static function typePresizedComprehension(ctx:TyperContext, v:TVar, tea:TExpr, loop:Expr, p:Position):Null<TExpr> {
+		var it:Expr, body:Expr;
+		switch (loop.expr) {
+			case EFor(i, b): it = i; body = b;
+			case _: return null;
+		}
+		var ident:Expr, src:Expr;
+		switch (it.expr) {
+			case EBinop(OpIn, a = {expr: EConst(CIdent(_))}, b): ident = a; src = b;
+			case _: return null;
+		}
+		// The tail must be the push itself: comprehensionPush left a call on the stored accumulator.
+		function plainTail(e:Expr):Bool
+			return switch (e.expr) {
+				case EParenthesis(e1): plainTail(e1);
+				case EBlock(l) if (l.length > 0): plainTail(l[l.length - 1]);
+				case ECall(_, [_]): true;
+				case _: false;
+			};
+		if (!plainTail(body)) return null;
+		var elemT = switch (TypeFunctions.follow(v.type)) {
+			case TInst({path: {pack: [], name: "Array"}}, [t]): t;
+			case _: return null;
+		};
+		var basic = ctx.com.basic;
+		var tint = basic.tint;
+		var tvoid = basic.tvoid;
+		inline function local(t:T):TVar return TypeFunctions.allocVar(VGenerated, "`", t, p);
+		inline function read(lv:TVar):TExpr return TypeFunctions.mk(TLocal(lv), lv.type, p);
+		inline function decl(lv:TVar, init:TExpr):TExpr return TypeFunctions.mk(TVarExpr(lv, init), tvoid, p);
+		function stored(te:TExpr, what:String):Expr {
+			var id = hxc.context.Context.allocStoredTypedExprId(what + " " + p.file + ":" + Position.getInfos(p).line);
+			ctx.com.storedTypedExprs.set(id, te);
+			return new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos},
+				new Expr(EConst(CInt(Std.string(id), null)), p)), p);
+		}
+		var head:Array<TExpr> = [];
+		var count:TExpr;
+		var tsrc = typeExpr(ctx, src, WithTypeTools.value);
+		switch [tsrc.expr, TypeFunctions.follow(tsrc.type)] {
+			case [TNew(c, [], [efrom, eto]), _] if (c.path.pack.length == 0 && c.path.name == "IntIterator"):
+				switch [efrom.expr, eto.expr] {
+					case [TConst(TInt(a)), TConst(TInt(b))]:
+						// Constant bounds stay in place, so the loop can still unroll.
+						count = TypeFunctions.mk(TConst(TInt(b - a)), tint, p);
+					case _:
+						var lo = local(tint), hi = local(tint);
+						head.push(decl(lo, efrom));
+						head.push(decl(hi, eto));
+						tsrc = TypeFunctions.mk(TNew(c, [], [read(lo), read(hi)]), tsrc.type, tsrc.pos);
+						count = TypeFunctions.mk(TBinop(OpSub, read(hi), read(lo)), tint, p);
+				}
+			case [TArrayDecl(el), TInst({path: {pack: [], name: "Array"}}, [_])]:
+				count = TypeFunctions.mk(TConst(TInt(el.length)), tint, p);
+			case [_, TInst({path: {pack: [], name: "Array"}}, [_])]:
+				switch (tsrc.expr) {
+					case TLocal(_):
+					case _:
+						var arr = local(tsrc.type);
+						head.push(decl(arr, tsrc));
+						tsrc = TypeFunctions.mk(TLocal(arr), tsrc.type, tsrc.pos);
+				}
+				count = TypeFunctions.mk(TField(tsrc, TypeFunctions.quickField(tsrc.type, "length")), tint, p);
+			case _:
+				// Not a counted source: type the loop as it stands, over the source typed above.
+				count = null;
+		}
+		var srcRef = stored(tsrc, "comprehension source");
+		var efor = typeExpr(ctx, new Expr(EFor(new Expr(EBinop(OpIn, ident, srcRef), it.pos), body), loop.pos), WithTypeTools.noValue);
+		function plain():TExpr
+			return TypeFunctions.mk(TBlock(([TypeFunctions.mk(TVarExpr(v, tea), tvoid, p)] : Array<TExpr>).concat(head).concat([
+				efor,
+				TypeFunctions.mk(TLocal(v), v.type, p),
+			])), v.type, p);
+		if (count == null) return plain();
+		// Every use of the accumulator must be a push this pass rewrites; anything else (a target
+		// whose push is inline, say) keeps the plain lowering.
+		var uses = 0, pushes = 0;
+		function scan(e:TExpr):Void {
+			switch (e.expr) {
+				case TCall({expr: TField({expr: TLocal(v2)}, FInstance(_, _, cf))}, [arg]) if (v2 == v && cf.name == "push"):
+					uses++;
+					pushes++;
+					scan(arg);
+				case TLocal(v2) if (v2 == v):
+					uses++;
+				case _:
+					TexprTools.iter(scan, e);
+			}
+		}
+		scan(efor);
+		if (pushes == 0 || uses != pushes) return plain();
+		var n = local(tint), k = local(tint);
+		function rewrite(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TCall({expr: TField(acc = {expr: TLocal(v2)}, FInstance(_, _, cf))}, [arg]) if (v2 == v && cf.name == "push"):
+					var index = TypeFunctions.mk(TUnop(Increment, Postfix, read(k)), tint, e.pos);
+					TypeFunctions.mk(TBinop(OpAssign, TypeFunctions.mk(TArray(acc, index), elemT, e.pos), rewrite(arg)), elemT, e.pos);
+				case _:
+					TexprTools.mapExpr(rewrite, e);
+			};
+		}
+		var accRef = stored(TypeFunctions.mk(TLocal(v), v.type, p), "comprehension");
+		var nRef = stored(read(n), "comprehension count");
+		var kRef = stored(read(k), "comprehension index");
+		inline function int(i:Int):Expr return new Expr(EConst(CInt(Std.string(i), null)), p);
+		inline function resizeIf(cond:Expr, to:Expr):TExpr
+			return typeExpr(ctx, new Expr(EIf(cond,
+				new Expr(ECall(synthesized(new Expr(EField(accRef, "resize", EFNormal), p)), [to]), p), null), p), WithTypeTools.noValue);
+		var grow = resizeIf(new Expr(EBinop(OpGt, nRef, int(0)), p), nRef);
+		var trim = resizeIf(new Expr(EBinop(OpLt, kRef, nRef), p), kRef);
+		return TypeFunctions.mk(TBlock(([TypeFunctions.mk(TVarExpr(v, tea), tvoid, p)] : Array<TExpr>).concat(head).concat([
+			decl(n, count),
+			grow,
+			decl(k, TypeFunctions.mk(TConst(TInt(0)), tint, p)),
+			rewrite(efor),
+			trim,
+			TypeFunctions.mk(TLocal(v), v.type, p),
+		])), v.type, p);
 	}
 
 	// Lowers a comprehension body so each tail expression updates the accumulator. Whether the
