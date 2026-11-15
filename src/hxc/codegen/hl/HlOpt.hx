@@ -69,9 +69,11 @@ class HlISet {
 class HlRegState {
 	public var rindex:Int;
 	public var ralias:HlRegState;
-	// an OCaml list, head first
-	public var rbind:Array<HlRegState> = [];
+	// an OCaml list, head first. The empty list is the one shared `noBind`, never changed in place.
+	public var rbind:Array<HlRegState> = noBind;
 	public var rnullcheck = false;
+
+	public static final noBind:Array<HlRegState> = [];
 
 	public function new(i:Int) {
 		rindex = i;
@@ -512,7 +514,8 @@ private class HlOptPass {
 	}
 
 	function unalias(r:HlRegState):Void {
-		r.ralias.rbind = r.ralias.rbind.filter(r2 -> r2 != r);
+		var a = r.ralias;
+		if (a.rbind.length != 0) a.rbind = a.rbind.filter(r2 -> r2 != r);
 		r.ralias = r;
 	}
 
@@ -529,7 +532,7 @@ private class HlOptPass {
 				for (i in 0...nregs) {
 					var sold = s[i], snew = s2[i];
 					snew.ralias = s2[sold.ralias.rindex];
-					snew.rbind = [for (x in sold.rbind) s2[x.rindex]];
+					if (sold.rbind.length != 0) snew.rbind = [for (x in sold.rbind) s2[x.rindex]];
 					snew.rnullcheck = sold.rnullcheck;
 				}
 				s = s2;
@@ -542,7 +545,7 @@ private class HlOptPass {
 				}
 				for (i in 0...nregs) {
 					var s1 = s[i], s2 = st2[i];
-					s1.rbind = s1.rbind.filter(x -> x.ralias == s1);
+					if (s1.rbind.length != 0) s1.rbind = s1.rbind.filter(x -> x.ralias == s1);
 					s1.rnullcheck = s1.rnullcheck && s2.rnullcheck;
 					if (s2.rbind.length > 0) {
 						// fold_left consing onto s1.rbind, membership checked in s1.rbind as it was
@@ -571,7 +574,7 @@ private class HlOptPass {
 		function doWrite(r:Int):Void {
 			var s = state[r];
 			for (s2 in s.rbind) s2.ralias = s2;
-			s.rbind = [];
+			s.rbind = HlRegState.noBind;
 			s.rnullcheck = false;
 			lastWrite[r] = i;
 			b.bwrite.set(r, i);
@@ -604,7 +607,7 @@ private class HlOptPass {
 					doWrite(d);
 					sd.ralias = sv;
 					sd.rnullcheck = sv.rnullcheck;
-					if (sv.rbind.indexOf(sd) < 0) sv.rbind.unshift(sd);
+					if (sv.rbind.length == 0) sv.rbind = [sd] else if (sv.rbind.indexOf(sd) < 0) sv.rbind.unshift(sd);
 				case OIncr(r) | ODecr(r):
 					doRead(r);
 					doWrite(r);

@@ -625,8 +625,9 @@ class TexprTools {
 
 	// Rebuild e with f applied to each direct sub-expression.
 	// A node none of whose children changed is returned as it is, not rebuilt: a pass over the whole tree
-	// (and there are dozens) otherwise allocates every node again to say nothing changed. Only the kinds
-	// that hold no array are kept this way, so a mapped node's arrays are always its own.
+	// (and there are dozens) otherwise allocates every node again to say nothing changed. A block, call,
+	// `new`, array literal or function is kept too, with its array, when f changed none of its children;
+	// the other kinds that hold an array (object literal, switch, try) are always rebuilt.
 	public static function mapExpr(f:TExpr->TExpr, e:TExpr):TExpr {
 		inline function mk2(ed:TExprExpr):TExpr return TypeFunctions.mk(ed, e.type, e.pos);
 		return switch (e.expr) {
@@ -667,21 +668,26 @@ class TexprTools {
 				var n1 = f(e1);
 				n1 == e1 ? e : mk2(TUnop(op, pre, n1));
 			case TArrayDecl(el):
-				mk2(TArrayDecl([for (x in el) f(x)]));
+				var nl = mapListKeep(f, el);
+				nl == el ? e : mk2(TArrayDecl(nl));
 			case TNew(t, pl, el):
-				mk2(TNew(t, pl, [for (x in el) f(x)]));
+				var nl = mapListKeep(f, el);
+				nl == el ? e : mk2(TNew(t, pl, nl));
 			case TBlock(el):
-				mk2(TBlock([for (x in el) f(x)]));
+				var nl = mapListKeep(f, el);
+				nl == el ? e : mk2(TBlock(nl));
 			case TObjectDecl(fl):
 				mk2(TObjectDecl([for (fd in fl) {key: fd.key, expr: f(fd.expr)}]));
 			case TCall(e1, el):
-				var e1 = f(e1);
-				mk2(TCall(e1, [for (x in el) f(x)]));
+				var n1 = f(e1);
+				var nl = mapListKeep(f, el);
+				n1 == e1 && nl == el ? e : mk2(TCall(n1, nl));
 			case TVarExpr(v, eo):
 				var no = eo == null ? null : f(eo);
 				no == eo ? e : mk2(TVarExpr(v, no));
 			case TFunction(fu):
-				mk2(TFunction(new TFunc(fu.args, fu.type, f(fu.expr))));
+				var nb = f(fu.expr);
+				nb == fu.expr ? e : mk2(TFunction(new TFunc(fu.args, fu.type, nb)));
 			case TIf(ec, e1, e2):
 				var nc = f(ec);
 				var n1 = f(e1);
@@ -705,6 +711,22 @@ class TexprTools {
 				var n1 = f(e1);
 				n1 == e1 ? e : mk2(TMeta(m, n1));
 		};
+	}
+
+	// f over each element, in order: `el` itself when f changed none of them, a new array otherwise.
+	static function mapListKeep(f:TExpr->TExpr, el:Array<TExpr>):Array<TExpr> {
+		var out:Null<Array<TExpr>> = null;
+		var i = -1;
+		while (++i < el.length) {
+			var x = el[i];
+			var y = f(x);
+			if (out == null) {
+				if (y == x) continue;
+				out = el.slice(0, i);
+			}
+			out.push(y);
+		}
+		return out == null ? el : out;
 	}
 
 	// Unwrap parens, meta, single-expr blocks and typeless casts.

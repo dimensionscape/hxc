@@ -59,6 +59,10 @@ class HlMethodContext {
 	// unfolding cut at a fixed depth), the types under one key told apart by HlTypeTable.same. So a
 	// recursive virtual finds the allocator of any other virtual it unfolds the same as.
 	public var mallocs:Map<String, Array<{t:HlType, a:HlAllocator}>> = new Map();
+	// The type values `mallocs` was last asked about, with the allocator each found: asking again with the
+	// very same value skips building its key.
+	public var mallocSeenT:Array<HlType> = [];
+	public var mallocSeenA:Array<HlAllocator> = [];
 	public var mcaptured:HlMethodCapture;
 	// prepended lists in OCaml, kept here in the order they were added
 	public var mcontinues:Array<Int->Void> = [];
@@ -238,18 +242,32 @@ class HlContext {
 
 	// `PMap.find t ctx.m.mallocs`: null for Not_found; with `create`, adds an empty allocator for t then.
 	static function findAllocator(ctx:HlContext, t:HlType, create:Bool):Null<HlAllocator> {
+		var seenT = ctx.m.mallocSeenT;
+		for (i in 0...seenT.length) if (seenT[i] == t) return ctx.m.mallocSeenA[i];
 		var k = HlTypeTable.key(t, 0);
 		var bucket = ctx.m.mallocs.get(k);
 		if (bucket == null) {
 			if (!create) return null;
 			ctx.m.mallocs.set(k, bucket = []);
 		}
-		for (e in bucket) if (HlTypeTable.same(e.t, t, [])) return e.a;
-		if (!create) return null;
-		var a:HlAllocator = {aAll: [], aHold: []};
-		bucket.push({t: t, a: a});
-		return a;
+		var found:Null<HlAllocator> = null;
+		for (e in bucket) if (HlTypeTable.same(e.t, t, [])) {
+			found = e.a;
+			break;
+		}
+		if (found == null) {
+			if (!create) return null;
+			found = {aAll: [], aHold: []};
+			bucket.push({t: t, a: found});
+		}
+		if (seenT.length < MALLOC_SEEN_MAX) {
+			seenT.push(t);
+			ctx.m.mallocSeenA.push(found);
+		}
+		return found;
 	}
+
+	static inline var MALLOC_SEEN_MAX = 48;
 
 	// genhl.ml: alloc_tmp
 	public static function allocTmp(ctx:HlContext, t:HlType):Int {

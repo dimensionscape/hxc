@@ -3,8 +3,8 @@ package hxc.core;
 /**
 	A file's times, with the sub-second precision hxcpp's FileSystem.stat drops. There are two sources and
 	two formulas:
-	- fileTime is the last write time of CreateFile(path) as ticks / 1e7 - EPOCH_DIFF, 0 when the file
-	  cannot be opened; elsewhere stat's whole-second st_mtime.
+	- fileTime is the file's last write time as ticks / 1e7 - EPOCH_DIFF (read by name, or through
+	  CreateFile(path) for a link), 0 when the file cannot be opened; elsewhere stat's whole-second st_mtime.
 	- statTimes gives each time as (ticks - 116444736000000000) / 1e7 on Windows, which is at times one
 	  ulp off the first formula, and elsewhere as stat's seconds plus nanoseconds / 1e9.
 **/
@@ -26,6 +26,14 @@ static double hxc_sys_filetime(::String file) {
 #ifdef _WIN32
 	FILETIME fp;
 	ULARGE_INTEGER ui;
+	// Asking by name costs one system call where opening the file costs three. A link is still opened,
+	// since its own times are not those of the file it names.
+	WIN32_FILE_ATTRIBUTE_DATA d;
+	if (GetFileAttributesExA(file.utf8_str(), GetFileExInfoStandard, &d) && !(d.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+		ui.LowPart = d.ftLastWriteTime.dwLowDateTime;
+		ui.HighPart = d.ftLastWriteTime.dwHighDateTime;
+		return ((double)ui.QuadPart) / 10000000.0 - (134774*24*60*60.0);
+	}
 	HANDLE h = CreateFileA(file.utf8_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
 	if (h == INVALID_HANDLE_VALUE || !GetFileTime(h, NULL, NULL, &fp)) {
 		CloseHandle(h);
