@@ -406,6 +406,7 @@ class HlGenerate {
 		ctx.isMacro = isMacro;
 		ctx.recordPMapAdds = fileExtension(com.file) == "c";
 		ctx.optimize = !com.defines.rawDefined("hl_no_opt");
+		ctx.deferOpt = hxc.core.Par.threadCount() > 1;
 		ctx.m = new HlMethodContext(0, HVoid, HlContext.nullCapture(), false);
 		ctx.arrayImpl = {
 			aall: getClass("ArrayAccess"),
@@ -485,6 +486,7 @@ class HlGenerate {
 	// genhl.ml: build_code
 	static function buildCode(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):HlCodeData {
 		var ep = generateStaticInit(ctx, types, main);
+		HlFunctions.optimizePending(ctx);
 		var bytes = ctx.cbytes.arr.copy();
 		return {
 			version: bytes.length == 0 ? 4 : 5,

@@ -337,7 +337,11 @@ class HlFunctions {
 		};
 		ctx.m = old;
 		ctx.definedFuns.set(fidx, true);
-		var f = if (ctx.optimize && (genContent == null || name.cls != "" || name.name != "")) {
+		var f = if (ctx.optimize && (genContent == null || name.cls != "" || name.name != "") && ctx.deferOpt && ctx.dumpOut == null) {
+			// The optimiser reads and writes nothing but the function it is given, so it can run later.
+			ctx.pendingOpt.push(ctx.cfunctions.length);
+			hlf;
+		} else if (ctx.optimize && (genContent == null || name.cls != "" || name.name != "")) {
 			var t = hxc.core.Timer.timer(["generate", "hl", "opt"]);
 			var dumpOut = ctx.dumpOut;
 			var f = HlOpt.optimize(dumpOut == null ? null : line -> {
@@ -348,5 +352,27 @@ class HlFunctions {
 		} else hlf;
 		ctx.cfunctions.push(f);
 		return capt;
+	}
+
+	// Optimises the functions makeFun left for later, over worker threads. Each result takes its function's
+	// place, so the table is what optimising one by one gives. A failure is raised here, the earliest
+	// function's first.
+	public static function optimizePending(ctx:HlContext):Void {
+		var pending = ctx.pendingOpt;
+		if (pending.length == 0) return;
+		ctx.pendingOpt = [];
+		var t = hxc.core.Timer.timer(["generate", "hl", "opt"]);
+		var funs = ctx.cfunctions;
+		var errors:Array<Dynamic> = [for (_ in pending) null];
+		hxc.core.Par.forEach(hxc.core.Par.threadCount(), pending.length, function(i) {
+			var at = pending[i];
+			try {
+				funs[at] = HlOpt.optimize(null, _ -> "", funs[at]);
+			} catch (e:Dynamic) {
+				errors[i] = e;
+			}
+		});
+		t();
+		for (e in errors) if (e != null) throw e;
 	}
 }

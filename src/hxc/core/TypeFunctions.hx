@@ -108,13 +108,45 @@ class TypeFunctions {
 	}
 
 	public static function allocVar(kind:TVarKind, n:String, t:T, p:Position):TVar {
-		_uid++;
-		if (traceVars) traceVar(n);
 		var flags = switch (kind) {
 			case VUser(TVOLocalFunction): intOfVarFlag(VFinal); // Stores the raw index here
 			case _: 0;
 		};
+		var seg = varCapture ? varSegments[Par.tid()] : null;
+		if (seg != null) {
+			var v = new TVar(_uid + seg.length + 1, n, t, kind, null, [], flags, p);
+			seg.push(v);
+			return v;
+		}
+		_uid++;
+		if (traceVars) traceVar(n);
 		return new TVar(_uid, n, t, kind, null, [], flags, p);
+	}
+
+	// A parallel phase's variables. While `varCapture` is on, a thread that has begun a segment gets its
+	// new variables listed there, numbered for the time being from the counter as the phase found it (two
+	// segments then share numbers, which no unit sees of another). The phase numbers every segment for good
+	// with numberVarSegment in the order its units would have run one after the other, so each variable
+	// ends with the id it would have had.
+	public static var varCapture:Bool = false;
+	static var varSegments:Array<Null<Array<TVar>>> = [for (_ in 0...Par.MAX_THREADS) null];
+
+	public static function beginVarSegment():Array<TVar> {
+		var seg:Array<TVar> = [];
+		varSegments[Par.tid()] = seg;
+		return seg;
+	}
+
+	public static function endVarSegment():Void {
+		varSegments[Par.tid()] = null;
+	}
+
+	public static function numberVarSegment(seg:Array<TVar>):Void {
+		for (v in seg) {
+			_uid++;
+			v.id = _uid;
+			if (traceVars) traceVar(v.name);
+		}
 	}
 
 	// A variable whose id is given later: a local function's arguments are typed before its own variable is
@@ -128,6 +160,12 @@ class TypeFunctions {
 	}
 
 	public static function giveVarId(v:TVar):Void {
+		var seg = varCapture ? varSegments[Par.tid()] : null;
+		if (seg != null) {
+			v.id = _uid + seg.length + 1;
+			seg.push(v);
+			return;
+		}
 		_uid++;
 		v.id = _uid;
 		if (traceVars) traceVar(v.name);
@@ -135,6 +173,7 @@ class TypeFunctions {
 
 	static var _mid:Int = 0;
 	public static function allocMid():Int {
+		Par.mainOnly();
 		_mid++;
 		return _mid;
 	}
@@ -437,7 +476,10 @@ class TypeFunctions {
 	public static function lazyType(f:Ref<TLazy>):T {
 		return switch (f.get()) {
 			case LAvailable(t): t;
-			case LProcessing(fn) | LWait(fn): fn();
+			case LProcessing(fn) | LWait(fn):
+				// Forcing runs the typer, which is the main thread's.
+				Par.mainOnly();
+				fn();
 		}
 	}
 
@@ -561,7 +603,10 @@ class TypeFunctions {
 	public static inline function nameOrigin(cf:TClassField):{}
 		return cf.nameOrigin != null ? cf.nameOrigin : cf;
 
-	public static var applyParamsStack:Ref<Array<{subject:T, applied:TParams}>> = new Ref([]);
+	// One per thread slot (hxc.core.Par), as are the other stacks below that live across a call.
+	static var applyParamsStacks:Array<Ref<Array<{subject:T, applied:TParams}>>> = [for (_ in 0...Par.MAX_THREADS) new Ref([])];
+	public static var applyParamsStack(get, never):Ref<Array<{subject:T, applied:TParams}>>;
+	static function get_applyParamsStack() return applyParamsStacks[Par.tid()];
 
 	// Thread the stack so a self-referential
 	// typedef expansion raises ApplyParamsRecursion, which is absorbed here as success.
@@ -767,7 +812,9 @@ class TypeFunctions {
 
 	// Abstracts traversed by the current getUnderlyingType chain; a repeat is a recursive chain and reports
 	// instead of looping.
-	static var underlyingTypeStack:Array<T> = [];
+	static var underlyingTypeStacks:Array<Array<T>> = [for (_ in 0...Par.MAX_THREADS) []];
+	static var underlyingTypeStack(get, never):Array<T>;
+	static function get_underlyingTypeStack() return underlyingTypeStacks[Par.tid()];
 
 	// A @:multiType abstract's underlying type is its resolved specialization. The resolver lives in
 	// the typer; ModuleLoader.attach assigns it. A null result falls through to thisType.
@@ -875,7 +922,10 @@ class TypeFunctions {
 		}
 	}
 
-	static var nullableDepth:Int = 0;
+	static var nullableDepths:Array<Int> = [for (_ in 0...Par.MAX_THREADS) 0];
+	static var nullableDepth(get, set):Int;
+	static function get_nullableDepth() return nullableDepths[Par.tid()];
+	static function set_nullableDepth(v:Int) return nullableDepths[Par.tid()] = v;
 
 	public static function isNull(t:T, noLazy:Bool = false):Bool {
 		return switch (t) {

@@ -94,6 +94,10 @@ class HlContext {
 	public var cnatives:HlLookup<{lib:Int, name:Int, t:HlType, findex:Int}> = new HlLookup();
 	public var cfids:HlLookup<Bool> = new HlLookup();
 	public var cfunctions:Array<HlFunction> = [];
+	// Indices into cfunctions of the functions still to go through the optimiser (HlFunctions.optimizePending).
+	public var pendingOpt:Array<Int> = [];
+	// Whether the optimiser runs after generation, over worker threads, instead of function by function.
+	public var deferOpt:Bool = false;
 	public var cconstants:HlLookup<{global:Int, fields:Array<Int>}> = new HlLookup();
 	public var optimize:Bool;
 	// genhl.ml: dump_out, dump/hlopt.txt opened in create_context and written as each function is optimised;

@@ -725,6 +725,8 @@ class Context {
 	public var relocateNullPosTo:Null<Position> = null;
 
 	public function addDiagnostic(message:String, pos:Position, depth:Int = 0, ?severity:MessageSeverity):Void {
+		// Messages keep the order of a one-thread run: a worker leaves its unit to the main thread.
+		hxc.core.Par.mainOnly();
 		// Relocate null positions only in diagnostics. Keep AST positions unchanged for generated code.
 		if (relocateNullPosTo != null && pos != null && pos.min < 0 && pos.max < 0 && pos.file == Position.nullPos.file)
 			pos = relocateNullPosTo;
@@ -831,6 +833,7 @@ class Context {
 
 	// Drop disabled warnings; prefix enabled non-generic warnings with (WName).
 	public function warning(w:hxc.core.WarningList.Warning, options:Array<Array<hxc.core.WarningList.WarningOption>>, message:String, pos:Position, depth:Int = 0):Void {
+		hxc.core.Par.mainOnly();
 		switch (hxc.core.WarningList.getMode(w, options.concat(warningOptions))) {
 			case WMEnable:
 				var obj = hxc.core.WarningList.warningObj(w);
