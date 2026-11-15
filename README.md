@@ -90,8 +90,15 @@ hxc -p src -m Main --xml types.xml --no-output
 hxc build.hxml
 ```
 
-`hxc --help` prints the full option list. `hxc --version` reports `4.3.7`, the language version hxc
-implements, so build tools that check the compiler version keep working.
+`hxc` with no arguments prints the common options and `hxc --help` the full list. `hxc --help-hxc`
+lists what hxc adds to Haxe: its own defines, by target, and the environment variables it reads.
+`hxc --version` reports `4.3.7`, the language version hxc implements, so build tools that check the
+compiler version keep working.
+
+One of those defines changes generated code on every target. `-D comprehension-presize` allocates the
+result of `[for (i in a...b) x]` and `[for (x in array) y]` once, at the loop's count, instead of growing
+it one push at a time; a loop with a filter, a nested loop or another kind of source is compiled as
+before. The program behaves the same, but the output no longer matches Haxe's, so it is off by default.
 
 ### Compilation server
 

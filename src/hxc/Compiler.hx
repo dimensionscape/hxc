@@ -873,6 +873,11 @@ class Compiler {
 					Sys.stdout().writeString(hxc.compiler.Usage.help());
 					Sys.stdout().flush();
 					exitRequest(0);
+				// hxc's own defines and environment variables; `--help-defines` stays Haxe's list.
+				case "--help-hxc":
+					Sys.stdout().writeString(hxc.compiler.Usage.hxcHelp());
+					Sys.stdout().flush();
+					exitRequest(0);
 				case "--help-metas":
 					// MetaRegistry embeds meta.json verbatim, so the doc text is already here; only the
 					// internal entries are withheld.
