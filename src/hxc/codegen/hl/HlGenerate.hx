@@ -406,6 +406,7 @@ class HlGenerate {
 		ctx.isMacro = isMacro;
 		ctx.recordPMapAdds = fileExtension(com.file) == "c";
 		ctx.optimize = !com.defines.rawDefined("hl_no_opt");
+		ctx.arrayCastGuard = com.defines.rawDefined("hl_array_cast");
 		ctx.deferOpt = hxc.core.Par.threadCount() > 1;
 		ctx.m = new HlMethodContext(0, HVoid, HlContext.nullCapture(), false);
 		ctx.arrayImpl = {

@@ -100,6 +100,8 @@ class HlContext {
 	public var deferOpt:Bool = false;
 	public var cconstants:HlLookup<{global:Int, fields:Array<Int>}> = new HlLookup();
 	public var optimize:Bool;
+	// -D hl-array-cast: an array read out of an array has its type compared before the runtime's cast
+	public var arrayCastGuard:Bool = false;
 	// genhl.ml: dump_out, dump/hlopt.txt opened in create_context and written as each function is optimised;
 	// set when -D dump is
 	public var dumpOut:Null<sys.io.FileOutput>;

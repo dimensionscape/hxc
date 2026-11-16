@@ -100,6 +100,11 @@ result of `[for (i in a...b) x]` and `[for (x in array) y]` once, at the loop's 
 it one push at a time; a loop with a filter, a nested loop or another kind of source is compiled as
 before. The program behaves the same, but the output no longer matches Haxe's, so it is off by default.
 
+`-D hl-array-cast` is the same kind of switch for HashLink alone. Reading an array out of an array, as
+`grid[y]` does, goes through the runtime's cast on every read, because the element may be an
+`Array<Dynamic>` standing in for the typed one (parsed JSON is). With the define the element's type is
+compared first and the runtime is asked only when it differs.
+
 ### Compilation server
 
 ```bash

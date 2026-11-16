@@ -96,6 +96,7 @@ class Usage {
 		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-pathmap=<from>=<to>[,...]", doc: "Rewrite source paths in the PDB."},
 		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-stub-report", doc: "Print the standard library methods that were stubbed."},
 		{cat: "HashLink (--hl)", name: "hl-no-opt", doc: "Skip the bytecode optimiser."},
+		{cat: "HashLink (--hl)", name: "hl-array-cast", doc: "Reading an array out of an array (`grid[y]`) compares its type before asking the runtime to convert it. Not Haxe's output: without it the generated code matches Haxe 4.3.7."},
 		{cat: "Any target", name: "comprehension-presize", doc: "Allocate the result of `[for (i in a...b) x]` and `[for (x in array) y]` once instead of growing it. Not Haxe's output: without it the generated code matches Haxe 4.3.7."},
 	];
 

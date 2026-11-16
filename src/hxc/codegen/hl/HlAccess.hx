@@ -218,7 +218,33 @@ class HlAccess {
 				var harr = ctx.allocTmp(HArray);
 				ctx.op(OField(harr, ra, 1));
 				ctx.op(OGetArray(tmp, harr, ridx));
-				ctx.op(OMov(r, HlCasts.unsafeCastTo(ctx, tmp, vt, p)));
+				if (ctx.arrayCastGuard && HlTypes.isArrayType(vt)) {
+					// -D hl-array-cast: Haxe converts an array read out of an array through the runtime, since it
+					// may be an Array<Dynamic> standing in for the typed one.
+					// It nearly always is an array of exactly the wanted type, so its type is compared first,
+					// and the runtime is asked only when it is something else.
+					ctx.op(OUnsafeCast(r, tmp));
+					var jnull = ctx.jump(n -> OJNull(tmp, n));
+					var ty = ctx.allocTmp(HType);
+					ctx.hold(ty);
+					var want = ctx.allocTmp(HType);
+					ctx.free(ty);
+					ctx.op(OGetType(ty, tmp));
+					ctx.op(OType(want, vt));
+					// a type has one address in a module, so its address is compared: comparing two type
+					// values goes through hl_same_type
+					var pty = ctx.allocTmp(HBytes);
+					ctx.hold(pty);
+					var pwant = ctx.allocTmp(HBytes);
+					ctx.free(pty);
+					ctx.op(OUnsafeCast(pty, ty));
+					ctx.op(OUnsafeCast(pwant, want));
+					var jsame = ctx.jump(n -> OJEq(pty, pwant, n));
+					ctx.op(OSafeCast(r, tmp));
+					jsame();
+					jnull();
+				} else
+					ctx.op(OMov(r, HlCasts.unsafeCastTo(ctx, tmp, vt, p)));
 				jend();
 				return r;
 		}
