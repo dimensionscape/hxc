@@ -11,5 +11,6 @@
 	"cli-nothing-to-compile/next-full-then-empty": "The usage screen carries hxc's own copyright line.",
 	"cli-nothing-to-compile/next-two-empty-batches": "The usage screen carries hxc's own copyright line.",
 	"cli-nothing-to-compile/target-without-no-output": "The usage screen carries hxc's own copyright line.",
-	"macro-api/eval-ssl-key-error-codes": "hxc builds against mbedTLS 3.6, which reports these key errors with different codes and text than mbedTLS 2.28."
+	"macro-api/eval-ssl-key-error-codes": "hxc builds against mbedTLS 3.6, which reports these key errors with different codes and text than mbedTLS 2.28.",
+	"hl-setup/unresolved-extern": "hxc always reports a function index that has no function (Haxe only under -D hl-check): hl.exe writes out of bounds loading such a file."
 }

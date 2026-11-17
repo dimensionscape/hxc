@@ -132,3 +132,25 @@ class P {
 		Sys.println(f);
 	}
 }
+
+--- unresolved-extern + --hl out.hl
+extern class Ext {
+	static function nothing(x:Int):Int;
+}
+
+class P {
+	static function main() {
+		if (Sys.args().length > 5) trace(Ext.nothing(1));
+	}
+}
+
+--- unresolved-extern-hl-check + --hl out.hl -D hl-check
+extern class Ext {
+	static function nothing(x:Int):Int;
+}
+
+class P {
+	static function main() {
+		if (Sys.args().length > 5) trace(Ext.nothing(1));
+	}
+}

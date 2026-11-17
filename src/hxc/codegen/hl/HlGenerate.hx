@@ -543,6 +543,37 @@ class HlGenerate {
 		tGen();
 	}
 
+	// genhl.ml: generate's `Unresolved method` check, which Haxe makes only under -D hl-check. hxc always
+	// makes it: a function index with neither a function nor a native (a call to a static of an extern class
+	// that has no @:hlNative) leaves the function table shorter than its highest index, and hl.exe writes
+	// past its index arrays loading the file. The first one in the order of PMap.iter over cfids.map is
+	// reported: by method name, then by the type's package and name.
+	static function checkResolved(ctx:HlContext):Void {
+		var first:Null<{name:String, pack:Array<String>, type:String, fid:Int}> = null;
+		for (key => fid in ctx.cfids.map) {
+			if (ctx.definedFuns.exists(fid)) continue;
+			// HlContext.overrideKey: name@pack:Type
+			var at = key.lastIndexOf("@"), colon = key.lastIndexOf(":");
+			var packText = key.substring(at + 1, colon);
+			var m = {name: key.substr(0, at), pack: packText == "" ? [] : packText.split("."), type: key.substr(colon + 1), fid: fid};
+			if (first == null || compareUnresolved(m, first) < 0) first = m;
+		}
+		if (first != null) throw "Unresolved method " + Globals.sTypePath(new Path(first.pack, first.type)) + ":" + first.name + "(@" + first.fid + ")";
+	}
+
+	// OCaml's compare on (name, (pack, type)): a list that is a prefix of the other comes first.
+	static function compareUnresolved(a:{name:String, pack:Array<String>, type:String}, b:{name:String, pack:Array<String>, type:String}):Int {
+		var d = HlcWriter.compareStrings(a.name, b.name);
+		if (d != 0) return d;
+		var n = a.pack.length < b.pack.length ? a.pack.length : b.pack.length;
+		for (i in 0...n) {
+			d = HlcWriter.compareStrings(a.pack[i], b.pack[i]);
+			if (d != 0) return d;
+		}
+		if (a.pack.length != b.pack.length) return a.pack.length < b.pack.length ? -1 : 1;
+		return HlcWriter.compareStrings(a.type, b.type);
+	}
+
 	static function generateCode(com:Context):Void {
 		var dump = com.defines.rawDefined("dump");
 		var ctx = createContext(com, false);
@@ -572,6 +603,7 @@ class HlGenerate {
 			}, code);
 			sys.io.File.saveContent("dump/hlcode.txt", out.toString());
 		}
+		checkResolved(ctx);
 		var tWrite = hxc.core.Timer.timer(["generate", "hl", "write"]);
 		if (fileExtension(com.file) == "c") {
 			var gnames = [for (_ in code.globals) ""];
