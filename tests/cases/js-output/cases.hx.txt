@@ -1,0 +1,69 @@
+--- an-inline-iterable-argument-keeps-a-map-fields-dynamic-iterator
+using Ext;
+class P {
+	var sm:Map<String, String> = [];
+	var im:Map<Int, String> = [];
+	function new() {}
+	static inline function first(it:Iterable<String>):Bool return it.iterator().hasNext();
+	function run() {
+		for (c in sm.notNull()) trace(c);
+		for (c in im.notNull()) trace(c);
+		trace(first(sm));
+		trace(Lambda.map(sm, (c) -> c == null));
+	}
+	static function main() { new P().run(); }
+}
+
+--- an-inline-iterable-argument-reaches-a-map-locals-own-iterator
+using Ext;
+class P {
+	static function main() {
+		var m:Map<String, String> = [];
+		for (c in m.notNull()) trace(c);
+	}
+}
+
+--- namespaces-export-in-the-order-of-their-last-exposure
+@:expose("p.A") class A { public static function f() return 1; }
+@:expose("s.B") class B { public static function f() return 2; }
+@:expose("p.C") class C { public static function f() return 3; }
+@:expose("s.D") class D { public static function f() return 4; }
+class P { static function main() { A.f(); B.f(); C.f(); D.f(); } }
+
+--- an-empty-if-on-a-reassigned-local-keeps-the-local + -D analyzer-optimize
+class P {
+	var target:Int = 2;
+	function new() {}
+	function a() {
+		var s = switch (target) { case 2: "a"; case 3: "b"; case _: null; }
+		if (null != s) {}
+	}
+	function b() {
+		var s = null;
+		if (target == 2) s = "a";
+		if (null != s) {}
+	}
+	function c(q:String) {
+		var s = target;
+		if (3 != s) {}
+		if (null != q) {}
+		q;
+	}
+	static function main() { var p = new P(); p.a(); p.b(); p.c("x"); }
+}
+
+--- an-extension-calls-missing-arguments-have-no-position + -debug
+using Menu;
+class P {
+	static function main() {
+		var o:Dynamic = js.Browser.window;
+		o.menu("expand");
+		o.menu("a", 1);
+		o.menu();
+		Menu.menu(o, "direct");
+		inline o.menu("forced");
+		var w:Menu.Wrapped = o;
+		w.call(1);
+		trace(1);
+	}
+}

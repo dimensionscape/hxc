@@ -1,0 +1,7 @@
+{
+	"an-inline-iterable-argument-keeps-a-map-fields-dynamic-iterator": "== out.js 2636 0b71f611165f04b624a0c8f14dde45b2",
+	"an-inline-iterable-argument-reaches-a-map-locals-own-iterator": "== out.js 1099 7c5dc6b53bf29b7bf2a7367604094628",
+	"namespaces-export-in-the-order-of-their-last-exposure": "== out.js 981 9426dd16d2f58a16ef73f45120bed2a6",
+	"an-empty-if-on-a-reassigned-local-keeps-the-local": "== out.js 729 0abfca0d91489222b7c7673a6fd471cf",
+	"an-extension-calls-missing-arguments-have-no-position": "== out.js 896 cfb2659e059fe51b5ff2b42a3854201a\n== out.js.map mappings 496 157794971449b1ee8712ed80246be52e"
+}

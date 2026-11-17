@@ -1997,7 +1997,10 @@ class GenJS {
 		var toplevelExposed:Array<String> = [];
 		if (anyExposed) {
 			var exportMap = new StringMap<{name:String, fields:Array<Dynamic>}>();
-			for (path in exposed) {
+			// Last exposed path first: the namespaces then print in the order of their last exposure, which
+			// differs from the order of their first one when two namespaces' exposures interleave.
+			for (pi in 0...exposed.length) {
+				var path = exposed[exposed.length - 1 - pi];
 				var parts = path.split(".");
 				var pre = "";
 				for (i in 0...parts.length) {

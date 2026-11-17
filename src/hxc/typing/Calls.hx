@@ -41,7 +41,7 @@ class Calls {
 		}
 	}
 
-	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position, forceInline = false, forcePos:Null<Position> = null):TExpr {
+	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position, forceInline = false, forcePos:Null<Position> = null, extensionCall = false):TExpr {
 		var inlinePos = forcePos == null ? p : forcePos;
 		if (forceInline) switch (e.expr) {
 			case TField(base, FInstance(c, _, cf)):
@@ -70,7 +70,7 @@ class Calls {
 			case _:
 		}
 		// A call to an inline function expands in place; on any unhandled construct it falls back here.
-		var inlined = Inline.tryInline(ctx, e, params, t, p, forceInline);
+		var inlined = Inline.tryInline(ctx, e, params, t, p, forceInline, true, extensionCall);
 		if (inlined != null) return inlined;
 		return TypeFunctions.mk(TCall(e, params), t, p);
 	}
@@ -1175,7 +1175,7 @@ class Calls {
 						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, p, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
-						var call = makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline, forcePos);
+						var call = makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline, forcePos, true);
 						// With transforms off an abstract's XXXImpl.field(this, args) reads back as
 						// this.field(args),
 						// the field typed Dynamic.

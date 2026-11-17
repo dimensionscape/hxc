@@ -84,6 +84,23 @@ class UnusedPure {
 		return true;
 	}
 
+	// Whether a pure statement drops here. One that reads a local inside a larger expression stays for
+	// the analyzer: its local-dce counts that read as a use, so the local's declaration and assignments
+	// survive, and only the fusion after it removes the statement (`if (null != s) {}` goes, `var s`
+	// and `s = "a"` stay). A bare local is no use to that pass and drops like any other.
+	static function drops(e:TExpr):Bool {
+		if (!isPure(e) || e.expr.match(TVarExpr(_, _))) return false;
+		if (e.expr.match(TLocal(_))) return true;
+		return !readsLocal(e);
+	}
+
+	static function readsLocal(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TLocal(_): true;
+			case _: hxc.core.TexprTools.checkExpr(readsLocal, e);
+		};
+	}
+
 	// Statement position: the value is unused.
 	static function stmt(e:TExpr):TExpr {
 		inline function mk2(ed:TExprExpr):TExpr return TypeFunctions.mk(ed, e.type, e.pos);
@@ -95,7 +112,7 @@ class UnusedPure {
 					// A var declaration never drops at block level: a later statement may read the
 					// local. It still counts as pure inside a wholly dropped subtree, where every
 					// possible reader is dropped with it.
-					if (!isPure(y) || y.expr.match(TVarExpr(_, _))) out.push(y);
+					if (!drops(y)) out.push(y);
 				}
 				mk2(TBlock(out));
 			case TIf(c, a, b): mk2(TIf(value(c), stmt(a), b == null ? null : stmt(b)));
@@ -119,7 +136,7 @@ class UnusedPure {
 				var out = [];
 				for (i in 0...el.length - 1) {
 					var y = stmt(el[i]);
-					if (!isPure(y) || y.expr.match(TVarExpr(_, _))) out.push(y);
+					if (!drops(y)) out.push(y);
 				}
 				out.push(value(el[el.length - 1]));
 				mk2(TBlock(out));

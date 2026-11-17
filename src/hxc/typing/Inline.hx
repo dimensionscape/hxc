@@ -77,7 +77,7 @@ class Inline {
 		}
 	}
 
-	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false, useUnoptimized = true):Null<TExpr> {
+	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false, useUnoptimized = true, extensionCall = false):Null<TExpr> {
 		if (depth > 32) return null;
 		var cf:TClassField = null;
 		var c:Null<TClass> = null;
@@ -170,10 +170,14 @@ class Inline {
 		// An omitted trailing optional argument binds to null and falls back to its default; the call
 		// already type-checked, so a missing trailing argument is optional.
 		if (params.length < tf.args.length) {
+			// A static-extension call's arguments arrive unpadded for this to fill, and what it fills in has
+			// no position (a default constant then keeps its declaration's). Any other call's missing
+			// arguments are nulls at the call, as are those of a static-extension call written `inline f()`.
+			var padPos = extensionCall && !forceInline ? Position.nullPos : p;
 			var padded = params.copy();
 			for (i in params.length...tf.args.length) {
 				if (tf.args[i].c == null && !isOptionalArg(tf.args[i].v)) return null;
-				padded.push(TypeFunctions.mk(TConst(TNull), tf.args[i].v.type, p));
+				padded.push(TypeFunctions.mk(TConst(TNull), tf.args[i].v.type, padPos));
 			}
 			params = padded;
 		}
@@ -635,7 +639,7 @@ class Inline {
 			if (tf.args[i].c != null) switch (param.expr) {
 				case TConst(TNull):
 					var c = tf.args[i].c;
-					param = TypeFunctions.mk(c.expr, c.type, param.pos);
+					param = TypeFunctions.mk(c.expr, c.type, param.pos.min < 0 ? c.pos : param.pos);
 					passedNull = true;
 				case _:
 			}

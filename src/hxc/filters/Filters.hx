@@ -795,9 +795,16 @@ class Filters {
 					{a: a, pl: pl, e: e};
 				case [_, TCast(e1, null)]:
 					findAbstract(e1);
+				// A local reaches the abstract only through a stored expression that is itself typed as it: one
+				// cast to something else on the way in (an inline's `it:Iterable<T>` argument) keeps the call
+				// as written.
 				case [_, TLocal(v)] if (v.extra != null && v.extra.expr != null):
-					var found = findAbstract(v.extra.expr);
-					{a: found.a, pl: found.pl, e: TypeFunctions.mk(TCast(e, null), found.e.type, e.pos)};
+					switch (TypeFunctions.follow(v.extra.expr.type)) {
+						case TAbstract(a, pl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
+							{a: a, pl: pl, e: TypeFunctions.mk(TCast(e, null), v.extra.expr.type, e.pos)};
+						case _:
+							throw new hxc.core.NotFound();
+					}
 				case _:
 					throw new hxc.core.NotFound();
 			}
@@ -808,7 +815,11 @@ class Filters {
 			return switch [TypeFunctions.follow(e.type), e.expr] {
 				case [TAbstract(a, _), _] if (TypeFunctions.hasMeta(":multiType", a.meta)): true;
 				case [_, TCast(e1, null)]: hasAbstract(e1);
-				case [_, TLocal(v)] if (v.extra != null && v.extra.expr != null): hasAbstract(v.extra.expr);
+				case [_, TLocal(v)] if (v.extra != null && v.extra.expr != null):
+					switch (TypeFunctions.follow(v.extra.expr.type)) {
+						case TAbstract(a, _): TypeFunctions.hasMeta(":multiType", a.meta);
+						case _: false;
+					}
 				case _: false;
 			}
 		}
