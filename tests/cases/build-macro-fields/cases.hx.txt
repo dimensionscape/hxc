@@ -79,3 +79,8 @@ class P { static function main() { new D().d; } }
 --- add-metadata-builds-a-std-class-the-core-types-load + --macro addMetadata('@:build(M.show())','haxe.EnumTools')
 enum E { A; }
 class P { static function main() { haxe.EnumTools.getName(E); } }
+
+--- a-function-expression-with-a-null-kind-is-anonymous
+@:build(M.nullKindOverload())
+extern class E { static function f(i:Int):Void; }
+class P { static function main() { E.f("s"); E.f(1); E.f(true); } }

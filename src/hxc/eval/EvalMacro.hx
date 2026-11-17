@@ -4290,6 +4290,8 @@ class EvalMacro {
 	}
 
 	static function decodeFunctionKind(ec:EvalContext, v:EvalValue, dp:Position):FunctionKind {
+		// A null kind is an anonymous function: macros written before the kind existed pass null there.
+		if (v == VNull) return FKAnonymous;
 		var a = eargs(v);
 		return switch (ctorName(ec, v)) {
 			case "FNamed": FKNamed({name: strOf(a[0]), pos: dp}, a.length > 1 && boolOf(a[1]));

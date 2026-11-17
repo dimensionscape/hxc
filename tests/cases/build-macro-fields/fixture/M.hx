@@ -39,4 +39,14 @@ class M {
 		fields.push({name: "added", access: [APublic], kind: FVar(macro :Int, macro 3), pos: Context.currentPos()});
 		return fields;
 	}
+
+	// Gives the field `f` a String @:overload whose function expression has a null kind.
+	macro public static function nullKindOverload():Array<Field> {
+		var fields = Context.getBuildFields();
+		for (f in fields) if (f.name == "f") {
+			var func:Function = {args: [{name: "s", type: macro :String}], ret: macro :Void, expr: macro {}};
+			f.meta.push({name: ":overload", params: [{expr: EFunction(null, func), pos: f.pos}], pos: f.pos});
+		}
+		return fields;
+	}
 }
