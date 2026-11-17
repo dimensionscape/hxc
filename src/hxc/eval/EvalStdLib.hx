@@ -4537,7 +4537,9 @@ class EvalStdLib {
 			if (ctx.isMacro) return EvalExceptions.excString(ctx, "Creating threads in macros is not supported");
 			return spawnThread(ctx, arg(a, 0));
 		});
-		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
+		// A macro's Date.now() is the current time in whole seconds, so a build timestamp taken from it
+		// has no milliseconds.
+		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Math.ffloor(Date.now().getTime() / 1000) * 1000)));
 		// The time is num and the string decodeString.
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, num(ctx, arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> dateFromString(ctx, decodeText(ctx, arg(a, 0)))));

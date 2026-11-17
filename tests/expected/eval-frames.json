@@ -5,5 +5,6 @@
 	"recursion-keeps-each-level-its-own-locals": "P.hx:27: 610\nP.hx:28: true\nP.hx:29: true\nP.hx:30: [0,1,4,9,16,25]\nP.hx:31: [0,1,4,9]",
 	"a-caught-exception-keeps-its-stack": "P.hx:27: deep\nP.hx:29: 110\nP.hx:33: again deep\nP.hx:35: 30\nP.hx:36: 5\nP.hx:38: 24 P.main\nP.hx:38: 7 P.thrower\nP.hx:38: 7 P.thrower\nP.hx:38: 7 P.thrower\nP.hx:38: 6 P.thrower",
 	"a-saved-call-stack-keeps-its-positions": "P.hx:43: 12\nP.hx:37: 25 P.leaf\nP.hx:37: 21 P.middle\nP.hx:37: 12 P.outer\nP.hx:37: 43 P.main\nP.hx:46: 14\nP.hx:47: 17\nP.hx:48: 6\nP.hx:49: 8\nP.hx:37: 25 P.leaf\nP.hx:37: 21 P.middle\nP.hx:37: 12 P.outer\nP.hx:37: 43 P.main",
-	"defaults-and-finally-across-reused-frames": "P.hx:20: a.....\nP.hx:21: b..\nP.hx:22: c***\nP.hx:23: d.....\nP.hx:24: caught0---\nP.hx:24: ok1.......\nP.hx:24: caught2...\nP.hx:24: ok3-------\nP.hx:24: caught4..."
+	"defaults-and-finally-across-reused-frames": "P.hx:20: a.....\nP.hx:21: b..\nP.hx:22: c***\nP.hx:23: d.....\nP.hx:24: caught0---\nP.hx:24: ok1.......\nP.hx:24: caught2...\nP.hx:24: ok3-------\nP.hx:24: caught4...",
+	"a-macros-date-now-is-in-whole-seconds": "P.hx:3: 0"
 }

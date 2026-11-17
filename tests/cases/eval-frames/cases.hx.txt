@@ -244,3 +244,9 @@ class P {
 		for (i in 0...5) trace(guarded(i));
 	}
 }
+
+--- a-macros-date-now-is-in-whole-seconds
+class P {
+	macro static function ms() return macro $v{Date.now().getTime() % 1000};
+	static function main() { trace(ms()); }
+}
