@@ -39,6 +39,15 @@ class HlcContext {
 	public var typeModule:Map<Int, CodeModule> = new Map();
 	// gcon's part hl2c reads: the source_header define (Codegen.map_source_header).
 	public final sourceHeader:String;
+	// -D hlc-hl2: the C HashLink 2.0 needs, as Haxe's b347207 writes it ("[hl] support for hlv2 & backward
+	// compat hl/c gen"). 2.0 keeps a class's virtual table in the memory after its hl_type instead of behind
+	// a vobj_proto pointer, so a class's type is declared as an array with room for the table, used by name
+	// rather than by address, and a method is fetched with hl_vobj_proto(). Off, the output is Haxe 4.3.7's,
+	// which HashLink 2.0's hl.h refuses to compile.
+	// A define of its own rather than -D hl-ver=2.0.0, which Haxe's b347207 does not read either: hl-ver
+	// also says what the standard library has, and libraries believe it (heaps passes hl.UI.loadFile an
+	// isFolder field from 2.0.0 on, which the 4.3.7 std hxc compiles against does not declare).
+	public var hl2:Bool = false;
 
 	public function new(version:Int, hlcode:HlCodeData, dir:String, ftable:Array<FunctionEntry>, htypes:HlcTypeIdents, gnames:Array<String>,
 			bytesNames:Array<String>, sourceHeader:String) {
@@ -107,8 +116,27 @@ class HlcWriter {
 	// type_value (the one that declares the type; types.c uses "&" ^ type_name)
 	public static function typeValue(ctx:HlcContext, t:HlType):String {
 		var n = typeName(ctx, t);
+		if (ctx.hl2 && isObjType(t)) {
+			define(ctx, "extern hl_type " + n + "[];");
+			return n;
+		}
 		define(ctx, "extern hl_type " + n + ";");
 		return "&" + n;
+	}
+
+	static inline function isObjType(t:HlType):Bool
+		return t.match(HObj(_) | HStruct(_));
+
+	// define_proto_compat: the same C compiles against a HashLink older than 2.0, whose hl.h has neither macro.
+	public static function defineProtoCompat(ctx:HlcContext):Void {
+		define(ctx, "#ifndef hl_vobj_proto\n#define hl_vobj_proto(t) ((t)->vobj_proto)\n#define hl_type_proto_slots(nproto) 1\n#endif");
+	}
+
+	// The expression for a class's virtual table: Haxe 4.3.7's, or with hl2 Haxe b347207's.
+	public static function vobjProto(ctx:HlcContext, obj:String, index:Int):String {
+		if (!ctx.hl2) return obj + "->$type->vobj_proto[" + index + "]";
+		defineProtoCompat(ctx);
+		return "hl_vobj_proto(" + obj + "->$type)[" + index + "]";
 	}
 
 	// enum_constr_type
@@ -592,6 +620,7 @@ class HlcWriter {
 		if (dir == "") dir = ".";
 		dir = dir.split("\\").join("/");
 		var ctx = new HlcContext(version, code, dir, HlcNames.makeFunctionTable(code), typesIds, gnames, bnames, sourceHeader);
+		for (d in defines) if (d.key == "hlc_hl2") ctx.hl2 = true;
 		var modules = makeModules(ctx, allTypes);
 
 		inline function line(s:String) HlcWriter.line(ctx, s);
@@ -710,13 +739,16 @@ class HlcWriter {
 
 		// types.c's type_value doesn't declare the type ("no auto import")
 		function localTypeValue(t:HlType):String
-			return "&" + typeName(ctx, t);
+			return (ctx.hl2 && isObjType(t) ? "" : "&") + typeName(ctx, t);
 		openFile(ctx, "hl/types.c");
 		define("#define HLC_BOOT");
 		define("#include <hlc.h>");
+		if (ctx.hl2) defineProtoCompat(ctx);
 		line("// Types values");
 		for (t in allTypes) {
 			switch t {
+				case HObj(o) | HStruct(o) if (ctx.hl2):
+					expr("hl_type " + typeName(ctx, t) + "[hl_type_proto_slots(" + o.pvirtuals.length + ")] = {{ " + HlcNames.typeId(t) + " }}");
 				case HMethod(_, _) | HFun(_, _) | HVirtual(_):
 					expr("hl_type " + typeName(ctx, t) + " = { " + HlcNames.typeId(t) + " } /* " + HlDump.tstr(t) + " */");
 				default:
@@ -827,7 +859,7 @@ class HlcWriter {
 						defineGlobal(ctx, o.pclassglobal);
 						expr("obj" + name + ".global_value = (void**)&" + gnames[o.pclassglobal]);
 					}
-					expr(name + ".obj = &obj" + name);
+					expr(name + (ctx.hl2 ? "->obj" : ".obj") + " = &obj" + name);
 				case HNull(r) | HRef(r) | HPacked(r):
 					expr(typeName(ctx, t) + ".tparam = " + localTypeValue(r));
 				case HEnum(e):

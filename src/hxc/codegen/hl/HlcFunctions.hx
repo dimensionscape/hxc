@@ -213,7 +213,7 @@ class HlcFunctions {
 			var args = pl.slice(1);
 			switch rtype(o) {
 				case HObj(_) | HStruct(_):
-					var vfun = HlcNames.castFun(reg(o) + "->$type->vobj_proto[" + fid + "]", [rtype(o)].concat([for (a in args) rtype(a)]), rtype(r));
+					var vfun = HlcNames.castFun(HlcWriter.vobjProto(ctx, reg(o), fid),[rtype(o)].concat([for (a in args) rtype(a)]), rtype(r));
 					expr(rassign(r, rtype(r)) + vfun + "(" + [for (x in pl) reg(x)].join(",") + ")");
 				case HVirtual(vp):
 					var rt = rtype(r);
@@ -550,7 +550,7 @@ class HlcFunctions {
 					switch rtype(o) {
 						case HObj(p):
 							var ft = ctx.ftable[p.pvirtuals[m]];
-							var s = reg(o) + "->$type->vobj_proto[" + m + "]";
+							var s = HlcWriter.vobjProto(ctx, reg(o), m);
 							expr(reg(r) + " = hl_alloc_closure_ptr(" + typeValue(HFun(ft.args, ft.ret)) + "," + s + "," + reg(o) + ")");
 						default:
 							todo();
