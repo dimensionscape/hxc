@@ -27,12 +27,35 @@ enum CsValue {
 	VAddress(t:IlSigNorm);
 }
 
+// These hold a 64-bit integer, so they are classes: a number in an anonymous structure is a double on the
+// C# target, which keeps 53 bits of it.
+
 // A constant of an integer or real type, as C# checks them at compile time: an integer's value in `i` (a
 // ulong's as its bits), a real's in `f`.
-private typedef CsConst = {t:IlSigNorm, i:haxe.Int64, f:Float};
+@:structInit private class CsConst {
+	public var t:IlSigNorm;
+	public var i:haxe.Int64;
+	public var f:Float;
+}
 
 // A decimal constant: `mantissa` (non-negative) / 10^scale, negated when `negative`.
-private typedef DecimalConst = {mantissa:haxe.Int64, negative:Bool, scale:Int};
+@:structInit private class DecimalConst {
+	public var mantissa:haxe.Int64;
+	public var negative:Bool;
+	public var scale:Int;
+}
+
+// A C# integer literal's value and type (intLiteral).
+@:structInit private class CsIntLiteral {
+	public var v:haxe.Int64;
+	public var t:IlSigNorm;
+}
+
+// A quotient and a remainder (udivMod).
+@:structInit private class DivMod {
+	public var q:haxe.Int64;
+	public var r:haxe.Int64;
+}
 
 // A call's argument, pushed: its type (null for the null literal), its kind, and for a placeholder the Haxe
 // type of its argument (ruling 7's refusal reads it).
@@ -883,7 +906,7 @@ class CsToIl {
 	// A C# integer literal, such as hxcs's `0xffffffffL` in haxe.Int64.make: its value and the type C# gives
 	// it, the first of int, uint, long and ulong that holds it and that its suffix allows; null when it is
 	// none or too large.
-	static function intLiteral(text:String):Null<{v:haxe.Int64, t:IlSigNorm}> {
+	static function intLiteral(text:String):Null<CsIntLiteral> {
 		var body = text;
 		var suffix = "";
 		while (body.length > 0 && "uUlL".indexOf(body.charAt(body.length - 1)) >= 0) {
@@ -1529,7 +1552,7 @@ class CsToIl {
 	}
 
 	// Unsigned division of the bits `a` by `b` (not 0).
-	static function udivMod(a:haxe.Int64, b:haxe.Int64):{q:haxe.Int64, r:haxe.Int64} {
+	static function udivMod(a:haxe.Int64, b:haxe.Int64):DivMod {
 		if (b < 0) {
 			var q = haxe.Int64.ucompare(a, b) >= 0 ? haxe.Int64.ofInt(1) : haxe.Int64.ofInt(0);
 			return {q: q, r: a - q * b};

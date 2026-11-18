@@ -29,6 +29,13 @@ private enum IlAnyField {
 
 private typedef AllField = {f:IlAnyField, path:IlPath, name:String, isStatic:Bool};
 
+// A .NET enum's constructor and its value. A class, as the value is a 64-bit integer: a number in an
+// anonymous structure is a double on the C# target, which keeps 53 bits of it.
+@:structInit private class EnumValueOf {
+	public var ec:EnumConstructor;
+	public var v:haxe.Int64;
+}
+
 // the reference's Exit: the member is not converted.
 enum NetExit {
 	Exit;
@@ -215,7 +222,7 @@ class NetConverter {
 
 	public static function convertIlEnum(ctx:NetLibCtx, p:Position, ilcls:IlClass, isFlag:Bool):TypeDecl {
 		var meta = [nativeMeta(ilpathS(ilcls.cpath), p), mkMeta(":csNative", p)];
-		var data:Array<{ec:EnumConstructor, v:haxe.Int64}> = [];
+		var data:Array<EnumValueOf> = [];
 		for (f in ilcls.cfields) {
 			if (f.fname == "value__") continue;
 			if (f.fflags.contract.indexOf(CStatic) < 0) continue;

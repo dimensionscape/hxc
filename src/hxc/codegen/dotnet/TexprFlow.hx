@@ -114,11 +114,16 @@ class TexprFlow {
 	// can have, or the typer would want a return after it (the analyzer drops the @:exhaustive of a
 	// `return switch` when it moves the return into the cases). A value none of the cases matches
 	// reaches the end of gencs's C# method, which returns the default value; here it returns it
-	// itself, and the end of the switch is reachable only from the cases. As for an `if`, a statement's
-	// subject and cases have sequence points.
+	// itself, and the end of the switch is reachable only from the cases. A switch used as a value that
+	// has no default (the matcher leaves none when the cases cover the subject, as with a guard on one
+	// constructor of an enum) has that default value when nothing matches, as the temporary gencs
+	// declares for it does. As for an `if`, a statement's subject and cases have sequence points.
 	function switchExpr(ret:Ret, e:TExpr, subject:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>):Void {
-		if (def == null && needVal(ret)) throw new Unsupported("switch expressions without a default", true);
 		var r = valueRet(ret, e);
+		var valueDefault:Null<IlSigNorm> = def != null ? null : switch (r) {
+			case RValue(s): s;
+			case _: null;
+		}
 		var statement = !needVal(ret);
 		if (statement) tl.conditionPoint(subject);
 		var returnsDefault = def == null && ret.match(RReturn) && !tl.ret.match(LVoid);
@@ -172,7 +177,7 @@ class TexprFlow {
 			}
 		}
 		var end = code.newLabel();
-		var defLabel = def == null && !returnsDefault ? end : code.newLabel();
+		var defLabel = def == null && !returnsDefault && valueDefault == null ? end : code.newLabel();
 		code.branch(IlOps.BR, defLabel);
 		for (i in 0...cases.length) {
 			code.markIfUsed(bodies[i]);
@@ -184,6 +189,9 @@ class TexprFlow {
 			code.mark(defLabel);
 			if (statement) tl.statementPoint(def);
 			tl.texpr(r, def);
+		} else if (valueDefault != null) {
+			code.mark(defLabel);
+			tl.pushDefault(valueDefault);
 		} else if (returnsDefault) {
 			code.markIfUsed(defLabel);
 			if (code.reachable()) {
@@ -387,17 +395,26 @@ class TexprFlow {
 		code.markIfUsed(end);
 	}
 
-	static function containsTry(e:TExpr):Bool {
+	static function holdsTry(e:TExpr):Bool {
 		return switch (e.expr) {
 			case TTry(_, _): true;
+			case TFunction(_): false;
+			case _: TexprTools.checkExpr(holdsTry, e);
+		}
+	}
+
+	// A try block and a loop both start on an empty stack (a loop's head is the target of a backward branch).
+	static function containsTry(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TTry(_, _) | TWhile(_, _, _) | TFor(_, _, _): true;
 			case TFunction(_): false;
 			case _: TexprTools.checkExpr(containsTry, e);
 		}
 	}
 
-	// A try block starts on an empty stack. When one is in an operand pushed after another value, that
-	// operand and the ones before it are evaluated into temporaries first, left to right, and the
-	// expression is lowered over reads of them. Null when nothing needs that.
+	// A try block starts on an empty stack, and so does a loop. When one is in an operand pushed after
+	// another value, that operand and the ones before it are evaluated into temporaries first, left to
+	// right, and the expression is lowered over reads of them. Null when nothing needs that.
 	function spillForTry(e:TExpr):Null<TExpr> {
 		function with(x:TExprExpr):TExpr return new TExpr(x, e.type, e.pos);
 		switch (e.expr) {
@@ -514,15 +531,22 @@ class TexprFlow {
 		];
 	}
 
-	// The operands up to the last one with a try, spilled; null when that is the first value pushed.
+	// A Void operand, such as the block that is the body of cs.Lib.lock, is no value on the stack.
+	function isVoid(e:TExpr):Bool {
+		var s = try tl.sig(e.type) catch (_:Unsupported) null;
+		return s != null && s.match(LVoid);
+	}
+
+	// The operands up to the last one with a try or a loop, spilled; null when that is the first value pushed.
 	function spillOperands(ops:Array<TExpr>, modes:Array<SpillMode>, pushedBefore:Bool):Null<Array<TExpr>> {
 		// From the end, so the first operand of an expression that pushes nothing before it is not
 		// searched: a chain of binary operators is searched once.
 		var last = ops.length - 1;
 		var first = pushedBefore ? 0 : 1;
-		while (last >= first && !containsTry(ops[last])) last--;
+		while (last >= first && !(containsTry(ops[last]) && !isVoid(ops[last]))) last--;
 		if (last < first) return null;
-		for (i in 0...last + 1) if (modes[i] == Refuse) throw new Unsupported("`try` in an operand after a member of a struct field", false);
+		for (i in 0...last + 1) if (modes[i] == Refuse)
+			throw new Unsupported((holdsTry(ops[last]) ? "`try`" : "a loop") + " in an operand after a member of a struct field", false);
 		return [for (i in 0...ops.length) i <= last && modes[i] == Spill ? spill(ops[i]) : ops[i]];
 	}
 

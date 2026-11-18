@@ -177,11 +177,13 @@ class Filters {
 			vars.clear();
 			for (k => v in m) vars.set(k, v);
 		}
+		// The keys are taken first: a map written to while it is iterated loses entries on some targets,
+		// even when only values of keys it already has are set (the C# IntMap resizes before it looks up).
 		function intersectInto(v2:Map<Int, Bool>):Void {
-			for (k => v in vars) vars.set(k, v && (v2.exists(k) ? v2.get(k) : false));
+			for (k in [for (k in vars.keys()) k]) vars.set(k, vars.get(k) && (v2.exists(k) ? v2.get(k) : false));
 		}
 		function setAllVars():Void {
-			for (k in vars.keys()) if (!outsideVars.exists(k)) vars.set(k, true);
+			for (k in [for (k in vars.keys()) k]) if (!outsideVars.exists(k)) vars.set(k, true);
 		}
 		var loop:TExpr->Void = null;
 		loop = function(e:TExpr):Void {

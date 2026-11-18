@@ -5206,6 +5206,105 @@ class P {
 P.hx:19: characters 15-66 : dotnet: `try` in an operand after a member of a struct field is not supported yet
 P.hx:31: characters 12-41 : dotnet: Type.createEmptyInstance of an abstract class is not supported yet
 P.hx:40: characters 10-18 : dotnet: `return` inside expressions is not supported yet
+--- switch-value-without-default @gencs
+enum R {
+	Bound(v:Int);
+	NullAmb;
+	Amb;
+	None;
+}
+@:analyzer(ignore)
+class P {
+	static var flag = false;
+	static function pick(n:Int):R return n == 0 ? Bound(5) : n == 1 ? NullAmb : n == 2 ? Amb : None;
+	static function get(n:Int):Int {
+		var found = switch (pick(n)) {
+			case Bound(b): b;
+			case NullAmb: throw "null-ambiguous";
+			case Amb if (flag): throw "ambiguous-flag";
+			case Amb: throw "ambiguous";
+			case None: -1;
+		}
+		return found + 1;
+	}
+	static function name(n:Int):String {
+		return "<" + (switch (pick(n)) {
+			case Bound(b) if (b > 9): "big";
+			case Bound(b): "b" + b;
+			case NullAmb | Amb: "amb";
+			case None: "none";
+		}) + ">";
+	}
+	static function main() {
+		for (n in 0...4) Sys.println(try Std.string(get(n)) catch (e:String) e);
+		flag = true;
+		Sys.println(try Std.string(get(2)) catch (e:String) e);
+		for (n in 0...4) Sys.println(name(n));
+	}
+}
+===
+[run]
+6
+null-ambiguous
+ambiguous
+0
+ambiguous-flag
+<b5>
+<amb>
+<amb>
+<none>
+--- loop-as-an-operand @gencs
+class Box {
+	public var v:Int;
+	public function new(v:Int) this.v = v;
+	public function add(a:Int, b:Int):Int return v + a * 10 + b;
+}
+@:analyzer(ignore)
+class P {
+	static var log = "";
+	static function note(s:String):Int {
+		log += s;
+		return s.length;
+	}
+	static function names(xs:Array<Int>):String {
+		inline function list(l:Array<Int>) return "(" + [for (x in l) "n" + x].join(", ") + ")";
+		return "got " + list(xs) + " and " + list([for (x in xs) x * 2]) + "!";
+	}
+	static function main() {
+		Sys.println(names([1, 2, 3]));
+		var i = 0;
+		var s = "x" + ({
+			var t = "";
+			while (i < 3) {
+				t += i;
+				i++;
+			}
+			t;
+		}) + "y";
+		Sys.println(s);
+		// The operands before the loop are evaluated first, left to right.
+		var b = new Box(note("a"));
+		Sys.println(b.add(note("bb"), {
+			var n = 0;
+			for (k in 0...4) n += note("c");
+			n;
+		}));
+		Sys.println(log);
+		var arr = [note("d"), {
+			var n = 0;
+			do n++ while (n < 5);
+			n;
+		}, note("e")];
+		Sys.println(arr.join(",") + " " + log);
+	}
+}
+===
+[run]
+got (n1, n2, n3) and (n2, n4, n6)!
+x012y
+25
+abbcccc
+1,5,1 abbccccde
 --- throw-and-return-as-values
 @:analyzer(ignore)
 class P {

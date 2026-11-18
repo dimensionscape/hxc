@@ -287,6 +287,22 @@ class TexprTools {
 		return body <= max;
 	}
 
+	// The value of a literal decimalFitsInt32 accepted. Plain digits are summed here, below zero so that
+	// -2147483648 fits: Std.parseInt on the C# target throws for it, as its digits alone overflow.
+	// Anything else it accepted (a hexadecimal body, no digits) is Std.parseInt's to read, as before.
+	static function decimalInt32(s:String):Null<Int> {
+		var neg = s.charAt(0) == "-";
+		var start = neg ? 1 : 0;
+		if (s.length == start) return Std.parseInt(s);
+		var v = 0;
+		for (i in start...s.length) {
+			var c = s.charCodeAt(i);
+			if (c < "0".code || c > "9".code) return Std.parseInt(s);
+			v = v * 10 - (c - "0".code);
+		}
+		return neg ? v : -v;
+	}
+
 	static function hexDigitValue(c:Int):Int {
 		if (c >= "0".code && c <= "9".code) return c - "0".code;
 		if (c >= "a".code && c <= "f".code) return c - "a".code + 10;
@@ -308,7 +324,7 @@ class TexprTools {
 			return v;
 		}
 		if (!decimalFitsInt32(s)) return null;
-		var i = Std.parseInt(s);
+		var i = decimalInt32(s);
 		if (i == null || i < -2147483648 || i > 2147483647) return null;
 		return i;
 	}
@@ -331,7 +347,7 @@ class TexprTools {
 					}
 					TypeFunctions.mk(TConst(TInt(v)), basic.tint, p);
 				} else {
-					var i = decimalFitsInt32(s) ? Std.parseInt(s) : null;
+					var i = decimalFitsInt32(s) ? decimalInt32(s) : null;
 					if (i == null || i < -2147483648 || i > 2147483647) TypeFunctions.mk(TConst(TFloat(s)), basic.tfloat, p);
 					else TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 				}
