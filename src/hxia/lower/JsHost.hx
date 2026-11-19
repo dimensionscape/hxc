@@ -333,7 +333,7 @@ class JsHost implements hxia.ScriptWorld {
 
 	public function superClassName(name:String):Null<String> {
 		var proto = Reflect.field(Reflect.field(SC, name), "prototype");
-		var sp = untyped __js__("Object.getPrototypeOf")(proto);
+		var sp = js.Syntax.code("Object.getPrototypeOf")(proto);
 		return (sp != null && Reflect.field(sp, "__cname") != null) ? Reflect.field(sp, "__cname") : null;
 	}
 
@@ -436,7 +436,7 @@ class JsHost implements hxia.ScriptWorld {
 			for (f in Reflect.fields(p))
 				if (f != "__sc" && f != "__cname" && f != "constructor" && f != "__ctor" && out.indexOf(f) < 0)
 					out.push(f);
-			p = untyped __js__("Object.getPrototypeOf")(p);
+			p = js.Syntax.code("Object.getPrototypeOf")(p);
 		}
 		return out;
 	}
