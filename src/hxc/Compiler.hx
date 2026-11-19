@@ -161,7 +161,7 @@ class Compiler {
 		// A completion answer raised anywhere in a one-shot compilation is written to stderr and the
 		// process exits 0.
 		try run(Sys.args())
-		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) Sys.stderr().writeString(mj.output)
+		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) hxc.core.HostStdio.err().writeString(mj.output)
 		// The top-level handler wraps the whole compilation, argument processing included: a bad argument
 		// and a plain failure both report "Error: " + msg at a NULL position, which prints with no
 		// location prefix. Without it an argument failure escapes to the hxcpp runtime and prints in its
@@ -193,7 +193,7 @@ class Compiler {
 			ctx.addDiagnostic(text, Position.nullPos);
 			flushPendingMessages(ctx);
 		} else {
-			Sys.stderr().writeString(text + "\n");
+			hxc.core.HostStdio.err().writeString(text + "\n");
 		}
 		hxc.compiler.HostRuntime.exit(1);
 	}
@@ -240,7 +240,7 @@ class Compiler {
 
 	static function runWaitStdio():Void {
 		hxc.core.BinaryStdio.setStdin();
-		runWaitLoop(Sys.stdin(), Sys.stderr());
+		runWaitLoop(Sys.stdin(), hxc.core.HostStdio.err());
 	}
 
 	// The STARTUP arguments are parsed before entering the wait loop, so a --cwd given when the server was
@@ -272,12 +272,12 @@ class Compiler {
 		}
 		var port = Std.parseInt(portStr);
 		if (port == null) {
-			Sys.stderr().writeString("Invalid port\n");
+			hxc.core.HostStdio.err().writeString("Invalid port\n");
 			hxc.compiler.HostRuntime.exit(1);
 		}
 		var sock = new sys.net.Socket();
 		try sock.connect(new sys.net.Host(host), port) catch (e:Dynamic) {
-			Sys.stderr().writeString("Couldn't connect on " + host + ":" + port + "\n");
+			hxc.core.HostStdio.err().writeString("Couldn't connect on " + host + ":" + port + "\n");
 			hxc.compiler.HostRuntime.exit(1);
 		}
 		runWaitLoop(sock.input, sock.output);
@@ -319,7 +319,7 @@ class Compiler {
 		head.set(1, (body.length >> 8) & 0xFF);
 		head.set(2, (body.length >> 16) & 0xFF);
 		head.set(3, (body.length >> 24) & 0xFF);
-		Sys.stdout().flush();
+		hxc.core.HostStdio.out().flush();
 		stderr.write(head);
 		stderr.write(body);
 		stderr.flush();
@@ -552,7 +552,7 @@ class Compiler {
 			var stderr = proc.stderr.readAll();
 			var code = proc.exitCode();
 			proc.close();
-			if (stdout.length > 0) Sys.stdout().writeString(stdout.toString());
+			if (stdout.length > 0) hxc.core.HostStdio.out().writeString(stdout.toString());
 			if (stderr.length > 0) answerOut(stderr.toString());
 			if (code != 0) {
 				exitRequest(code);
@@ -872,13 +872,13 @@ class Compiler {
 					didSomething = true;
 				// `--help` answers with the usage screen and nothing else.
 				case "--help" | "-help" | "-h":
-					Sys.stdout().writeString(hxc.compiler.Usage.help());
-					Sys.stdout().flush();
+					hxc.core.HostStdio.out().writeString(hxc.compiler.Usage.help());
+					hxc.core.HostStdio.out().flush();
 					exitRequest(0);
 				// hxc's own defines and environment variables; `--help-defines` stays Haxe's list.
 				case "--help-hxc":
-					Sys.stdout().writeString(hxc.compiler.Usage.hxcHelp());
-					Sys.stdout().flush();
+					hxc.core.HostStdio.out().writeString(hxc.compiler.Usage.hxcHelp());
+					hxc.core.HostStdio.out().flush();
 					exitRequest(0);
 				case "--help-metas":
 					// MetaRegistry embeds meta.json verbatim, so the doc text is already here; only the
@@ -981,8 +981,8 @@ class Compiler {
 			// the target - a bare target flag prints the usage screen and never loads the std it just added.
 			// An argument that already did its job exits quietly instead.
 			if (!didSomething) {
-				Sys.stdout().writeString(hxc.compiler.Usage.text());
-				Sys.stdout().flush();
+				hxc.core.HostStdio.out().writeString(hxc.compiler.Usage.text());
+				hxc.core.HostStdio.out().flush();
 			}
 			flushPendingMessages(ctx);
 			return;
@@ -2063,7 +2063,7 @@ class Compiler {
 			req.writeOut(b, 0, n);
 			return;
 		}
-		var out = Sys.stdout();
+		var out = hxc.core.HostStdio.out();
 		out.writeFullBytes(b, 0, n);
 		out.flush();
 	}
@@ -3461,7 +3461,7 @@ class Compiler {
 	// Writes a request answer to the wait-server buffer when one is active, or the
 	// process stderr in one-shot mode.
 	static function answerOut(sv:String):Void {
-		if (requestOutput != null) requestOutput.add(sv) else Sys.stderr().writeString(sv);
+		if (requestOutput != null) requestOutput.add(sv) else hxc.core.HostStdio.err().writeString(sv);
 	}
 
 	// The protocol envelope around a report-time answer.

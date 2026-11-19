@@ -66,7 +66,7 @@ class CppGen {
 		// during generation names the culprit as the last line printed instead of failing silently.
 		var trace = com.defines.rawDefined("cppgen-trace");
 		inline function traceType(kind:String, path:Path):Void {
-			if (trace) { Sys.stderr().writeString("[cppgen] " + kind + " " + CppGenClass.joinPath(path, ".") + "\n"); Sys.stderr().flush(); }
+			if (trace) { hxc.core.HostStdio.err().writeString("[cppgen] " + kind + " " + CppGenClass.joinPath(path, ".") + "\n"); hxc.core.HostStdio.err().flush(); }
 		}
 		for (mt in com.types) switch (mt) {
 			case TClassDecl(c) if (shouldEmit(c)):

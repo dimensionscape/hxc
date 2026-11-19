@@ -61,7 +61,7 @@ class ServerMessage {
 	// Flush real stdout immediately; it is separate from the length-prefixed stderr response and the
 	// server outlives each request.
 	static function out(s:String):Void {
-		var o = Sys.stdout();
+		var o = hxc.core.HostStdio.out();
 		o.writeString(s + "\n");
 		o.flush();
 	}

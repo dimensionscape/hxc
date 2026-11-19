@@ -310,9 +310,68 @@ class EvalStdLib {
 		var r:String = untyped __cpp__('hxc_fs_call({0}, {1}, {2})', op, a, b == null ? "" : b);
 		return r;
 		#else
-		return null;
+		return hostFs(op, a, b);
 		#end
 	}
+
+	// A whole file. On .NET the std reads it 16 KB at a time and ends on an Eof exception; the framework reads
+	// it in one call.
+	static function hostFileBytes(path:String):haxe.io.Bytes {
+		#if cs
+		return haxe.io.Bytes.ofData(cs.system.io.File.ReadAllBytes(path));
+		#else
+		return sys.io.File.getBytes(path);
+		#end
+	}
+
+	#if !cpp
+	// The same calls on a host that is not C++, through sys.FileSystem, with the C library's words for the
+	// failures a program meets: a path that is not there, one that is already there, a directory that is
+	// not empty, and "Permission denied" for whatever else the host refuses.
+	static function hostFs(op:Int, a:String, b:Null<String>):Null<String> {
+		inline function there(p:String):Bool return sys.FileSystem.exists(p);
+		inline function isDir(p:String):Bool return sys.FileSystem.isDirectory(p);
+		var missing = "No such file or directory", denied = "Permission denied";
+		try {
+			switch (op) {
+				case 0:
+					if (!there(a)) return missing;
+					if (isDir(a)) return denied;
+					sys.FileSystem.deleteFile(a);
+				case 1:
+					if (!there(a)) return missing;
+					if (!isDir(a) || sys.FileSystem.readDirectory(a).length > 0) return "Directory not empty";
+					sys.FileSystem.deleteDirectory(a);
+				case 2:
+					if (there(a)) return "File exists";
+					var parent = haxe.io.Path.directory(haxe.io.Path.removeTrailingSlashes(a));
+					if (parent != "" && !there(parent)) return missing;
+					sys.FileSystem.createDirectory(a);
+				case 3:
+					if (!there(a)) return missing;
+					// The C++ host's rename replaces a file that is in the way.
+					if (b != null && there(b) && !isDir(b) && !isDir(a)) sys.FileSystem.deleteFile(b);
+					sys.FileSystem.rename(a, b);
+				case 4:
+					if (!there(a) || !isDir(a)) return missing;
+					Sys.setCwd(a);
+				case 5:
+					if (!there(a)) return missing;
+				case 6:
+					if (!there(a)) return missing;
+					if (isDir(a)) return denied;
+					sys.io.File.read(a, true).close();
+				case _:
+					if (!there(a)) return missing;
+					if (isDir(a)) return denied;
+					sys.io.File.append(a, true).close();
+			}
+		} catch (_:Dynamic) {
+			return denied;
+		}
+		return null;
+	}
+	#end
 
 	// A system error: "<path>: <strerror>", which the natives turn into a string exception.
 	static function sysError(ctx:EvalContext, path:String, err:String):Dynamic {
@@ -2253,7 +2312,7 @@ class EvalStdLib {
 			req.writeOut(b, 0, b.length);
 			return;
 		}
-		var out = Sys.stdout();
+		var out = hxc.core.HostStdio.out();
 		if (s.length > 0) out.write(s.toBytes());
 		// Eval's println appends the PLATFORM line end explicitly (stdout itself is binary), so
 		// interpreted output keeps \r\n on Windows.
@@ -2264,7 +2323,7 @@ class EvalStdLib {
 	}
 
 	static function flushStdout():Void {
-		try Sys.stdout().flush() catch (_:Dynamic) {}
+		try hxc.core.HostStdio.out().flush() catch (_:Dynamic) {}
 	}
 
 	static function sysProgramPath(ctx:EvalContext):EvalValue {
@@ -3255,7 +3314,7 @@ class EvalStdLib {
 		// flush.
 		reg(s, "Sys", "stderr", vfn(a -> mkOutput(ctx, new hxc.compiler.HostRuntime.HostStderrOutput(), null)));
 		reg(s, "Sys", "stdin", vfn(a -> mkInput(ctx, Sys.stdin(), null)));
-		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, Sys.stdout(), null)));
+		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, hxc.core.HostStdio.out(), null)));
 		reg(s, "Sys", "systemName", vfn(a -> mkStr(Sys.systemName())));
 		reg(s, "Sys", "time", vfn(a -> VFloat(Sys.time())));
 		reg(s, "haxe.NativeStackTrace", "_callStack", vfn(a -> callStackValue(ctx)));
@@ -4638,13 +4697,13 @@ class EvalStdLib {
 		// An unreadable file raises "Could not read file <path>".
 		reg(s, "sys.io.File", "getBytes", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
-			try mkBytes(ctx, sys.io.File.getBytes(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
+			try mkBytes(ctx, hostFileBytes(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
 		}));
 		reg(s, "sys.io.File", "getContent", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
 			// The file's bytes, read in binary mode, as a string (createUnknown).
 			try {
-				var b = sys.io.File.getBytes(path);
+				var b = hostFileBytes(path);
 				EvalString.createUnknown(ByteString.ofBytes(b, 0, b.length));
 			} catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
 		}));

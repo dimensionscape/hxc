@@ -166,8 +166,8 @@ class EvalLuv {
 			if (Std.isOfType(e, EvalExceptions.EvalSysExit)) throw e;
 			var msg = Std.isOfType(e, hxc.core.TypingError) ? locatedText(ctx, e) : errorText(e);
 			EvalStdLib.flushStdout();
-			Sys.stderr().writeString(msg + "\n");
-			Sys.stderr().flush();
+			hxc.core.HostStdio.err().writeString(msg + "\n");
+			hxc.core.HostStdio.err().flush();
 			throw new EvalExceptions.EvalSysExit(2);
 		};
 	}

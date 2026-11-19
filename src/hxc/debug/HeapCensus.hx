@@ -176,7 +176,7 @@ class HeapCensus {
 					continue;
 			}
 			var name = Type.getClassName(cl);
-			if (trace_) { var e = Sys.stderr(); e.writeString("  #" + n + " " + name + "
+			if (trace_) { var e = hxc.core.HostStdio.err(); e.writeString("  #" + n + " " + name + "
 "); e.flush(); }
 			// Each map kind is handled through its own typed iterator. Casting to the abstract
 			// Map<Dynamic,Dynamic> and calling get(key) hands an IntMap a boxed key and segfaults; iterating
@@ -235,7 +235,7 @@ class HeapCensus {
 		}
 		var rows = [for (k in counts.keys()) {n: k, c: counts.get(k), b: bytes.get(k)}];
 		rows.sort(function(a, b) return a.b < b.b ? 1 : -1);
-		var out = Sys.stderr();
+		var out = hxc.core.HostStdio.err();
 		var tot = 0.0;
 		for (r in rows) tot += r.b;
 		if (quiet) {

@@ -50,7 +50,7 @@ class FiltersCommon {
 		if (!timeFilters) return;
 		var rows = [for (k in filterTimes.keys()) {name: k, t: filterTimes.get(k)}];
 		rows.sort(function(a, b) return a.t < b.t ? 1 : -1);
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		for (r in rows) o.writeString("[ftime] " + StringTools.lpad(Std.string(Math.round(r.t * 1000)), " ", 7) + "ms  " + r.name + "\n");
 		o.flush();
 	}

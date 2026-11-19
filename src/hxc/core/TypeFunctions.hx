@@ -103,8 +103,8 @@ class TypeFunctions {
 	static var traceVarAt:Null<Int> = Sys.getEnv("HXC_DBG_VARBT") == null ? null : Std.parseInt(Sys.getEnv("HXC_DBG_VARBT"));
 
 	static function traceVar(n:String):Void {
-		Sys.stderr().writeString("[var] " + _uid + " " + n + "\n");
-		if (traceVarAt == _uid) Sys.stderr().writeString("[varbt] " + haxe.CallStack.toString(haxe.CallStack.callStack()) + "\n");
+		hxc.core.HostStdio.err().writeString("[var] " + _uid + " " + n + "\n");
+		if (traceVarAt == _uid) hxc.core.HostStdio.err().writeString("[varbt] " + haxe.CallStack.toString(haxe.CallStack.callStack()) + "\n");
 	}
 
 	public static function allocVar(kind:TVarKind, n:String, t:T, p:Position):TVar {

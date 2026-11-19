@@ -1000,7 +1000,7 @@ class Filters {
 	}
 	public static function dumpStages():Void {
 		if (Sys.getEnv("HXC_DBG_STAGES") == null) return;
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		for (r in stageTimes) o.writeString("[stage] " + StringTools.lpad(Std.string(Std.int(r.t * 1000)), " ", 7) + "ms  " + r.n + "
 ");
 		o.flush();
@@ -1011,7 +1011,7 @@ class Filters {
 		#if cpp
 		// Forced major collection first: separates LIVE heap from garbage-awaiting-collection.
 		cpp.vm.Gc.run(true);
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		// Immix accounts memory by ROWS IN USE, so a sparsely populated block counts whole.
 		// Comparing usage before and after a compaction separates real retention from
 		// fragmentation; they are very different bugs.

@@ -92,14 +92,21 @@ class Dce {
 
 	// The debug log goes out a line at a time as Haxe's does: the entry points and removals with
 	// print_endline on stdout, a field not found with prerr_endline on stderr, each flushed.
+	// The two streams are opened once: on .NET each hxc.core.HostStdio.out() opens the handle again, and a build with
+	// -D dce-debug prints tens of thousands of lines.
+	static var out:Null<haxe.io.Output> = null;
+	static var err:Null<haxe.io.Output> = null;
+
 	static function printOut(s:String):Void {
-		Sys.stdout().writeString(s + "\n");
-		Sys.stdout().flush();
+		if (out == null) out = hxc.core.HostStdio.out();
+		out.writeString(s + "\n");
+		out.flush();
 	}
 
 	static function printErr(s:String):Void {
-		Sys.stderr().writeString(s + "\n");
-		Sys.stderr().flush();
+		if (err == null) err = hxc.core.HostStdio.err();
+		err.writeString(s + "\n");
+		err.flush();
 	}
 
 	// Swap curclass and return the thunk that restores it.

@@ -46,7 +46,7 @@ class ServerCache {
 		compilationStep++;
 		changedDirectories = new StringMap();
 		if (Sys.getEnv("HXC_SERVER_DBG") != null)
-			Sys.stdout().writeString("[server] request step=" + compilationStep + "\n");
+			hxc.core.HostStdio.out().writeString("[server] request step=" + compilationStep + "\n");
 	}
 
 	// What a stdio server queued while it answered runs once the answer is out.

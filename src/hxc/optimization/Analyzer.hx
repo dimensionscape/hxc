@@ -1065,7 +1065,7 @@ class Run {
 			}
 		}
 		TypeFunctions.varCapture = false;
-		if (hxc.core.Par.debug) Sys.stderr().writeString("[par] analyzer: " + threads + " threads, " + units.length + " classes, " + redone + " redone\n");
+		if (hxc.core.Par.debug) hxc.core.HostStdio.err().writeString("[par] analyzer: " + threads + " threads, " + units.length + " classes, " + redone + " redone\n");
 	}
 
 	// Always optimize so const

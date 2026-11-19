@@ -365,7 +365,7 @@ class EvalContext {
 	public static function dumpProf():Void {
 		if (!profOn) return;
 		var rows = [for (k in profStats.keys()) {name: k, s: profStats.get(k)}];
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		rows.sort(function(a, b) return a.s[2] < b.s[2] ? 1 : (a.s[2] > b.s[2] ? -1 : 0));
 		for (i in 0...(rows.length < 60 ? rows.length : 60)) { var r = rows[i];
 			o.writeString("[eprof self] " + StringTools.lpad(Std.string(Math.round(r.s[2] * 1000)), " ", 7) + "ms incl "

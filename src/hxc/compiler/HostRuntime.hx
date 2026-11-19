@@ -186,7 +186,7 @@ class HostRuntime {
 		#if cpp
 		untyped __cpp__("hxc_err_write((const unsigned char*){0}->b->GetBase() + {1}, {2})", b, pos, len);
 		#else
-		Sys.stderr().writeBytes(b, pos, len);
+		hxc.core.HostStdio.err().writeBytes(b, pos, len);
 		#end
 	}
 
@@ -199,7 +199,7 @@ class HostRuntime {
 		#if cpp
 		untyped __cpp__("hxc_err_flush()");
 		#else
-		Sys.stderr().flush();
+		hxc.core.HostStdio.err().flush();
 		#end
 	}
 
@@ -321,7 +321,7 @@ class HostRuntime {
 		#if cpp
 		untyped __cpp__("hxc_thread_uncaught({0}.utf8_str())", text);
 		#else
-		Sys.stderr().writeString("Thread " + currentIdent() + " killed on uncaught exception " + text + "\n");
+		hxc.core.HostStdio.err().writeString("Thread " + currentIdent() + " killed on uncaught exception " + text + "\n");
 		#end
 	}
 

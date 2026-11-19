@@ -240,8 +240,8 @@ class Messages {
 		// interpreted program.
 		for (l in lines) {
 			if (l.info) {
-				Sys.stdout().writeString(l.s + "\n");
-				Sys.stdout().flush();
+				hxc.core.HostStdio.out().writeString(l.s + "\n");
+				hxc.core.HostStdio.out().flush();
 			} else HostRuntime.stderrLine(l.s);
 		}
 	}

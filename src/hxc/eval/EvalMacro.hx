@@ -106,7 +106,7 @@ class EvalMacro {
 	public static function dumpRefStats():Void {
 		if (Sys.getEnv("HXC_DBG_REFS") == null) return;
 		inline function n<K, V>(m:Map<K, V>):Int { var c = 0; for (_ in m.keys()) c++; return c; }
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		if (macroCom != null) o.writeString("[refs] macroCom modules=" + macroCom.modules.length
 			+ " types=" + macroCom.types.length + "
 ");
@@ -164,7 +164,7 @@ class EvalMacro {
 		if (!apiProfOn) return;
 		var rows = [for (k in apiProfStats.keys()) {name: k, s: apiProfStats.get(k)}];
 		rows.sort(function(a, b) return a.s[2] < b.s[2] ? 1 : (a.s[2] > b.s[2] ? -1 : 0));
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		var tot = 0.0, totTop = 0.0;
 		for (r in rows) { tot += r.s[2]; totTop += r.s[3]; }
 		o.writeString("[mapi] self total=" + Math.round(tot * 1000) + "ms top total=" + Math.round(totTop * 1000) + "ms

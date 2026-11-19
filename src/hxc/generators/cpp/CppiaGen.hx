@@ -548,7 +548,7 @@ class CppiaGen {
 					if (isInternal || isMacro(classDef.meta)) {
 						if (debug) {}
 					} else {
-						if (trace) { Sys.stderr().writeString("[cppia] class " + CppTypeOf.joinClassPath(classDef.path, ".") + "\n"); Sys.stderr().flush(); }
+						if (trace) { hxc.core.HostStdio.err().writeString("[cppia] class " + CppTypeOf.joinClassPath(classDef.path, ".") + "\n"); hxc.core.HostStdio.err().flush(); }
 						generateScriptClass(com, script, classDef);
 					}
 				case TEnumDecl(enumDef) if (enumDef.isExtern):

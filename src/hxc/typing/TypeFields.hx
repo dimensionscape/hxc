@@ -185,7 +185,7 @@ class TypeFields {
 		if (!timeTyping) return;
 		var rows = [for (k in typeTimes.keys()) {name: k, t: typeTimes.get(k)}];
 		rows.sort(function(a, b) return a.t < b.t ? 1 : -1);
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		hxc.eval.EvalMacro.dumpRefStats();
 		hxc.eval.EvalMacro.dumpApiProf();
 		hxc.eval.EvalContext.dumpProf();
@@ -376,7 +376,7 @@ class TypeFields {
 	public static function queueClassBuild(ctx:Context, c:TClass):Void {
 		if (buildQueued.exists(c)) return;
 		buildQueued.set(c, true);
-		if (traceBuilds) Sys.stderr().writeString("[qbuild] " + Context.sTypePath(c.path) + "
+		if (traceBuilds) hxc.core.HostStdio.err().writeString("[qbuild] " + Context.sTypePath(c.path) + "
 ");
 		ctx.delay(Context.PBuildClass, function() runQueuedBuild(ctx, c));
 	}
@@ -468,7 +468,7 @@ class TypeFields {
 		fieldsAwaited.set(c, true);
 		buildCanceled.remove(c);
 		buildsRunning.set(c, true);
-		if (traceBuilds) Sys.stderr().writeString("[build] " + Context.sTypePath(c.path) + "\n");
+		if (traceBuilds) hxc.core.HostStdio.err().writeString("[build] " + Context.sTypePath(c.path) + "\n");
 		var mw = enterMacroWorld(ctx);
 		var savedPass = ctx.currentPass;
 		// The build runs in the class's own typer context, so nothing it does moves the requester's current
@@ -489,7 +489,7 @@ class TypeFields {
 				if (canceling != null) break;
 			}
 			if (canceling != null) {
-				if (traceBuilds) Sys.stderr().writeString("[cancel] " + Context.sTypePath(c.path) + "\n");
+				if (traceBuilds) hxc.core.HostStdio.err().writeString("[cancel] " + Context.sTypePath(c.path) + "\n");
 				classBuilt.remove(c);
 				buildsRunning.remove(c);
 				var rebuild = () -> ctx.delayLate(Context.PBuildClass, () -> runQueuedBuild(ctx, c));
@@ -545,7 +545,7 @@ class TypeFields {
 	// macro) while the fields bound. What the declarations do not name (a synthesized field) is forced
 	// last.
 	static function finalizeClass(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>):Void {
-		if (traceBuilds) Sys.stderr().writeString("[fin] " + Context.sTypePath(c.path) + "\n");
+		if (traceBuilds) hxc.core.HostStdio.err().writeString("[fin] " + Context.sTypePath(c.path) + "\n");
 		pushRemainingBodies(ctx, c);
 		var full = ctx.displayFullTyping;
 		var byDecl = new haxe.ds.ObjectMap<ClassField, TClassField>();

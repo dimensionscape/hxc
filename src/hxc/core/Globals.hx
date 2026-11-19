@@ -229,7 +229,7 @@ class Globals {
 		var osType = Sys.systemName() != "Windows" ? "unix" : "windows";
 		var backtrace = haxe.CallStack.toString(haxe.CallStack.callStack());
 		// The format string ends with the backtrace (no trailing newline).
-		Sys.stderr().writeString('$full\nHaxe: $ver; OS type: $osType;\n$mlLoc\n$backtrace');
+		hxc.core.HostStdio.err().writeString('$full\nHaxe: $ver; OS type: $osType;\n$mlLoc\n$backtrace');
 		throw false; // Assert false
 	}
 

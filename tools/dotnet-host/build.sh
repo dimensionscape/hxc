@@ -44,8 +44,24 @@ fi
 rm -rf "$obj/shimsrc"; mkdir -p "$obj/shimsrc"; cp "$here"/*.csproj "$here"/*.cs "$obj/shimsrc/"
 dotnet build "$obj/shimsrc/HxcHostNative.csproj" -c Release -o "$obj/shim" --nologo -v q >"$obj/shim.log" 2>&1 || { cat "$obj/shim.log" >&2; exit 1; }
 
+# .NET seeds String.GetHashCode afresh in each process and the std's StringMap walks its keys in hash order:
+# the compiler gets a copy of that StringMap hashing with hxc.core.StableStringHash, so that it does the same
+# thing in every run.
+std="${HAXE_STD_PATH:?HAXE_STD_PATH must be set}"
+rm -rf "$obj/std"; mkdir -p "$obj/std/haxe/ds"
+# The copy is on the class path of the build's own macros too, which must keep the interpreter's StringMap:
+# that one goes in the `#if macro` half.
+{
+	echo '#if macro'
+	cat "$std/haxe/ds/StringMap.hx"
+	echo '#else'
+	sed 's/untyped s\.GetHashCode()/hxc.core.StableStringHash.hash(s)/' "$std/cs/_std/haxe/ds/StringMap.hx"
+	echo '#end'
+} > "$obj/std/haxe/ds/StringMap.hx"
+grep -q 'StableStringHash' "$obj/std/haxe/ds/StringMap.hx" || { echo "build.sh: the std's StringMap has no GetHashCode call to replace" >&2; exit 1; }
+
 rm -rf "$obj/hxc"
-(cd "$obj" && "$hxc" -cp "$(cygpath -w "$root/src")" -main hxc.Compiler --dotnet hxc -D dll-name=hxc -D dotnet-exe=launcher -D dotnet-r2r \
+(cd "$obj" && "$hxc" -cp "$(cygpath -w "$obj/std")" -cp "$(cygpath -w "$root/src")" -main hxc.Compiler --dotnet hxc -D dll-name=hxc -D dotnet-exe=launcher -D dotnet-r2r \
 	-D no_map_cache -D dotnet-no-exception-stack -D hxc_pcre2_netlib --net-lib "$(cygpath -w "$obj/shim/HxcHostNative.dll")" "$@")
 
 cp "$obj/hxc/hxc.dll" "$obj/hxc/hxc.exe" "$obj/shim/HxcHostNative.dll" "$obj/pcre2-8.dll" "$out/"

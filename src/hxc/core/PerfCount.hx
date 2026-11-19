@@ -48,7 +48,7 @@ class PerfCount {
 			}
 		}
 		if (com.main != null) walkE(com.main);
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		o.writeString("[walk] types=" + nTypes + " fields=" + nFields + " reachableTExpr=" + wTExpr
 			+ " distinctPos=" + wPosN + " maxDepth=" + wMaxDepth + "\n");
 		// TExpr is header+3 fields; each carries one TExprExpr enum object of similar size.
@@ -75,7 +75,7 @@ class PerfCount {
 	}
 	public static function dumpExn():Void {
 		if (Sys.getEnv("HXC_DBG_EXN") == null) return;
-		Sys.stderr().writeString("[exn] NotFound=" + exnNotFound + " UnifyError=" + exnUnify
+		hxc.core.HostStdio.err().writeString("[exn] NotFound=" + exnNotFound + " UnifyError=" + exnUnify
 			+ " TypingError=" + exnTyping + " ContextError=" + exnContext + "
 ");
 	}
@@ -84,7 +84,7 @@ class PerfCount {
 		if (!on) return;
 		var rows = [for (k in counts.keys()) {n: k, c: counts.get(k)}];
 		rows.sort(function(a, b) return a.c < b.c ? 1 : -1);
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		for (r in rows) o.writeString("[count] " + StringTools.lpad(Std.string(r.c), " ", 10) + "  " + r.n + "
 ");
 		o.flush();

@@ -245,7 +245,7 @@ class Context {
 	public function log(s:String):Void {
 		if (!verbose) return;
 		if (hxc.Compiler.serverPrint(s + "\n")) return;
-		var out = Sys.stdout();
+		var out = hxc.core.HostStdio.out();
 		out.writeString(s + "\n");
 		out.flush();
 	}
@@ -420,7 +420,7 @@ class Context {
 
 	public static function allocStoredTypedExprId(tag:String):Int {
 		var id = ++nextStoredTypedExprId;
-		if (steDbg) Sys.stderr().writeString("[STE] " + id + " " + tag + "\n");
+		if (steDbg) hxc.core.HostStdio.err().writeString("[STE] " + id + " " + tag + "\n");
 		return id;
 	}
 
