@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Builds hxc as a .NET program: `build.sh <hxc> <out-dir> [extra hxc arguments]`.
+# Builds hxc as a .NET program: `build.sh <hxc> <out-dir> [extra hxc arguments]`. README.md beside this
+# file says what the result is for and what it does not do. <hxc> is the compiler that does the build: the
+# native one, or an earlier result of this script, which gives the same bytes.
 #
 #   <out-dir>/hxc.exe                          the launcher (needs .NET 10 installed)
 #   <out-dir>/hxc.dll                          the compiler
@@ -33,7 +35,7 @@ if [ ! -f "$obj/pcre2-8.dll" ]; then
 	mkdir -p "$obj/pcre2"
 	{
 		echo '@echo off'
-		echo "call \"$(cygpath -w "$vs")\\VC\\Auxiliary\\Build\\vcvars64.bat\" >nul || exit /b 1"
+		echo "call \"$(cygpath -w "$vs")\\VC\\Auxiliary\\Build\\vcvars64.bat\" >nul 2>&1 || exit /b 1"
 		echo "cd /d \"$(cygpath -w "$obj/pcre2")\" || exit /b 1"
 		echo "cl /nologo /O2 /MT /LD /DHAVE_CONFIG_H /DSUPPORT_UNICODE /DPCRE2_CODE_UNIT_WIDTH=8 /DSUPPORT_PCRE2_8 /I\"$pcre\" $srcs /Fe:..\\pcre2-8.dll >build.log 2>&1 || (type build.log & exit /b 1)"
 	} > "$obj/pcre2/build.bat"

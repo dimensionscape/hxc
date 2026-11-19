@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 env:
-  CONFORMANCE_COMMIT: 8e7759f12d6e6e89a0c9ca38d632de475e28687e
+  CONFORMANCE_COMMIT: 1f8cdf63a3a09db7bc2cbd2547659dd7dc0c4cce
 
 jobs:
   build:
@@ -173,6 +173,85 @@ jobs:
       - name: The .NET generator's cases
         shell: bash
         run: tests/dotnet/run.sh --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH"
+
+  dotnet-host:
+    name: hxc on .NET
+    needs: build
+    runs-on: windows-2022
+    # New: it reports without failing the run until it has been green for a while.
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: t
+        uses: ./.github/actions/setup-tests
+        with:
+          artifact: hxc-windows-x64
+          conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      # The same hxcpp commit the build-hxc action pins: only its PCRE2 sources are used here.
+      - name: Fetch hxcpp for the PCRE2 sources
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/hxcpp-src" && cd "$RUNNER_TEMP/hxcpp-src"
+          git init -q && git remote add origin https://github.com/openfl/libhxcpp.git
+          git fetch -q --depth 1 origin 1d90a2a86facf23ee3f9cee3abf33c704338988b && git checkout -q FETCH_HEAD
+          echo "HXCPP=$(cygpath -m "$RUNNER_TEMP/hxcpp-src")" >> "$GITHUB_ENV"
+
+      - name: Build hxc for .NET
+        shell: bash
+        run: tools/dotnet-host/build.sh "${{ steps.t.outputs.hxc }}" "$RUNNER_TEMP/hxc-dotnet"
+
+      - name: It builds itself to the same bytes
+        shell: bash
+        run: |
+          tools/dotnet-host/build.sh "$RUNNER_TEMP/hxc-dotnet/hxc.exe" "$RUNNER_TEMP/hxc-dotnet-2"
+          cmp "$RUNNER_TEMP/hxc-dotnet/hxc.dll" "$RUNNER_TEMP/hxc-dotnet-2/hxc.dll"
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          hxc="$RUNNER_TEMP/hxc-dotnet/hxc.exe"
+          "$hxc" -version
+          mkdir -p "$RUNNER_TEMP/smoke-dotnet" && cd "$RUNNER_TEMP/smoke-dotnet"
+          printf 'class Main {\n\tstatic function main() {\n\t\tvar m = [for (i in 0...3) i => i * i];\n\t\ttrace(m[2]);\n\t}\n}\n' > Main.hx
+          "$hxc" -main Main --interp
+          "$hxc" -main Main -js main.js
+          node main.js
+
+      - name: Parity with Haxe 4.3.7
+        shell: bash
+        run: |
+          cd "${{ steps.t.outputs.conformance }}"
+          neko run.n run --compiler "$(cygpath -m "$RUNNER_TEMP/hxc-dotnet/hxc.exe")" --std "$HAXE_STD_PATH" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences.json" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences-dotnet-host.json" -j 4 \
+            --junit "$RUNNER_TEMP/dotnet-host.xml" --title "hxc on .NET"
+
+      - name: hxc's own tests
+        shell: bash
+        run: |
+          cd "${{ steps.t.outputs.conformance }}"
+          neko run.n run --compiler "$(cygpath -m "$RUNNER_TEMP/hxc-dotnet/hxc.exe")" --std "$HAXE_STD_PATH" \
+            --cases "$GITHUB_WORKSPACE/tests/cases" --expected "$GITHUB_WORKSPACE/tests/expected" \
+            -j 4 --junit "$RUNNER_TEMP/dotnet-host-own.xml" --title "hxc on .NET, own tests"
+
+      - name: Upload the .NET build
+        uses: actions/upload-artifact@v6
+        with:
+          name: hxc-dotnet-windows-x64
+          path: |
+            ${{ runner.temp }}/hxc-dotnet/hxc.exe
+            ${{ runner.temp }}/hxc-dotnet/hxc.dll
+            ${{ runner.temp }}/hxc-dotnet/hxc.runtimeconfig.json
+            ${{ runner.temp }}/hxc-dotnet/HxcHostNative.dll
+            ${{ runner.temp }}/hxc-dotnet/pcre2-8.dll
+          if-no-files-found: error
 
   haxe-suites:
     name: Haxe's suites
