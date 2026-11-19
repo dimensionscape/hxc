@@ -289,11 +289,13 @@ class NeutralStd {
 		});
 
 		// Statics: the owned sinks + pure compute
+		#if sys
 		reg.bindStatic("Sys", "println", function(a) { logSink(Std.string(a[0])); return null; });
 		reg.bindStatic("Sys", "print", function(a) { logSink(Std.string(a[0])); return null; });
 		reg.bindStatic("Sys", "systemName", function(_) return Sys.systemName());
 		reg.bindStatic("Sys", "time", function(_) return Sys.time());
 		reg.bindStatic("Sys", "getEnv", function(a) return Sys.getEnv(a[0]));
+		#end
 		reg.bindStatic("Std", "string", function(a) return Std.string(a[0]));
 		reg.bindStatic("Std", "isOfType", function(a) return Std.isOfType(a[0], a[1]));
 		reg.bindStatic("String", "fromCharCode", function(a) return String.fromCharCode(a[0]));
