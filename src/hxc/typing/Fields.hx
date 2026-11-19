@@ -360,7 +360,13 @@ class Fields {
 						cur = cur.superClass == null ? null : cur.superClass.c;
 					}
 					acc;
-				case TAnon(an): [for (cf in an.fields) cf.name];
+				case TAnon(an):
+					// In descending byte order of the names, which is how the reference's fold over its field
+					// map leaves them: candidates at the same distance are suggested in that order, and the
+					// order a hash map walks its keys in is the host's own.
+					var names = [for (cf in an.fields) cf.name];
+					haxe.ds.ArraySort.sort(names, function(x, y) return hxc.core.StringSort.compareBytes(y, x));
+					names;
 				case TAbstract(a, _) if (a.impl != null): [for (cf in a.impl.orderedStatics) cf.name];
 				case _: [];
 			};

@@ -340,15 +340,21 @@ class EvalStdLib {
 					sys.FileSystem.deleteFile(a);
 				case 1:
 					if (!there(a)) return missing;
-					if (!isDir(a) || sys.FileSystem.readDirectory(a).length > 0) return "Directory not empty";
+					if (!isDir(a)) return "Invalid argument";
+					if (sys.FileSystem.readDirectory(a).length > 0) return "Directory not empty";
 					sys.FileSystem.deleteDirectory(a);
 				case 2:
 					if (there(a)) return "File exists";
 					var parent = haxe.io.Path.directory(haxe.io.Path.removeTrailingSlashes(a));
-					if (parent != "" && !there(parent)) return missing;
+					// a parent that is a file is no directory to make it in
+					if (parent != "" && (!there(parent) || !isDir(parent))) return missing;
 					sys.FileSystem.createDirectory(a);
 				case 3:
 					if (!there(a)) return missing;
+					if (b != null) {
+						var into = haxe.io.Path.directory(haxe.io.Path.removeTrailingSlashes(b));
+						if (into != "" && (!there(into) || !isDir(into))) return missing;
+					}
 					// The C++ host's rename replaces a file that is in the way.
 					if (b != null && there(b) && !isDir(b) && !isDir(a)) sys.FileSystem.deleteFile(b);
 					sys.FileSystem.rename(a, b);
@@ -2552,7 +2558,8 @@ class EvalStdLib {
 			case _: return VNull;
 		};
 		if (Math.isNaN(f) || !(Math.abs(f) < 9223372036854775808.0)) return hxc.eval.EvalValue.EvalValueTools.vint(outOfRangeInt(f));
-		var m = (f < 0 ? Math.ceil(f) : Math.floor(f)) % 4294967296.0;
+		// ffloor and fceil: floor and ceil answer an Int, which a host is free to saturate out of range.
+		var m = (f < 0 ? Math.fceil(f) : Math.ffloor(f)) % 4294967296.0;
 		if (m < 0) m += 4294967296.0;
 		if (m >= 2147483648.0) m -= 4294967296.0;
 		return hxc.eval.EvalValue.EvalValueTools.vint(Std.int(m));
