@@ -60,7 +60,7 @@ class Javadoc {
 				p = lc.pn;
 				continue;
 			}
-			var sp = doc.indexOf(" ", nl.p);
+			var sp = doc.indexOf(" ", nl.p ?? 0);
 			if (sp < 0) return;
 			var tag = doc.substring(nl.p, sp);
 			var value = new StringBuf();
