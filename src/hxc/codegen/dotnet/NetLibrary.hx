@@ -129,7 +129,8 @@ class NetLibrary {
 	public function rawClass(path:IlPath):Null<IlClass> {
 		var key = IlPaths.key(path);
 		if (rawCache.exists(key)) return rawCache.get(key);
-		var r = try IlMetaTools.convertClass(getCtx().nil, path) catch (_:IlNotFound) null;
+		// most assemblies asked for a type do not hold it: that is answered without a raise
+		var r = !getCtx().nil.typedefs.exists(key) ? null : try IlMetaTools.convertClass(getCtx().nil, path) catch (_:IlNotFound) null;
 		rawCache.set(key, r);
 		return r;
 	}
@@ -149,8 +150,13 @@ class NetLibrary {
 		if (cache.exists(key)) return cache.get(key);
 		var r:Null<IlClass> = try {
 			var ctx = getCtx();
-			var cls = IlMetaTools.convertClass(ctx.nil, NetConverter.hxpathToNet(com, path));
-			NetConverter.normalizeIlcls(ctx, cls);
+			var netPath = NetConverter.hxpathToNet(com, path);
+			// A type is asked of every assembly until one holds it, so most of these answers are "not
+			// here": that one is given without a raise.
+			if (!ctx.nil.typedefs.exists(IlPaths.key(netPath))) null else {
+				var cls = IlMetaTools.convertClass(ctx.nil, netPath);
+				NetConverter.normalizeIlcls(ctx, cls);
+			}
 		} catch (_:IlNotFound) null;
 		cache.set(key, r);
 		return r;

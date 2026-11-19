@@ -91,7 +91,7 @@ class ModuleLoader {
 		var isLoadingCoreApi = ctx.defines.rawDefined("core_api");
 		// The .NET runtime's root lists the files embedded in hxc instead of a directory.
 		var listing:Null<Array<String>> = if (hxc.codegen.dotnet.RuntimeSources.isVirtual(cp)) hxc.codegen.dotnet.RuntimeSources.readDirectory(dir)
-			else try FileSystem.readDirectory(dir) catch (_:Dynamic) null;
+			else hxc.core.HostFile.readDirectoryOpt(dir);
 		ctx.readdirCache.set(cp + "\n" + dir, listing);
 		if (listing == null) return;
 		for (fileOwnName in listing) {

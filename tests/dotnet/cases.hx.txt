@@ -8661,6 +8661,39 @@ True
 True
 True
 Exception: inner
+--- file-read-whole @gencs
+class P {
+	static function main() {
+		var path = haxe.io.Path.directory(Sys.programPath()) + "/whole.bin";
+		var b = haxe.io.Bytes.alloc(100003);
+		for (i in 0...b.length) b.set(i, (i * 31 + (i >> 8)) & 255);
+		sys.io.File.saveBytes(path, b);
+		var r = sys.io.File.getBytes(path);
+		Sys.println(r.length + " " + (r.compare(b) == 0));
+		sys.io.File.saveContent(path, "héllo
+wörld");
+		var s = sys.io.File.getContent(path);
+		Sys.println(s.length + " " + s.charCodeAt(1) + " " + sys.io.File.getBytes(path).length);
+		sys.io.File.saveBytes(path, haxe.io.Bytes.alloc(0));
+		Sys.println(sys.io.File.getBytes(path).length + " [" + sys.io.File.getContent(path) + "]");
+		sys.FileSystem.deleteFile(path);
+		try {
+			sys.io.File.getBytes(path);
+			Sys.println("read");
+		} catch (e:Dynamic) Sys.println("missing");
+		try {
+			sys.io.File.getContent(path);
+			Sys.println("read");
+		} catch (e:Dynamic) Sys.println("missing");
+	}
+}
+===
+[run]
+100003 true
+11 233 13
+0 []
+missing
+missing
 --- intmap-missing-keys
 class P {
 	static function main() {

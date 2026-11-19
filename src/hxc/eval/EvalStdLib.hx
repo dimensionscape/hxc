@@ -4297,11 +4297,9 @@ class EvalStdLib {
 			var s = decodeString(ctx, arg(a, 1));
 			re.rString = s;
 			try {
-				re.rGroups = re.r.execAll(Pcre2Flag.NO_UTF_CHECK, 0, s.toBytes());
-				VTrue;
-			} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
-				re.rGroups = [];
-				VFalse;
+				var groups = re.r.execAllOpt(Pcre2Flag.NO_UTF_CHECK, 0, s.toBytes());
+				re.rGroups = groups == null ? [] : groups;
+				groups == null ? VFalse : VTrue;
 			} catch (_:hxc.eval.Pcre2.Pcre2Exception) {
 				EvalExceptions.excString(ctx, "PCRE Error (invalid unicode string?)");
 			}
@@ -4355,12 +4353,11 @@ class EvalStdLib {
 			if (pos + len > s.length) return VFalse;
 			if (pos + len < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("String.sub / Bytes.sub")');
 			var str = s.sub(0, pos + len);
-			try {
-				var groups = re.r.execAll(Pcre2Flag.NO_UTF_CHECK, pos, str.toBytes());
-				re.rString = s;
-				re.rGroups = groups;
-				VTrue;
-			} catch (_:hxc.eval.Pcre2.Pcre2NotFound) VFalse;
+			var groups = re.r.execAllOpt(Pcre2Flag.NO_UTF_CHECK, pos, str.toBytes());
+			if (groups == null) return VFalse;
+			re.rString = s;
+			re.rGroups = groups;
+			VTrue;
 		}));
 		reg(inst, "EReg", "split", vmethod(a -> {
 			var re = thisRegex(a);
@@ -4377,18 +4374,17 @@ class EvalStdLib {
 			var pos = 0;
 			while (true) {
 				var next:Int;
-				try {
-					var ss = re.r.exec(Pcre2Flag.NO_UTF_CHECK, pos, subj);
-					var o = ss.getSubstringOfs(0);
-					add(copyOffset, o.first);
-					copyOffset = o.last;
-					next = pos == o.last ? o.last + 1 : o.last;
-					if (next >= slength) {
-						acc.push(EvalString.vEmptyString());
-						break;
-					}
-				} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
+				var ss = re.r.execOpt(Pcre2Flag.NO_UTF_CHECK, pos, subj);
+				if (ss == null) {
 					add(copyOffset, slength);
+					break;
+				}
+				var o = ss.getSubstringOfs(0);
+				add(copyOffset, o.first);
+				copyOffset = o.last;
+				next = pos == o.last ? o.last + 1 : o.last;
+				if (next >= slength) {
+					acc.push(EvalString.vEmptyString());
 					break;
 				}
 				if (re.global) pos = next;
@@ -4423,29 +4419,28 @@ class EvalStdLib {
 			re.rString = s;
 			var pos = 0;
 			while (pos < l) {
-				try {
-					var ss = re.r.exec(0, pos, subj);
-					re.rGroups = [ss];
-					var o = ss.getSubstringOfs(0);
-					buf.addSub(s, pos, o.first - pos);
-					buf.addString(decodeString(ctx, callValueOn(recv, fn, [recv])));
-					if (o.last == o.first) {
-						if (o.last >= l) break;
-						if (re.global) {
-							buf.addSub(s, o.first, 1);
-							pos = o.first + 1;
-						} else {
-							buf.addSub(s, o.first, l - o.first);
-							break;
-						}
-					} else if (re.global) {
-						pos = o.last;
+				var ss = re.r.execOpt(0, pos, subj);
+				if (ss == null) {
+					buf.addSub(s, pos, l - pos);
+					break;
+				}
+				re.rGroups = [ss];
+				var o = ss.getSubstringOfs(0);
+				buf.addSub(s, pos, o.first - pos);
+				buf.addString(decodeString(ctx, callValueOn(recv, fn, [recv])));
+				if (o.last == o.first) {
+					if (o.last >= l) break;
+					if (re.global) {
+						buf.addSub(s, o.first, 1);
+						pos = o.first + 1;
 					} else {
-						buf.addSub(s, o.last, l - o.last);
+						buf.addSub(s, o.first, l - o.first);
 						break;
 					}
-				} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
-					buf.addSub(s, pos, l - pos);
+				} else if (re.global) {
+					pos = o.last;
+				} else {
+					buf.addSub(s, o.last, l - o.last);
 					break;
 				}
 			}

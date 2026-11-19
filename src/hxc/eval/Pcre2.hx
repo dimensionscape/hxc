@@ -128,6 +128,12 @@ class Pcre2 {
 	 * part). NOMATCH raises Pcre2NotFound, a malformed-UTF result BadUTF, and so on.
 	 */
 	public function match(options:Int, pos:Int, subj:haxe.io.Bytes, ovector:Array<Int>):Void {
+		if (!matchOpt(options, pos, subj, ovector)) throw new Pcre2NotFound();
+	}
+
+	// The same, with NOMATCH as the answer false: most searches end on one, and a raise costs far more
+	// than the search it ends.
+	public function matchOpt(options:Int, pos:Int, subj:haxe.io.Bytes, ovector:Array<Int>):Bool {
 		var len = subj.length;
 		if (pos > len || pos < 0) throw new EvalExceptions.HostException("Invalid_argument(\"Pcre2.pcre2_match_stub: illegal position\")", false);
 		var pairs = captureCount + 1;
@@ -151,10 +157,12 @@ class Pcre2 {
 		#else
 		var ret = code.match(options, pos, subj, out, pairs);
 		#end
+		if (ret == -1) return false; // PCRE2_ERROR_NOMATCH
 		if (ret < 0) throw matchError(ret);
 		// The pairs past the last one the match set are -1.
 		var set = ret == 0 ? pairs : ret;
 		for (i in 0...pairs * 2) ovector[i] = i < set * 2 ? out[i] : -1;
+		return true;
 	}
 
 	// A failed match's code as its exception.
@@ -184,20 +192,32 @@ class Pcre2 {
 		return new Pcre2Substrings(subj, ov);
 	}
 
+	// exec, with null for no match.
+	public function execOpt(iflags:Int, pos:Int, subj:haxe.io.Bytes):Null<Pcre2Substrings> {
+		var ov = makeOvector();
+		return matchOpt(iflags, pos, subj, ov) ? new Pcre2Substrings(subj, ov) : null;
+	}
+
 	// Every match from `pos`, an empty match retried with NOTEMPTY.
 	public function execAll(iflags:Int, pos:Int, subj:haxe.io.Bytes):Array<Pcre2Substrings> {
-		var first = exec(iflags, pos, subj);
+		var all = execAllOpt(iflags, pos, subj);
+		if (all == null) throw new Pcre2NotFound();
+		return all;
+	}
+
+	// execAll, with null when there is no match at all.
+	public function execAllOpt(iflags:Int, pos:Int, subj:haxe.io.Bytes):Null<Array<Pcre2Substrings>> {
+		var first = execOpt(iflags, pos, subj);
+		if (first == null) return null;
 		var nullFlags = iflags | (NOTEMPTY : Int);
 		var subjLen = subj.length;
 		var out = [first];
 		var cur = first;
 		var p = first.ovector[1];
 		while (true) {
-			var next:Null<Pcre2Substrings> = try {
-				if (cur.ovector[0] == p && cur.ovector[1] == p) {
-					if (p == subjLen) null else exec(nullFlags, p, subj);
-				} else exec(iflags, p, subj);
-			} catch (_:Pcre2NotFound) null;
+			var next:Null<Pcre2Substrings> = if (cur.ovector[0] == p && cur.ovector[1] == p) {
+				if (p == subjLen) null else execOpt(nullFlags, p, subj);
+			} else execOpt(iflags, p, subj);
 			if (next == null) break;
 			out.push(next);
 			cur = next;
@@ -321,7 +341,7 @@ class Pcre2 {
 		var out = new haxe.io.BytesBuffer();
 		var curPos = 0;
 		while (true) {
-			var none = curPos > subjLen || (try { match(iflags, curPos, subj, ov); false; } catch (_:Pcre2NotFound) true);
+			var none = curPos > subjLen || !matchOpt(iflags, curPos, subj, ov);
 			if (none) {
 				var postfix = subjLen - curPos;
 				if (postfix > 0) out.addBytes(subj, curPos, postfix);
@@ -347,7 +367,7 @@ class Pcre2 {
 		var nsubs = (subgroups2 >> 1) - 1;
 		if (t.maxBr > nsubs) throw new EvalExceptions.HostException("Pcre2.replace_first: backreference denotes nonexistent subpattern", true);
 		if (t.withLp && nsubs == 0) throw new EvalExceptions.HostException("Pcre2.replace_first: no backreferences", true);
-		try match(iflags, 0, subj, ov) catch (_:Pcre2NotFound) return subj;
+		if (!matchOpt(iflags, 0, subj, ov)) return subj;
 		var first = ov[0];
 		var last = ov[1];
 		var out = new haxe.io.BytesBuffer();

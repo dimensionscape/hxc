@@ -6,5 +6,6 @@
 	"a-caught-exception-keeps-its-stack": "P.hx:27: deep\nP.hx:29: 110\nP.hx:33: again deep\nP.hx:35: 30\nP.hx:36: 5\nP.hx:38: 24 P.main\nP.hx:38: 7 P.thrower\nP.hx:38: 7 P.thrower\nP.hx:38: 7 P.thrower\nP.hx:38: 6 P.thrower",
 	"a-saved-call-stack-keeps-its-positions": "P.hx:43: 12\nP.hx:37: 25 P.leaf\nP.hx:37: 21 P.middle\nP.hx:37: 12 P.outer\nP.hx:37: 43 P.main\nP.hx:46: 14\nP.hx:47: 17\nP.hx:48: 6\nP.hx:49: 8\nP.hx:37: 25 P.leaf\nP.hx:37: 21 P.middle\nP.hx:37: 12 P.outer\nP.hx:37: 43 P.main",
 	"defaults-and-finally-across-reused-frames": "P.hx:20: a.....\nP.hx:21: b..\nP.hx:22: c***\nP.hx:23: d.....\nP.hx:24: caught0---\nP.hx:24: ok1.......\nP.hx:24: caught2...\nP.hx:24: ok3-------\nP.hx:24: caught4...",
-	"a-macros-date-now-is-in-whole-seconds": "P.hx:3: 0"
+	"a-macros-date-now-is-in-whole-seconds": "P.hx:3: 0",
+	"a-regex-that-finds-nothing-answers-without-a-match": "P.hx:4: true,b,null\nP.hx:5: false\nP.hx:6: no match: Invalid regex operation because no match was made\nP.hx:7: true,7,a,\nP.hx:8: true,8\nP.hx:9: false\nP.hx:10: [a,c],[xyz],[a,c,d],[xyz],[a,,b,]\nP.hx:11: a-c,xyz,a[b]c[b],xyz\nP.hx:12: a<b>c,xyz,aBcB,.a.b\nP.hx:15: 667"
 }

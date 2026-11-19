@@ -250,3 +250,22 @@ class P {
 	macro static function ms() return macro $v{Date.now().getTime() % 1000};
 	static function main() { trace(ms()); }
 }
+
+--- a-regex-that-finds-nothing-answers-without-a-match
+class P {
+	static function main() {
+		var re = ~/b(\d)?/;
+		trace(re.match("abc"), re.matched(0), re.matched(1));
+		trace(re.match("xyz"));
+		trace(try re.matched(0) catch (e:Dynamic) "no match: " + e);
+		trace(re.match("ab7"), re.matched(1), re.matchedLeft(), re.matchedRight());
+		trace(re.matchSub("ab7b8", 3), re.matched(1));
+		trace(re.matchSub("ab7b8", 5));
+		trace(re.split("abc"), re.split("xyz"), ~/b/g.split("abcbd"), ~/b/g.split("xyz"), ~/,/g.split("a,,b,"));
+		trace(re.replace("abc", "-"), re.replace("xyz", "-"), ~/(b)/g.replace("abcb", "[$1]"), ~/b/g.replace("xyz", "-"));
+		trace(re.map("abc", r -> "<" + r.matched(0) + ">"), re.map("xyz", r -> "!"), ~/b/g.map("abcb", r -> "B"), ~/x*/g.map("ab", r -> "."));
+		var n = 0;
+		for (i in 0...2000) if (~/^k(\d+)$/.match(i % 3 == 0 ? "k" + i : "j" + i)) n++;
+		trace(n);
+	}
+}
