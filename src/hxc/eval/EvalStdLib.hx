@@ -4610,7 +4610,7 @@ class EvalStdLib {
 		// host has real filesystem access.
 		// A path is decoded as a string.
 		reg(s, "sys.FileSystem", "exists", vfn(a -> sys.FileSystem.exists(decodeText(ctx, arg(a, 0))) ? VTrue : VFalse));
-		reg(s, "sys.FileSystem", "isDirectory", vfn(a -> sys.FileSystem.isDirectory(decodeText(ctx, arg(a, 0))) ? VTrue : VFalse));
+		reg(s, "sys.FileSystem", "isDirectory", vfn(a -> hxc.core.HostFile.isDirectory(decodeText(ctx, arg(a, 0))) ? VTrue : VFalse));
 		// A directory check on the patched path (a stat failure is its Sys_error), "No such
 		// directory" for anything else, then the directory's entries.
 		reg(s, "sys.FileSystem", "readDirectory", vfn(a -> {

@@ -237,14 +237,20 @@ class TypeUnification {
 		carried.
 	**/
 	public static function withRegisteredMonoRollback<R>(monos:Array<{m:TMono, p:hxc.ast.Position}>, f:Void->R):R {
-		var known = [for (e in monos) {m: e.m, ty: e.m.type, down: e.m.downConstraints}];
+		// What each registered monomorph holds now, in three arrays side by side: this runs for every
+		// field call, and one object per monomorph was most of what a call allocated.
 		var current = monos.copy();
+		var n = current.length;
+		var knownM:Array<TMono> = [for (e in current) e.m];
+		var knownTy = [for (m in knownM) m.type];
+		var knownDown = [for (m in knownM) m.downConstraints];
 		try {
 			return f();
 		} catch (ex:haxe.Exception) {
-			for (k in known) {
-				if (k.ty != k.m.type) k.m.type = k.ty;
-				if (k.down != k.m.downConstraints) k.m.downConstraints = k.down;
+			for (i in 0...n) {
+				var m = knownM[i];
+				if (knownTy[i] != m.type) m.type = knownTy[i];
+				if (knownDown[i] != m.downConstraints) m.downConstraints = knownDown[i];
 			}
 			monos.splice(0, monos.length);
 			for (e in current) monos.push(e);

@@ -135,6 +135,10 @@ class Compiler {
 				var mb = Std.parseInt(wm);
 				if (mb != null) cpp.vm.Gc.setMinimumWorkingMemory(mb * 1024 * 1024);
 			}
+			// The collector keeps this much free after a collection, so that a build's early collections,
+			// which free little while the typed program is still growing, come less often: about 3% of a
+			// large build. HXCPP_MINIMUM_FREE_SPACE, which the runtime reads itself, still decides when set.
+			if (Sys.getEnv("HXCPP_MINIMUM_FREE_SPACE") == null) cpp.vm.Gc.setMinimumFreeSpace(512 * 1024 * 1024);
 			if (g == "off") cpp.vm.Gc.enable(false);
 			else if (g != null) {
 				var pct = Std.parseInt(g);
