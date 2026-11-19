@@ -8632,6 +8632,35 @@ False
 C
 E
 ai1i1d2.5zd10000000000d2147483648kpmi3h
+# -D dotnet-no-exception-stack: an exception made by the program records no call stack, so `stack` is
+# empty. A caught .NET exception keeps the trace .NET gave it, and CallStack.callStack() still answers.
+--- exception-without-stack + -D dotnet-no-exception-stack
+import haxe.CallStack;
+class P {
+	static function thrower(n:Int):Int {
+		if (n > 0) throw new haxe.Exception("boom " + n);
+		return n;
+	}
+	static function main() {
+		try thrower(3) catch (e:haxe.Exception) Sys.println(e.message + " " + e.stack.length);
+		try throw "v" catch (e:haxe.Exception) Sys.println(e.message + " " + e.stack.length);
+		try cs.system.Convert.ToInt32("x") catch (e:haxe.Exception) Sys.println(e.stack.length > 0);
+		Sys.println(CallStack.callStack().length > 0);
+		var inner = new haxe.Exception("inner");
+		var outer = new haxe.Exception("outer", inner);
+		Sys.println(outer.previous == inner);
+		Sys.println(outer.details().split("
+")[0]);
+	}
+}
+===
+[run]
+boom 3 0
+v 0
+True
+True
+True
+Exception: inner
 --- exception-stack-and-details @gencs
 import haxe.CallStack;
 class P {

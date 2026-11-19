@@ -1564,7 +1564,8 @@ class CppGenClass {
 	// new case label except the first).
 	function dumpQuickFieldTest(w:CppWriter, entries:Array<{name:String, result:String}>):Void {
 		if (entries.length == 0) return;
-		entries.sort(function(a, b) return a.name.length - b.name.length);
+		// A stable sort: fields of one length stay in the order they came, on a host whose Array.sort is not.
+		haxe.ds.ArraySort.sort(entries, function(a, b) return a.name.length - b.name.length);
 		w.write("\tswitch(inName.length) {\n");
 		var lenCase = -1;
 		for (e in entries) {

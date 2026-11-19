@@ -431,6 +431,27 @@ class GenerateDotnet {
 	// The .NET a program is built for unless -D dotnet-version says otherwise, and the oldest it can be.
 	public static inline final defaultVersion = 10;
 
+	// -D dotnet-no-exception-stack: haxe.Exception's constructor (cs/_std) takes `new StackTrace(1, true)`, the
+	// whole call stack with its file names, for every exception made. A program that throws as a way of
+	// working pays for it each time, so the two captures become null here: `stack` is then empty, which the
+	// std allows for (NativeStackTrace.toHaxe). The trace of a caught .NET exception, `new StackTrace(e, true)`,
+	// has one argument fewer and stays.
+	static function dropExceptionStack(ctx:Context):Void {
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c) if (c.path.name == "Exception" && c.path.pack.length == 1 && c.path.pack[0] == "haxe" && c.constructor != null && c.constructor.expr != null):
+				function loop(e:TExpr):TExpr {
+					return switch (e.expr) {
+						case TNew(sc, _, [{expr: TConst(TInt(_))}, {expr: TConst(TBool(_))}]) if (sc.path.name == "StackTrace"):
+							TypeFunctions.mk(TConst(TNull), e.type, e.pos);
+						case _:
+							hxc.core.TexprTools.mapExpr(loop, e);
+					}
+				}
+				c.constructor.expr = loop(c.constructor.expr);
+			case _:
+		}
+	}
+
 	// The runtimeconfig.json of a program for .NET `version`. Joined with "\n" so the file is the same
 	// whatever line endings this source was checked out with.
 	static function runtimeConfig(version:Int):String {
@@ -508,6 +529,7 @@ class GenerateDotnet {
 		}
 		DotnetNames.noRoot = ctx.defines.rawDefined("no_root");
 		FieldHashes.reset();
+		if (ctx.defines.rawDefined("dotnet_no_exception_stack")) dropExceptionStack(ctx);
 
 		var candidates:Array<TClass> = [];
 		var enums:Array<TEnum> = [];

@@ -9,9 +9,11 @@ class LiveMark {
 
 	public static function mark(label:String):Void {
 		if (file == null) return;
+		#if cpp
 		cpp.vm.Gc.run(true);
 		var out = sys.io.File.append(file, false);
 		out.writeString(label + " " + Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1024) + "\n");
 		out.close();
+		#end
 	}
 }

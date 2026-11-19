@@ -8,6 +8,7 @@ import hxc.eval.EvalValue;
 	eval.integers.Int64 and UInt64 over the host's 64-bit integers. Both are stored as their 64 bits; the
 	unsigned operations read them as unsigned.
 **/
+#if cpp
 @:cppFileCode('
 #include <stdio.h>
 
@@ -58,6 +59,7 @@ static int hxc_parse64(const unsigned char *s, int len, int uonly, unsigned long
 	return 1;
 }
 ')
+#end
 @:access(hxc.eval.EvalStdLib)
 class EvalIntegers {
 	static inline function vfn(f:VFunc):EvalValue return VFunction(f, true);
@@ -82,6 +84,7 @@ class EvalIntegers {
 		};
 	}
 
+	#if cpp
 	public static function int64ToString(v:haxe.Int64):String {
 		var s:String = null;
 		untyped __cpp__("{ char hxc_buf[32]; snprintf(hxc_buf, 32, \"%lld\", (long long){1}); {0} = ::String(hxc_buf); }", s, v);
@@ -147,6 +150,105 @@ class EvalIntegers {
 
 	static function wrapMul(a:haxe.Int64, b:haxe.Int64):haxe.Int64
 		return untyped __cpp__("(::cpp::Int64)((::cpp::UInt64){0} * (::cpp::UInt64){1})", a, b);
+	#else
+	// The same operations in Haxe, for a host that is not C++.
+	public static function int64ToString(v:haxe.Int64):String return haxe.Int64.toStr(v);
+
+	public static function uint64ToString(v:haxe.Int64):String {
+		if (v >= 0) return haxe.Int64.toStr(v);
+		var q = divUnsigned(v, 10);
+		return haxe.Int64.toStr(q) + Std.string(haxe.Int64.toInt(v - q * 10));
+	}
+
+	static function parseDigit(c:Int):Int {
+		if (c >= 48 && c <= 57) return c - 48;
+		if (c >= 65 && c <= 70) return c - 65 + 10;
+		if (c >= 97 && c <= 102) return c - 97 + 10;
+		return -1;
+	}
+
+	// An optional sign and base prefix, then digits (`_` between them is skipped). The unsigned form
+	// refuses a leading minus and takes values through 2^64-1. Null when the text is not a number.
+	static function parse(ctx:EvalContext, v:EvalValue, unsignedOnly:Bool):Null<haxe.Int64> {
+		var b = EvalStdLib.decodeString(ctx, v).toBytes();
+		var p = 0, end = b.length;
+		var negative = false, base = 10, signed = true;
+		if (p < end && b.get(p) == 45) { negative = true; p++; }
+		else if (p < end && b.get(p) == 43) p++;
+		if (p < end && b.get(p) == 48 && p + 1 < end) {
+			switch (b.get(p + 1)) {
+				case 120 | 88: base = 16; signed = false; p += 2;
+				case 111 | 79: base = 8; signed = false; p += 2;
+				case 98 | 66: base = 2; signed = false; p += 2;
+				case 117 | 85: signed = false; p += 2;
+				case _:
+			}
+		}
+		if (unsignedOnly && negative) return null;
+		var threshold = divUnsigned(-1, base);
+		if (p >= end) return null;
+		var d = parseDigit(b.get(p));
+		if (d < 0 || d >= base) return null;
+		var res:haxe.Int64 = d;
+		p++;
+		while (p < end) {
+			var c = b.get(p);
+			if (c == 95) { p++; continue; }
+			d = parseDigit(c);
+			if (d < 0 || d >= base) break;
+			if (compareUnsigned(res, threshold) > 0) return null;
+			res = res * base + d;
+			if (compareUnsigned(res, d) < 0) return null;
+			p++;
+		}
+		if (p != end) return null;
+		if (!unsignedOnly && signed) {
+			var top = haxe.Int64.make(0x80000000, 0);
+			if (!negative) { if (compareUnsigned(res, top) >= 0) return null; }
+			else { if (compareUnsigned(res, top) > 0) return null; }
+		}
+		return negative ? -res : res;
+	}
+
+	static function compareSigned(a:haxe.Int64, b:haxe.Int64):Int return a > b ? 1 : a < b ? -1 : 0;
+
+	static function compareUnsigned(a:haxe.Int64, b:haxe.Int64):Int {
+		var c = haxe.Int64.ucompare(a, b);
+		return c > 0 ? 1 : c < 0 ? -1 : 0;
+	}
+
+	static function shiftLeft(a:haxe.Int64, n:Int):haxe.Int64 return a << (n & 63);
+
+	static function shiftRightSigned(a:haxe.Int64, n:Int):haxe.Int64 return a >> (n & 63);
+
+	static function shiftRightUnsigned(a:haxe.Int64, n:Int):haxe.Int64 return a >>> (n & 63);
+
+	static function divUnsigned(a:haxe.Int64, b:haxe.Int64):haxe.Int64 {
+		if (b < 0) return haxe.Int64.ucompare(a, b) >= 0 ? 1 : 0;
+		if (a >= 0) return a / b;
+		var q = ((a >>> 1) / b) << 1;
+		var r = a - q * b;
+		return haxe.Int64.ucompare(r, b) >= 0 ? q + 1 : q;
+	}
+
+	static function remUnsigned(a:haxe.Int64, b:haxe.Int64):haxe.Int64 return a - divUnsigned(a, b) * b;
+
+	static function divSigned(a:haxe.Int64, b:haxe.Int64):haxe.Int64 {
+		if (b == -1) return -a;
+		return a / b;
+	}
+
+	static function remSigned(a:haxe.Int64, b:haxe.Int64):haxe.Int64 {
+		if (b == -1) return 0;
+		return a % b;
+	}
+
+	static function wrapAdd(a:haxe.Int64, b:haxe.Int64):haxe.Int64 return a + b;
+
+	static function wrapSub(a:haxe.Int64, b:haxe.Int64):haxe.Int64 return a - b;
+
+	static function wrapMul(a:haxe.Int64, b:haxe.Int64):haxe.Int64 return a * b;
+	#end
 
 	// An instance of haxe._Int64.___Int64 (or a subclass), its high and low halves joined.
 	static function decodeHaxeI64(ctx:EvalContext, v:EvalValue):haxe.Int64 {

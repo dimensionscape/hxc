@@ -154,7 +154,7 @@ class EvalContext {
 	public var vectorPrototype:Null<VPrototype>;
 	public var toplevel:EvalValue;
 	public var eval:Eval;
-	public var evalTls:sys.thread.Tls<Eval>;
+	public var evalTls:hxc.core.HostTls<Eval>;
 	// The OS thread that made this context (its thread serial), whose eval is `eval`.
 	public var creatorThread:Int;
 	public var maxStackDepth:Int;
@@ -182,7 +182,7 @@ class EvalContext {
 		// One eval per thread; the thread-local holds every thread's but the creating one, whose eval is
 		// `eval` (threadEval). The creating thread outlives the context, and its thread-local would keep
 		// the whole compilation reachable after it ends.
-		this.evalTls = new sys.thread.Tls();
+		this.evalTls = new hxc.core.HostTls();
 		this.creatorThread = hxc.compiler.HostRuntime.threadSerial();
 		this.defines = defines == null ? new Define() : defines;
 		// The interpreter's call depth limit, `-D eval-call-stack-depth` with a default of 1000; past it

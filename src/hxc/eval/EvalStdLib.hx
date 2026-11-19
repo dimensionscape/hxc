@@ -1226,7 +1226,7 @@ class EvalStdLib {
 	// Releasing an UNHELD lock is undefined behavior on the host, so each thread
 	// tracks whether it holds the lock; a blocking native on a non-holding thread
 	// just runs.
-	static var gilHeldTls:sys.thread.Tls<Bool> = new sys.thread.Tls();
+	static var gilHeldTls:hxc.core.HostTls<Bool> = new hxc.core.HostTls();
 
 	public static function gilEnter():Void {
 		gil.acquire();
@@ -2445,6 +2445,11 @@ class EvalStdLib {
 			case _:
 				Std.string(f);
 		}
+		#elseif cs
+		return switch (precision) {
+			case 12 | 15 | 17 | 18: hxc.core.Numeric.printfG(f, precision);
+			case _: Std.string(f);
+		}
 		#else
 		return Std.string(f);
 		#end
@@ -3044,6 +3049,9 @@ class EvalStdLib {
 		// mbedtls is unavailable on Emscripten.
 		EvalSsl.initConstructors(ctx);
 		EvalSsl.initFields(ctx);
+		#elseif !cpp
+		// The event loop and the locks, written in Haxe; the rest of eval.luv says it is not there.
+		EvalLuvLite.init(ctx, s);
 		#end
 
 		reg(s, "Math", "PI", VFloat(Math.PI));

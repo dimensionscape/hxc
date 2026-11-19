@@ -93,6 +93,7 @@ class Usage {
 		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-trim-root", doc: "Embed a descriptor that keeps every member when the assembly is published trimmed."},
 		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-nullable=<package>[,...]", doc: "Write C# nullable metadata for the types of exactly these packages."},
 		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-debug-jit", doc: "With --debug, turn the JIT's optimisations off so a debugger steps line by line."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-no-exception-stack", doc: "Do not record the call stack when a Haxe exception is made: `stack` is empty, and throwing costs far less."},
 		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-pathmap=<from>=<to>[,...]", doc: "Rewrite source paths in the PDB."},
 		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-stub-report", doc: "Print the standard library methods that were stubbed."},
 		{cat: "HashLink (--hl)", name: "hl-no-opt", doc: "Skip the bytecode optimiser."},

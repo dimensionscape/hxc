@@ -291,10 +291,12 @@ class Compiler {
 	static var liveMemFile:Null<String> = Sys.getEnv("HXC_DBG_LIVEMEM");
 
 	static function recordLiveMem():Void {
+		#if cpp
 		cpp.vm.Gc.run(true);
 		var out = sys.io.File.append(liveMemFile, false);
 		out.writeString(censusCount + " " + Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1024) + "\n");
 		out.close();
+		#end
 	}
 
 	// HXC_DBG_STATICCENSUS=N: a static-root census every N requests (HeapCensus.staticCensus).

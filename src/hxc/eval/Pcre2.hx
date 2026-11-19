@@ -61,9 +61,12 @@ enum abstract Pcre2Flag(Int) to Int {
 	var NO_UTF_CHECK = 0x40000000;
 }
 
+#if cpp
 @:buildXml('<files id="haxe"><compilerflag value="-I${HXCPP}/project/thirdparty/pcre2-10.42/src"/></files>')
 @:cppFileCode('#define PCRE2_STATIC\n#define PCRE2_CODE_UNIT_WIDTH 8\n#include <pcre2.h>\n#include <string.h>\nextern int _hxcpp_argc;\nextern char **_hxcpp_argv;\nstatic unsigned char hxc_pcre2_empty[1] = {0};')
+#end
 class Pcre2 {
+	#if cpp
 	// The compiled pattern (pcre2_code*), kept as an address; freed with the regexp.
 	final code:cpp.RawPointer<cpp.Void>;
 	public final captureCount:Int;
@@ -79,10 +82,25 @@ class Pcre2 {
 	@:void static function finalize(r:Pcre2):Void {
 		untyped __cpp__("pcre2_code_free((pcre2_code*){0})", r.code);
 	}
+	#else
+	// The pattern a host that is not C++ compiled (HostRegex), which owns its memory.
+	final code:HostRegex;
+	public final captureCount:Int;
+
+	function new(code:HostRegex) {
+		this.code = code;
+		captureCount = code.captureCount;
+	}
+	#end
 
 	// The pattern's bytes, the compile options, no character tables; a failure is a
 	// BadPattern(message, offset) error. The message is a 128-byte string that
 	// pcre2_get_error_message fills up to its NUL; the rest is zeros.
+	#if !cpp
+	public static function compile(options:Int, pattern:ByteString):Pcre2 {
+		return new Pcre2(HostRegex.compile(options, pattern.toBytes()));
+	}
+	#else
 	public static function compile(options:Int, pattern:ByteString):Pcre2 {
 		var b = pattern.toBytes();
 		var len = b.length;
@@ -102,6 +120,7 @@ class Pcre2 {
 		}
 		return new Pcre2(code);
 	}
+	#end
 
 	/**
 	 * Pcre2_match with no callout: match `subj` from byte `pos` under the run-time `options`, filling
@@ -114,6 +133,7 @@ class Pcre2 {
 		var pairs = captureCount + 1;
 		var out = new Array<Int>();
 		out.resize(pairs * 2);
+		#if cpp
 		var ret = 0;
 		untyped __cpp__("{
 			PCRE2_SPTR hxc_s = {2} > 0 ? (PCRE2_SPTR){1}->b->GetBase() : hxc_pcre2_empty;
@@ -128,6 +148,9 @@ class Pcre2 {
 			}
 			pcre2_match_data_free(hxc_md);
 		}", code, subj, len, pos, options, ret, out, pairs);
+		#else
+		var ret = code.match(options, pos, subj, out, pairs);
+		#end
 		if (ret < 0) throw matchError(ret);
 		// The pairs past the last one the match set are -1.
 		var set = ret == 0 ? pairs : ret;
@@ -245,12 +268,18 @@ class Pcre2 {
 	// Argv[0], the program's name exactly as the command line gave it (the host's resolved programPath
 	// differs whenever it was started through a relative or slash-flipped path).
 	static function programName():haxe.io.Bytes {
+		#if cpp
 		var len = -1;
 		untyped __cpp__("if (_hxcpp_argc > 0) {0} = (int)strlen(_hxcpp_argv[0])", len);
 		if (len < 0) return haxe.io.Bytes.ofString(Sys.programPath());
 		var b = haxe.io.Bytes.alloc(len);
 		for (i in 0...len) b.set(i, untyped __cpp__("(int)(unsigned char)_hxcpp_argv[0][{0}]", i));
 		return b;
+		#elseif (cs && hxc_pcre2_netlib)
+		return haxe.io.Bytes.ofString(hxchost.HostInfo.ProgramName());
+		#else
+		return haxe.io.Bytes.ofString(Sys.programPath());
+		#end
 	}
 
 	static function calcTransLst(subgroups2:Int, ov:Array<Int>, subj:haxe.io.Bytes, templ:haxe.io.Bytes,
@@ -358,3 +387,56 @@ class Pcre2Substrings {
 		return {first: start, last: ovector[n * 2 + 1]};
 	}
 }
+
+#if !cpp
+/**
+ * The regexp engine of a host that is not C++. `match` answers as pcre2_match does: the number of
+ * pairs set (0 when all are), or a negative PCRE2 error code (-1 is no match); `out` takes the start
+ * and end of each pair, -1 for a group that took no part.
+ *
+ * On .NET with -D hxc_pcre2_netlib it is the same PCRE2, reached through tools/dotnet-host's
+ * HxcHostNative.dll (--net-lib). Anywhere else there is none, and compiling a pattern says so.
+ */
+class HostRegex {
+	public var captureCount(default, null):Int = 0;
+
+	#if (cs && hxc_pcre2_netlib)
+	final code:hxchost.Pcre2Code;
+
+	function new(code:hxchost.Pcre2Code) {
+		this.code = code;
+		captureCount = code.CaptureCount;
+	}
+
+	public static function compile(options:Int, pattern:haxe.io.Bytes):HostRegex {
+		var error = new cs.NativeArray<Int>(2);
+		var code = hxchost.Pcre2Code.Compile(pattern.getData(), pattern.length, options, error);
+		if (code == null) {
+			var msg = haxe.io.Bytes.ofData(hxchost.Pcre2Code.ErrorMessage(error[0])).toString();
+			throw new Pcre2.Pcre2Exception(BadPattern(msg, error[1]));
+		}
+		return new HostRegex(code);
+	}
+
+	public function match(options:Int, pos:Int, subj:haxe.io.Bytes, out:Array<Int>, pairs:Int):Int {
+		var ov = new cs.NativeArray<Int>(pairs * 2);
+		var r = code.Match(subj.getData(), subj.length, pos, options, ov, pairs);
+		if (r >= 0) {
+			var k = r == 0 ? pairs : r;
+			for (i in 0...k * 2) out[i] = ov[i];
+		}
+		return r;
+	}
+	#else
+	function new() {}
+
+	public static function compile(options:Int, pattern:haxe.io.Bytes):HostRegex {
+		throw new EvalExceptions.HostException("EReg is not available in macros on this host", false);
+	}
+
+	public function match(options:Int, pos:Int, subj:haxe.io.Bytes, out:Array<Int>, pairs:Int):Int {
+		return -1;
+	}
+	#end
+}
+#end

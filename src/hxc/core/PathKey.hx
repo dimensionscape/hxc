@@ -167,6 +167,8 @@ class PathKey {
 		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(p)) return p;
 		#if cpp
 		return untyped __cpp__("hxc_get_real_path({0})", p);
+		#elseif (cs && hxc_pcre2_netlib)
+		return hxchost.HostInfo.RealPath(p);
 		#else
 		return try sys.FileSystem.fullPath(p) catch (_:Dynamic) p;
 		#end

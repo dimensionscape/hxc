@@ -7,6 +7,9 @@ package hxc.core;
 	across a call (their recursion stacks) is held once per slot, so a worker never sees another thread's.
 	What a worker must not do at all (force a lazy type, make or bind a monomorph, report a message) it gives
 	up on with `bail`, and the phase then redoes that unit on the main thread.
+
+	On .NET the workers read maps together, so the compiler must be built with -D no_map_cache: the C#
+	maps otherwise keep the last key looked up, and a read writes it.
 **/
 #if cpp
 @:headerCode('extern thread_local int hxc_par_tid;')
@@ -28,10 +31,19 @@ class Par {
 
 	static final bailValue = new ParBail();
 
+	#if cs
+	// A worker's stack. The type functions recurse deeply, and .NET gives a new thread 1 MB otherwise.
+	static inline var WORKER_STACK = 64 * 1024 * 1024;
+
+	@:meta(System.ThreadStaticAttribute) static var slot:Int;
+	#end
+
 	/** This thread's slot. **/
 	public static function tid():Int {
 		#if cpp
 		return untyped __cpp__("hxc_par_tid");
+		#elseif cs
+		return slot;
 		#else
 		return 0;
 		#end
@@ -40,6 +52,8 @@ class Par {
 	static function setTid(i:Int):Void {
 		#if cpp
 		untyped __cpp__("hxc_par_tid = {0}", i);
+		#elseif cs
+		slot = i;
 		#end
 	}
 
@@ -58,7 +72,7 @@ class Par {
 		otherwise up to 4, and never more than the machine's processors.
 	**/
 	public static function threadCount():Int {
-		#if cpp
+		#if (cpp || cs)
 		var env = Sys.getEnv("HXC_THREADS");
 		var n = env == null ? 4 : Std.parseInt(env);
 		if (n == null || n < 1) n = 1;
@@ -79,12 +93,12 @@ class Par {
 		and returns when all are done. `fn` must not throw.
 	**/
 	public static function forEach(threads:Int, count:Int, fn:Int->Void):Void {
-		#if cpp
+		#if (cpp || cs)
 		var next = 0;
 		var mutex = new sys.thread.Mutex();
 		var done = new sys.thread.Lock();
 		for (t in 0...threads) {
-			sys.thread.Thread.create(function() {
+			var work = function() {
 				setTid(t + 1);
 				while (true) {
 					mutex.acquire();
@@ -94,7 +108,14 @@ class Par {
 					fn(i);
 				}
 				done.release();
-			});
+			};
+			#if cs
+			var thread = new cs.system.threading.Thread(new cs.system.threading.ThreadStart(work), WORKER_STACK);
+			thread.IsBackground = true;
+			thread.Start();
+			#else
+			sys.thread.Thread.create(work);
+			#end
 		}
 		for (_ in 0...threads) done.wait();
 		#else

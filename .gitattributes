@@ -1,2 +1,3 @@
 tests/** text eol=lf
 tests/**/*.dll binary
+tools/dotnet-host/*.sh text eol=lf
