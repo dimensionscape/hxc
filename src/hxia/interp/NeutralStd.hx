@@ -328,11 +328,11 @@ class NeutralStd {
 		reg.bindStatic(i64, "isZero", function(a) return haxe.Int64.isZero(b(a[0])));
 		reg.bindStatic(i64, "parseString", function(a) return haxe.Int64.parseString(a[0]));
 		reg.bindStatic(i64, "fromFloat", function(a) return haxe.Int64.fromFloat(a[0]));
-		reg.bindStatic(i64, "getHigh", function(a) return haxe.Int64.getHigh(b(a[0])));
-		reg.bindStatic(i64, "getLow", function(a) return haxe.Int64.getLow(b(a[0])));
+		reg.bindStatic(i64, "getHigh", function(a) return cast(b(a[0]), haxe.Int64).high);
+		reg.bindStatic(i64, "getLow", function(a) return cast(b(a[0]), haxe.Int64).low);
 		// High/low property getters (Int64 `var high(get, never)`); the cppia reads them as get_high/low.
-		reg.bindStatic(i64, "get_high", function(a) return haxe.Int64.getHigh(b(a[0])));
-		reg.bindStatic(i64, "get_low", function(a) return haxe.Int64.getLow(b(a[0])));
+		reg.bindStatic(i64, "get_high", function(a) return cast(b(a[0]), haxe.Int64).high);
+		reg.bindStatic(i64, "get_low", function(a) return cast(b(a[0]), haxe.Int64).low);
 		// Comparison / bitwise @:op impls: all `inline`, so reflection cannot reach them; the cppia
 		// keys them on the impl class. Bind the (Int64,Int64) and mixed (Int64,Int)/(Int,Int64) forms.
 		reg.bindStatic(i64, "eq", function(a) return (b(a[0]) : haxe.Int64) == (b(a[1]) : haxe.Int64));
