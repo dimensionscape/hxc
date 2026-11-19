@@ -28,6 +28,8 @@ private class JsSourceMap {
 
 	public function new() {}
 
+	var lastFileName:Null<String> = null;
+	var lastFileIndex:Int = 0;
 	static var base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 	public function encodeMapping(pos:{file:Int, line:Int, col:Int}):Void {
@@ -57,15 +59,31 @@ private class JsSourceMap {
 	// Returns the restore closure
 	public function addMapping(p:Position):Void->Void {
 		if (p.min < 0) return function() {};
-		var file = sourcesHash.get(p.file);
-		if (file == null) {
-			file = sources.length;
-			sourcesHash.set(p.file, file);
-			sources.push(p.file);
+		// The file of the mapping before this one is nearly always this one's too.
+		var file:Int;
+		if (lastFileName != null && lastFileName == p.file) file = lastFileIndex
+		else {
+			var known = sourcesHash.get(p.file);
+			if (known == null) {
+				file = sources.length;
+				sourcesHash.set(p.file, file);
+				sources.push(p.file);
+			} else file = known;
+			lastFileName = p.file;
+			lastFileIndex = file;
 		}
-		var infos = Position.getInfos(p);
-		var pos = {file: file, line: infos.line - 1, col: infos.column};
-		if (sourceLastFile != pos.file || sourceLastLine != pos.line || sourceLastCol != pos.col) {
+		var line:Int;
+		var col:Int;
+		if (Position.startLineCol(p)) {
+			line = Position.lcLine - 1;
+			col = Position.lcCol;
+		} else {
+			var infos = Position.getInfos(p);
+			line = infos.line - 1;
+			col = infos.column;
+		}
+		if (sourceLastFile != file || sourceLastLine != line || sourceLastCol != col) {
+			var pos = {file: file, line: line, col: col};
 			var old = currentExpr;
 			currentExpr = pos;
 			encodeMapping(pos);

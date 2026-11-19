@@ -681,6 +681,16 @@ class ModuleDef {
 	// The types whose global metadata module resolution has not applied yet
 	// (ModuleLoader.applyPendingGlobalMeta).
 	@:noCompletion public var hxcGlobalMetaPending:Null<Array<ModuleType>> = null;
+	// Lookup caches over `types`, each valid for the array and length it was built from: the first public
+	// type of each name (ModuleLoader.findTypeInModuleOpt), and the types that can bring enum constructors
+	// or enum abstract values into scope (Typer.findBareEnumLike). A module of a thousand typedefs is
+	// otherwise walked whole by every lookup that reaches it.
+	@:noCompletion public var hxcNameIndex:Null<haxe.ds.StringMap<ModuleType>> = null;
+	@:noCompletion public var hxcNameIndexOf:Null<Array<ModuleType>> = null;
+	@:noCompletion public var hxcNameIndexLen:Int = -1;
+	@:noCompletion public var hxcEnumLike:Null<Array<ModuleType>> = null;
+	@:noCompletion public var hxcEnumLikeOf:Null<Array<ModuleType>> = null;
+	@:noCompletion public var hxcEnumLikeLen:Int = -1;
 	public var id:Int;
 	public var path:Path;
 	public var types:Array<ModuleType>;

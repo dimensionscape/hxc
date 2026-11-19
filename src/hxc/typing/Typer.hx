@@ -5670,7 +5670,31 @@ class Typer {
 			function scanPath(path:hxc.core.Globals.Path):Null<ModuleType> {
 				var md = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, path, Position.nullPos) catch (_:Dynamic) null;
 				if (md != null) try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
-				return md == null ? null : scan(md.types);
+				if (md == null) return null;
+				var types = md.types;
+				if (types.length < 16) return scan(types);
+				if (md.hxcEnumLike != null && md.hxcEnumLikeOf == types && md.hxcEnumLikeLen == types.length)
+					return scan(md.hxcEnumLike);
+				var r = scan(types);
+				if (r != null) return r;
+				// The whole module was walked and every typedef followed: keep the types a later walk can
+				// find anything in. A typedef not yet known to be something else stays a candidate.
+				var cand = [];
+				for (mt in types) switch (mt) {
+					case TEnumDecl(_): cand.push(mt);
+					case TAbstractDecl(a) if (a.isEnum): cand.push(mt);
+					case TTypeDecl(td):
+						switch (TypeFunctions.follow(td.type)) {
+							case TEnum(_, _) | TMono(_) | TLazy(_): cand.push(mt);
+							case TAbstract(a, _) if (a.isEnum): cand.push(mt);
+							case _:
+						}
+					case _:
+				}
+				md.hxcEnumLike = cand;
+				md.hxcEnumLikeOf = types;
+				md.hxcEnumLikeLen = types.length;
+				return null;
 			}
 			// Reversed declaration order: imports are prepended, so a name exposed by several imports
 			// resolves to the last-declared one.

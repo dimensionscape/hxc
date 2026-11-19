@@ -103,7 +103,7 @@ class Usage {
 
 	static final HXC_ENV:Array<{name:String, doc:String}> = [
 		{name: "HAXE_STD_PATH", doc: "Where the standard library is, as for Haxe."},
-		{name: "HXC_THREADS", doc: "Threads the parallel compile phases use (default 4; 1 turns them off)."},
+		{name: "HXC_THREADS", doc: "Threads the parallel compile phases use (default 8; 1 turns them off)."},
 		{name: "DOTNET_ROOT", doc: "Where .NET is installed (default: the `dotnet` found on PATH)."},
 	];
 

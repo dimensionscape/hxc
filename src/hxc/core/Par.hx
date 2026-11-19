@@ -69,12 +69,12 @@ class Par {
 
 	/**
 		How many threads a parallel phase uses: HXC_THREADS when set (1 keeps everything on the main thread),
-		otherwise up to 4, and never more than the machine's processors.
+		otherwise up to 8, and never more than the machine's processors.
 	**/
 	public static function threadCount():Int {
 		#if (cpp || cs)
 		var env = Sys.getEnv("HXC_THREADS");
-		var n = env == null ? 4 : Std.parseInt(env);
+		var n = env == null ? 8 : Std.parseInt(env);
 		if (n == null || n < 1) n = 1;
 		var procs = Sys.getEnv("NUMBER_OF_PROCESSORS");
 		if (env == null && procs != null) {

@@ -2338,7 +2338,22 @@ class ModuleLoader {
 
 	/** (non-raising): the public sub-type named `tname` in `m`, or null. */
 	public static function findTypeInModuleOpt(m:ModuleDef, tname:String):Null<ModuleType> {
-		for (mt in m.types) {
+		var types = m.types;
+		if (types.length >= 16) {
+			var idx = m.hxcNameIndex;
+			if (idx == null || m.hxcNameIndexOf != types || m.hxcNameIndexLen != types.length) {
+				idx = new haxe.ds.StringMap();
+				for (mt in types) if (!TypeFunctions.tPrivate(mt)) {
+					var n = TypeFunctions.tPath(mt).name;
+					if (!idx.exists(n)) idx.set(n, mt);
+				}
+				m.hxcNameIndex = idx;
+				m.hxcNameIndexOf = types;
+				m.hxcNameIndexLen = types.length;
+			}
+			return idx.get(tname);
+		}
+		for (mt in types) {
 			if (!TypeFunctions.tPrivate(mt) && TypeFunctions.tPath(mt).name == tname) return mt;
 		}
 		return null;
