@@ -8661,6 +8661,50 @@ True
 True
 True
 Exception: inner
+--- intmap-missing-keys
+class P {
+	static function main() {
+		var m = new haxe.ds.IntMap<Int>();
+		var start = haxe.Timer.stamp();
+		var n = 200000, misses = 0;
+		// every key is looked up before it is there
+		for (i in 0...n) {
+			var k = (i << 5) | ((i & 3) << 24);
+			if (!m.exists(k)) misses++;
+			if (m.get(k) == null) m.set(k, i);
+		}
+		Sys.println(misses);
+		var removed = 0;
+		for (i in 0...n) if (i % 3 == 0 && m.remove((i << 5) | ((i & 3) << 24))) removed++;
+		Sys.println(removed);
+		var gone = 0, sum = 0.0;
+		for (i in 0...n) {
+			var k = (i << 5) | ((i & 3) << 24);
+			if (m.exists(k)) sum += m.get(k) else gone++;
+			if (m.remove(k + 1)) gone = -1;
+		}
+		Sys.println(gone + " " + sum);
+		// a removed key comes back, and a key that was never there stays away
+		for (i in 0...n) if (i % 6 == 0) m.set((i << 5) | ((i & 3) << 24), -i);
+		var count = 0, neg = 0;
+		for (k in m.keys()) { count++; if (m.get(k) < 0) neg++; }
+		Sys.println(count + " " + neg + " " + m.exists(-1) + " " + m.get(7));
+		m.set(0, 5); m.remove(0);
+		Sys.println(m.exists(0) + " " + m.get(0));
+		m.set(0, 6);
+		Sys.println(m.get(0));
+		Sys.println(haxe.Timer.stamp() - start < 20);
+	}
+}
+===
+[run]
+200000
+66667
+66667 13333266667
+166667 33333 false null
+false null
+6
+True
 --- exception-stack-and-details @gencs
 import haxe.CallStack;
 class P {
