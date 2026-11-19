@@ -398,7 +398,28 @@ package cs.internal;
 		this.__hx_invoker = invoker;
 	}
 
+	// hxc: a call that comes with its arguments in an array (through a structure's field, or Reflect.callMethod)
+	// takes the invoker's path as the `__hx_invoke<N>` entry points do, when the invoker accepts them.
 	override public function __hx_invokeDynamic(dynArgs:cs.NativeArray<Dynamic>):Dynamic {
+		var inv = __hx_invoker;
+		if (inv != null) {
+			var n = dynArgs == null ? 0 : dynArgs.Length;
+			if (n == inv.__hx_arity) switch (n) {
+				case 0:
+					if (inv.__hx_accepts0(obj)) return inv.__hx_call0_o(obj);
+				case 1:
+					if (inv.__hx_accepts1(obj, 0.0, dynArgs[0])) return inv.__hx_call1_o(obj, 0.0, dynArgs[0]);
+				case 2:
+					if (inv.__hx_accepts2(obj, 0.0, dynArgs[0], 0.0, dynArgs[1])) return inv.__hx_call2_o(obj, 0.0, dynArgs[0], 0.0, dynArgs[1]);
+				case 3:
+					if (inv.__hx_accepts3(obj, 0.0, dynArgs[0], 0.0, dynArgs[1], 0.0, dynArgs[2])) return inv.__hx_call3_o(obj, 0.0, dynArgs[0], 0.0, dynArgs[1], 0.0, dynArgs[2]);
+				case 4:
+					if (inv.__hx_accepts4(obj, 0.0, dynArgs[0], 0.0, dynArgs[1], 0.0, dynArgs[2], 0.0, dynArgs[3])) return inv.__hx_call4_o(obj, 0.0, dynArgs[0], 0.0, dynArgs[1], 0.0, dynArgs[2], 0.0, dynArgs[3]);
+				case 5:
+					if (inv.__hx_accepts5(obj, 0.0, dynArgs[0], 0.0, dynArgs[1], 0.0, dynArgs[2], 0.0, dynArgs[3], 0.0, dynArgs[4])) return inv.__hx_call5_o(obj, 0.0, dynArgs[0], 0.0, dynArgs[1], 0.0, dynArgs[2], 0.0, dynArgs[3], 0.0, dynArgs[4]);
+				default:
+			}
+		}
 		return Runtime.callField(obj, field, hash, dynArgs);
 	}
 

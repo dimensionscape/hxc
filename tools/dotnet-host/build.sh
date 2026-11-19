@@ -8,7 +8,9 @@
 # Needs the .NET SDK, and MSVC for pcre2-8.dll (built once, from the PCRE2 source in the hxcpp checkout
 # HXCPP points at; default: `haxelib libpath hxcpp`). Windows only for now.
 #
-# Run the result with DOTNET_gcServer=1 DOTNET_TieredCompilation=0: without them it is about twice as slow.
+# The assembly is precompiled (ReadyToRun), so a small build does not wait for the JIT, and
+# hxc.runtimeconfig.json carries the runtime settings a compile is fastest with: server GC, no dynamic PGO,
+# and methods counted for tier-up from the start. Without them a large build takes about twice as long.
 # eval.luv and SSL sockets in macros are not available on this host.
 set -e
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -43,10 +45,29 @@ rm -rf "$obj/shimsrc"; mkdir -p "$obj/shimsrc"; cp "$here"/*.csproj "$here"/*.cs
 dotnet build "$obj/shimsrc/HxcHostNative.csproj" -c Release -o "$obj/shim" --nologo -v q >"$obj/shim.log" 2>&1 || { cat "$obj/shim.log" >&2; exit 1; }
 
 rm -rf "$obj/hxc"
-(cd "$obj" && "$hxc" -cp "$(cygpath -w "$root/src")" -main hxc.Compiler --dotnet hxc -D dll-name=hxc -D dotnet-exe=launcher \
+(cd "$obj" && "$hxc" -cp "$(cygpath -w "$root/src")" -main hxc.Compiler --dotnet hxc -D dll-name=hxc -D dotnet-exe=launcher -D dotnet-r2r \
 	-D no_map_cache -D dotnet-no-exception-stack -D hxc_pcre2_netlib --net-lib "$(cygpath -w "$obj/shim/HxcHostNative.dll")" "$@")
 
-cp "$obj/hxc/hxc.dll" "$obj/hxc/hxc.exe" "$obj/hxc/hxc.runtimeconfig.json" "$obj/shim/HxcHostNative.dll" "$obj/pcre2-8.dll" "$out/"
+cp "$obj/hxc/hxc.dll" "$obj/hxc/hxc.exe" "$obj/shim/HxcHostNative.dll" "$obj/pcre2-8.dll" "$out/"
+tfm="$(sed -n 's/.*"tfm": *"\([^"]*\)".*/\1/p' "$obj/hxc/hxc.runtimeconfig.json")"
+ver="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$obj/hxc/hxc.runtimeconfig.json")"
+cat > "$out/hxc.runtimeconfig.json" <<JSON
+{
+  "runtimeOptions": {
+    "tfm": "$tfm",
+    "framework": {
+      "name": "Microsoft.NETCore.App",
+      "version": "$ver"
+    },
+    "configProperties": {
+      "System.GC.Server": true,
+      "System.GC.Concurrent": false,
+      "System.Runtime.TieredPGO": false,
+      "System.Runtime.TieredCompilation.CallCountingDelayMs": 0
+    }
+  }
+}
+JSON
 # The parser and typer recurse deeply: give the main thread 256 MB of stack.
 editbin="$(ls "$vs"/VC/Tools/MSVC/*/bin/Hostx64/x64/editbin.exe | tail -1)"
 "$editbin" //NOLOGO //STACK:268435456 "$(cygpath -w "$out/hxc.exe")" >/dev/null
