@@ -13,17 +13,19 @@ Windows only. You need:
 
 - a built native hxc, or an earlier result of this script;
 - the .NET 10 SDK;
-- Visual Studio's C++ tools, to compile PCRE2 once and to give the launcher a large stack;
-- an hxcpp checkout, for the PCRE2 sources (`haxelib libpath hxcpp`, or set `HXCPP`);
+- Visual Studio's C++ tools, to compile PCRE2 and zlib once and to give the launcher a large stack;
+- an hxcpp checkout, for the PCRE2 and zlib sources (`haxelib libpath hxcpp`, or set `HXCPP`);
 - `HAXE_STD_PATH` set to the Haxe 4.3.7 standard library.
 
 ```sh
 tools/dotnet-host/build.sh bin/hxc-windows-x64.exe bin/dotnet-host
 ```
 
-The output folder then holds `hxc.exe`, `hxc.dll`, `hxc.runtimeconfig.json`, `HxcHostNative.dll` and
-`pcre2-8.dll`. Keep the five together; `hxc.exe` takes the same arguments as the native compiler and
-needs the .NET 10 runtime installed. The first build takes about a minute, later ones about half that.
+The output folder then holds `hxc.exe`, `hxc.dll`, `hxc.runtimeconfig.json`, `HxcHostNative.dll`,
+`pcre2-8.dll` and `hxczlib.dll`. Keep the six together; `hxc.exe` takes the same arguments as the native
+compiler and needs the .NET 10 runtime installed. The two native libraries are PCRE2 and zlib built from
+the sources hxcpp links into the native compiler, so regular expressions and compression in macros give
+the same results on either. The first build takes about a minute, later ones about half that.
 
 The compiler is as current as the sources it was built from: rebuild it when hxc changes.
 
@@ -39,10 +41,9 @@ writes.
 - `eval.luv` in macros beyond the event loop, timers and async handles: no TCP, UDP, pipes, processes,
   file-system requests, signals or libuv threads.
 - SSL sockets in macros (`sys.ssl`).
-- `haxe.zip.Compress` and `haxe.zip.Uncompress` in macros ("Not implemented for this platform").
 
-A macro that uses one of these fails with an error. The conformance cases the first two fail are listed
-in `tests/divergences-dotnet-host.json`, which the CI job passes to the conformance run. Nothing else is
+A macro that uses one of these fails with an error. The conformance cases they fail are listed in
+`tests/divergences-dotnet-host.json`, which the CI job passes to the conformance run. Nothing else is
 known to differ.
 
 ## How it differs inside

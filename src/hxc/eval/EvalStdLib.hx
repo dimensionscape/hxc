@@ -1261,8 +1261,8 @@ class EvalStdLib {
 	// Stable per-object identity for ObjectMap keys, assigned lazily on first use.
 	static var objIds = new haxe.ds.ObjectMap<{}, Int>();
 	static var objIdNext = 0;
-	static var zipCompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Compress>();
-	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Uncompress>();
+	static var zipCompress = new haxe.ds.ObjectMap<VInstance, hxc.eval.HostZip.HostCompress>();
+	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, hxc.eval.HostZip.HostUncompress>();
 	static var cryptoHmacs = new haxe.ds.ObjectMap<VInstance, haxe.crypto.Hmac>();
 	static var cryptoBaseCodes = new haxe.ds.ObjectMap<VInstance, haxe.crypto.BaseCode>();
 	static var nativeTemplates = new haxe.ds.ObjectMap<VInstance, haxe.Template>();
@@ -5129,7 +5129,7 @@ class EvalStdLib {
 		reg(s, "haxe.zip.Compress", "run",
 			vfn(a -> {
 				var src = decodeBytes(arg(a, 0));
-				mkBytes(ctx, haxe.zip.Compress.run(src, decodeInt(ctx, arg(a, 1))));
+				mkBytes(ctx, hxc.eval.HostZip.HostCompress.run(src, decodeInt(ctx, arg(a, 1))));
 			}));
 		reg(s, "haxe.zip.Uncompress", "run",
 			vfn(a -> {
@@ -5145,7 +5145,7 @@ class EvalStdLib {
 				var size = defaultInt(ctx, arg(a, 1), 1 << 16);
 				if (size < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("Bytes.create")');
 				if (size == 0) throw new hxc.eval.EvalExceptions.HostException("zlib_inflate", true);
-				var out = try haxe.zip.Uncompress.run(src, size < 1 << 16 ? 1 << 16 : size) catch (_:Dynamic) throw new hxc.eval.EvalExceptions.HostException("zlib_inflate", true);
+				var out = try hxc.eval.HostZip.HostUncompress.run(src, size < 1 << 16 ? 1 << 16 : size) catch (_:Dynamic) throw new hxc.eval.EvalExceptions.HostException("zlib_inflate", true);
 				mkBytes(ctx, out);
 			}));
 		reg(s, "haxe.Resource", "listNames", vfn(a -> {
@@ -5375,14 +5375,14 @@ class EvalStdLib {
 		ctors.set(EvalNames.hHaxeZipCompress(), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalNames.hHaxeZipCompress());
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-			zipCompress.set(vi, new haxe.zip.Compress(decodeInt(ctx, arg(a, 0))));
+			zipCompress.set(vi, new hxc.eval.HostZip.HostCompress(decodeInt(ctx, arg(a, 0))));
 			return VInstance(vi);
 		});
 		ctors.set(EvalNames.hHaxeZipUncompress(), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalNames.hHaxeZipUncompress());
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 			// The window bits are defaultInt 15.
-			zipUncompress.set(vi, new haxe.zip.Uncompress(defaultInt(ctx, arg(a, 0), 15)));
+			zipUncompress.set(vi, new hxc.eval.HostZip.HostUncompress(defaultInt(ctx, arg(a, 0), 15)));
 			return VInstance(vi);
 		});
 		ctors.set(EvalNames.hEvalVmNativeSocket(), function(a) return mkNativeSocket(ctx, new sys.net.Socket()));

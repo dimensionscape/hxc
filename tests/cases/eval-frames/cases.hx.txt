@@ -269,3 +269,90 @@ class P {
 		trace(n);
 	}
 }
+
+--- zlib-streams-give-the-same-bytes-and-errors
+import haxe.io.Bytes;
+import haxe.zip.Compress;
+import haxe.zip.Uncompress;
+import haxe.zip.FlushMode;
+
+class P {
+	static function sample():Bytes {
+		var b = new haxe.io.BytesBuffer();
+		var x = 12345;
+		for (i in 0...6000) {
+			x = (x * 1103515245 + 12345) & 0x7fffffff;
+			b.addByte(i % 7 == 0 ? (x >> 16) & 255 : 65 + (i >> 4) % 26);
+		}
+		return b.getBytes();
+	}
+
+	// The interpreter's own result type spells this field "wriet".
+	static function wrote(r:Dynamic):Int {
+		var w:Null<Int> = Reflect.field(r, "write");
+		return w == null ? Reflect.field(r, "wriet") : w;
+	}
+
+	static function sum(b:Bytes):String return b.length + ":" + haxe.crypto.Md5.make(b).toHex();
+
+	static function main() {
+		var src = sample();
+		trace(sum(src));
+		for (level in [0, 1, 6, 9]) {
+			var c = Compress.run(src, level);
+			trace(level, sum(c), Uncompress.run(c).compare(src) == 0, Uncompress.run(c, 100).compare(src) == 0);
+		}
+		// a stream fed in pieces, into a small buffer, flushed three ways
+		for (mode in [SYNC, FULL, NO]) {
+			var c = new Compress(6);
+			var out = new haxe.io.BytesBuffer();
+			var tmp = Bytes.alloc(300);
+			var pos = 0, calls = 0;
+			while (pos < src.length) {
+				var n = src.length - pos < 1000 ? src.length - pos : 1000;
+				c.setFlushMode(mode);
+				var piece = src.sub(pos, n);
+				var at = 0;
+				while (true) {
+					var r:Dynamic = c.execute(piece, at, tmp, 0);
+					out.addBytes(tmp, 0, wrote(r));
+					at += r.read;
+					calls++;
+					if (at == n && wrote(r) < tmp.length) break;
+				}
+				pos += n;
+			}
+			c.setFlushMode(FINISH);
+			while (true) {
+				var r:Dynamic = c.execute(src, src.length, tmp, 0);
+				out.addBytes(tmp, 0, wrote(r));
+				calls++;
+				if (r.done) break;
+			}
+			c.close();
+			var z = out.getBytes();
+			trace(Std.string(mode), calls, sum(z), Uncompress.run(z).compare(src) == 0);
+		}
+		// inflating by hand, a few bytes of input at a time
+		var z = Compress.run(src, 9);
+		var u = new Uncompress();
+		u.setFlushMode(SYNC);
+		var back = new haxe.io.BytesBuffer();
+		var tmp = Bytes.alloc(512);
+		var pos = 0, done = false, calls = 0;
+		while (!done) {
+			var n = z.length - pos < 37 ? z.length - pos : 37;
+			var r:Dynamic = u.execute(z.sub(pos, n), 0, tmp, 0);
+			back.addBytes(tmp, 0, wrote(r));
+			pos += r.read;
+			done = r.done;
+			calls++;
+		}
+		u.close();
+		trace(calls, pos == z.length, back.getBytes().compare(src) == 0);
+		// what is not a stream
+		trace(try sum(Uncompress.run(Bytes.ofString("this is not zlib data"))) catch (e:Dynamic) "refused");
+		trace(try sum(Uncompress.run(z.sub(0, z.length - 9))) catch (e:Dynamic) "refused");
+		trace(sum(Compress.run(Bytes.alloc(0), 9)), sum(Uncompress.run(Compress.run(Bytes.alloc(0), 9))));
+	}
+}

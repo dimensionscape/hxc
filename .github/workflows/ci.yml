@@ -251,6 +251,7 @@ jobs:
             ${{ runner.temp }}/hxc-dotnet/hxc.runtimeconfig.json
             ${{ runner.temp }}/hxc-dotnet/HxcHostNative.dll
             ${{ runner.temp }}/hxc-dotnet/pcre2-8.dll
+            ${{ runner.temp }}/hxc-dotnet/hxczlib.dll
           if-no-files-found: error
 
   haxe-suites:

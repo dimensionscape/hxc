@@ -5,10 +5,12 @@
 #
 #   <out-dir>/hxc.exe                          the launcher (needs .NET 10 installed)
 #   <out-dir>/hxc.dll                          the compiler
-#   <out-dir>/HxcHostNative.dll, pcre2-8.dll   what a macro's EReg runs on
+#   <out-dir>/HxcHostNative.dll                the calls into the two libraries below
+#   <out-dir>/pcre2-8.dll                      what a macro's EReg runs on
+#   <out-dir>/hxczlib.dll                      what a macro's haxe.zip.Compress and Uncompress run on
 #
-# Needs the .NET SDK, and MSVC for pcre2-8.dll (built once, from the PCRE2 source in the hxcpp checkout
-# HXCPP points at; default: `haxelib libpath hxcpp`). Windows only for now.
+# Needs the .NET SDK, and MSVC for the two native libraries (built once, from the PCRE2 and zlib sources
+# in the hxcpp checkout HXCPP points at; default: `haxelib libpath hxcpp`). Windows only for now.
 #
 # The assembly is precompiled (ReadyToRun), so a small build does not wait for the JIT, and
 # hxc.runtimeconfig.json carries the runtime settings a compile is fastest with: server GC, no dynamic PGO,
@@ -24,8 +26,11 @@ mkdir -p "$out"; out="$(cd "$out" && pwd)"
 obj="$out/obj"; mkdir -p "$obj"
 vs="$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -property installationPath | tr -d '\r')"
 
+# The hxcpp checkout, asked for only when a native library has to be built.
+hxcpp_dir() { echo "${HXCPP:-$(haxelib libpath hxcpp | tr -d '\r')}"; }
+
 if [ ! -f "$obj/pcre2-8.dll" ]; then
-	hxcpp="${HXCPP:-$(haxelib libpath hxcpp | tr -d '\r')}"
+	hxcpp="$(hxcpp_dir)"
 	pcre="$(cygpath -w "$hxcpp/project/thirdparty/pcre2-10.42/src")"
 	srcs=""
 	for f in auto_possess chartables compile config context convert dfa_match error extuni find_bracket jit_compile maketables \
@@ -40,6 +45,24 @@ if [ ! -f "$obj/pcre2-8.dll" ]; then
 		echo "cl /nologo /O2 /MT /LD /DHAVE_CONFIG_H /DSUPPORT_UNICODE /DPCRE2_CODE_UNIT_WIDTH=8 /DSUPPORT_PCRE2_8 /I\"$pcre\" $srcs /Fe:..\\pcre2-8.dll >build.log 2>&1 || (type build.log & exit /b 1)"
 	} > "$obj/pcre2/build.bat"
 	cmd //c "$(cygpath -w "$obj/pcre2/build.bat")"
+fi
+
+# zlib behind the flat calls of hxczlib.c: the zlib the native compiler links.
+if [ ! -f "$obj/hxczlib.dll" ] || [ "$here/hxczlib.c" -nt "$obj/hxczlib.dll" ]; then
+	hxcpp="$(hxcpp_dir)"
+	zlib="$(cygpath -w "$(ls -d "$hxcpp"/project/thirdparty/zlib-* | tail -1)")"
+	srcs="\"$(cygpath -w "$here/hxczlib.c")\""
+	for f in adler32 crc32 deflate inffast inflate inftrees trees zutil; do
+		srcs="$srcs \"$zlib\\$f.c\""
+	done
+	mkdir -p "$obj/zlib"
+	{
+		echo '@echo off'
+		echo "call \"$(cygpath -w "$vs")\\VC\\Auxiliary\\Build\\vcvars64.bat\" >nul 2>&1 || exit /b 1"
+		echo "cd /d \"$(cygpath -w "$obj/zlib")\" || exit /b 1"
+		echo "cl /nologo /O2 /MT /LD /I\"$zlib\" $srcs /Fe:..\\hxczlib.dll >build.log 2>&1 || (type build.log & exit /b 1)"
+	} > "$obj/zlib/build.bat"
+	cmd //c "$(cygpath -w "$obj/zlib/build.bat")"
 fi
 
 # Built from a copy, so the SDK's obj folder stays out of the source tree.
@@ -64,9 +87,9 @@ grep -q 'StableStringHash' "$obj/std/haxe/ds/StringMap.hx" || { echo "build.sh: 
 
 rm -rf "$obj/hxc"
 (cd "$obj" && "$hxc" -cp "$(cygpath -w "$obj/std")" -cp "$(cygpath -w "$root/src")" -main hxc.Compiler --dotnet hxc -D dll-name=hxc -D dotnet-exe=launcher -D dotnet-r2r \
-	-D no_map_cache -D dotnet-no-exception-stack -D hxc_pcre2_netlib --net-lib "$(cygpath -w "$obj/shim/HxcHostNative.dll")" "$@")
+	-D no_map_cache -D dotnet-no-exception-stack -D hxc_pcre2_netlib -D hxc_zlib_netlib --net-lib "$(cygpath -w "$obj/shim/HxcHostNative.dll")" "$@")
 
-cp "$obj/hxc/hxc.dll" "$obj/hxc/hxc.exe" "$obj/shim/HxcHostNative.dll" "$obj/pcre2-8.dll" "$out/"
+cp "$obj/hxc/hxc.dll" "$obj/hxc/hxc.exe" "$obj/shim/HxcHostNative.dll" "$obj/pcre2-8.dll" "$obj/hxczlib.dll" "$out/"
 tfm="$(sed -n 's/.*"tfm": *"\([^"]*\)".*/\1/p' "$obj/hxc/hxc.runtimeconfig.json")"
 ver="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$obj/hxc/hxc.runtimeconfig.json")"
 cat > "$out/hxc.runtimeconfig.json" <<JSON
