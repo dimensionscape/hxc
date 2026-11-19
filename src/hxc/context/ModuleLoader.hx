@@ -106,8 +106,12 @@ class ModuleLoader {
 					representation = removeExtension(removeExtension(relativeToClasspath)) + ext;
 				}
 			}
-			if (isLoadingCoreApi || isPlatformSpecific || !ctx.fileLookupCache.exists(representation))
-				ctx.fileLookupCache.set(representation, dir == "." ? fileOwnName : dir + "/" + fileOwnName);
+			if (isLoadingCoreApi || isPlatformSpecific || !ctx.fileLookupCache.exists(representation)) {
+				var path = dir == "." ? fileOwnName : dir + "/" + fileOwnName;
+				ctx.fileLookupCache.set(representation, path);
+				// a source file this directory answers for is likely to be read soon
+				if (StringTools.endsWith(fileOwnName, ".hx")) hxc.core.ReadAhead.offer(path);
+			}
 		}
 	}
 

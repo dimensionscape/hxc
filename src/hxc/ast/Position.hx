@@ -99,7 +99,8 @@ class Position {
 		var embedded = hxc.codegen.dotnet.RuntimeSources.content(file);
 		if (embedded != null) return registerFileContent(file, embedded);
 		// Read raw bytes so malformed UTF-8 can be detected before decoding.
-		var bytes = File.getBytes(file);
+		var bytes = hxc.core.ReadAhead.take(file);
+		if (bytes == null) bytes = File.getBytes(file);
 		return registerFileContent(file, bytes.toString(), utf8FirstInvalid(bytes));
 	}
 

@@ -1,0 +1,14 @@
+--- an-init-macro-rewrites-a-module-before-it-loads + --macro M.rewrite()
+class P {
+	static function main() {
+		trace(Gen.v);
+	}
+}
+
+--- a-build-macro-rewrites-a-module-before-it-loads
+@:build(M.build())
+class P {
+	static function main() {
+		trace(Gen.v);
+	}
+}

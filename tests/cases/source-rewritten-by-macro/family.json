@@ -1,0 +1,8 @@
+{
+	"name": "source-rewritten-by-macro",
+	"oracle": "haxe",
+	"kind": "run",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "--main", "$module", "--interp"]
+}

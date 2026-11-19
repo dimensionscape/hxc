@@ -572,6 +572,7 @@ class Compiler {
 		var waitAt = args.indexOf("--wait");
 		if (waitAt >= 0 && waitAt + 1 < args.length && args[waitAt + 1] == "stdio") {
 			applyStartupArgs(args);
+			hxc.core.ReadAhead.never = true;
 			runWaitStdio();
 			return;
 		}
@@ -1265,6 +1266,9 @@ class Compiler {
 				catch (_:hxc.compiler.DisplayXml.DisplayRaised) answeredBeforeTyping = true;
 			if (!answeredBeforeTyping) {
 				hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
+				// From here modules load as typing reaches them: their files are read ahead on worker
+				// threads until typing ends.
+				if (hxc.parser.Parser.displayFile == null) hxc.core.ReadAhead.start();
 				hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 				hxc.debug.LiveMark.mark("after init macros");
 				// The init-macro callbacks run after the stage changes and before root modules type.
@@ -1393,6 +1397,7 @@ class Compiler {
 				hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx, () -> TypeFields.typeAllModules(ctx));
 				TypeFields.typeAllModules(ctx);
 				tType();
+				hxc.core.ReadAhead.stop();
 				TypeFields.checkRecursiveAbstracts(ctx);
 			} catch (_:hxc.compiler.DisplayXml.DisplayRaised) {}
 			// A metadata argument containing the display position types as an expression so completion can
