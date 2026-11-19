@@ -1212,8 +1212,9 @@ class IlMetaReader {
 
 	// ******* META READING *********
 
-	function readMeta():Void {
-		// read header
+	// The table stream's header: which tables there are and how many rows each has, with the cursor on
+	// the first row. It sets the widths of the heap, table and coded indexes on the way.
+	function readHeader():{setTable:Array<Bool>, rows:Array<Int>, c:Cur} {
 		var s = metaStream;
 		var pos = 4 + 1 + 1;
 		var flags = sget(s, pos);
@@ -1244,12 +1245,154 @@ class IlMetaReader {
 			}
 		];
 		setCodedSizes(rows);
+		return {setTable: setTable, rows: rows, c: c};
+	}
+
+	function readMeta():Void {
+		var h = readHeader();
+		var setTable = h.setTable, rows = h.rows, c = h.c;
 		// pre-set all rows
 		for (n in 0...64) if (setTable[n]) tables[n] = [for (id in 0...rows[n]) mkMeta(n, id + 1)];
 		for (n in 0...64) if (setTable[n]) {
 			var nrows = rows[n];
 			for (r in 0...nrows) readTableAt(n, r, r == nrows - 1, c);
 		}
+	}
+
+	// The bytes one row of a table takes (ECMA-335 II.22), or -1 for a table the standard does not have.
+	function rowSize(n:Int):Int {
+		var s = stringsOffset, g = guidOffset, b = blobOffset;
+		var w = tableSizes;
+		return switch (n) {
+			case 0x00: 2 + s + g * 3; // Module
+			case 0x01: w[T.IResolutionScope] + s * 2; // TypeRef
+			case 0x02: 4 + s * 2 + w[T.ITypeDefOrRef] + w[T.IField] + w[T.IMethod]; // TypeDef
+			case 0x03: w[T.IField]; // FieldPtr
+			case 0x04: 2 + s + b; // Field
+			case 0x05: w[T.IMethod]; // MethodPtr
+			case 0x06: 8 + s + b + w[T.IParam]; // MethodDef
+			case 0x07: w[T.IParam]; // ParamPtr
+			case 0x08: 4 + s; // Param
+			case 0x09: w[T.ITypeDef] + w[T.ITypeDefOrRef]; // InterfaceImpl
+			case 0x0A: w[T.IMemberRefParent] + s + b; // MemberRef
+			case 0x0B: 2 + w[T.IHasConstant] + b; // Constant
+			case 0x0C: w[T.IHasCustomAttribute] + w[T.ICustomAttributeType] + b; // CustomAttribute
+			case 0x0D: w[T.IHasFieldMarshal] + b; // FieldMarshal
+			case 0x0E: 2 + w[T.IHasDeclSecurity] + b; // DeclSecurity
+			case 0x0F: 6 + w[T.ITypeDef]; // ClassLayout
+			case 0x10: 4 + w[T.IField]; // FieldLayout
+			case 0x11: b; // StandAloneSig
+			case 0x12: w[T.ITypeDef] + w[T.IEvent]; // EventMap
+			case 0x13: w[T.IEvent]; // EventPtr
+			case 0x14: 2 + s + w[T.ITypeDefOrRef]; // Event
+			case 0x15: w[T.ITypeDef] + w[T.IProperty]; // PropertyMap
+			case 0x16: w[T.IProperty]; // PropertyPtr
+			case 0x17: 2 + s + b; // Property
+			case 0x18: 2 + w[T.IMethod] + w[T.IHasSemantics]; // MethodSemantics
+			case 0x19: w[T.ITypeDef] + w[T.IMethodDefOrRef] * 2; // MethodImpl
+			case 0x1A: s; // ModuleRef
+			case 0x1B: b; // TypeSpec
+			case 0x1C: 2 + w[T.IMemberForwarded] + s + w[T.IModuleRef]; // ImplMap
+			case 0x1D: 4 + w[T.IField]; // FieldRVA
+			case 0x1E: 8; // ENCLog
+			case 0x1F: 4; // ENCMap
+			case 0x20: 16 + b + s * 2; // Assembly
+			case 0x21: 4; // AssemblyProcessor
+			case 0x22: 12; // AssemblyOS
+			case 0x23: 12 + b * 2 + s * 2; // AssemblyRef
+			case 0x24: 4 + w[T.IAssemblyRef]; // AssemblyRefProcessor
+			case 0x25: 12 + w[T.IAssemblyRef]; // AssemblyRefOS
+			case 0x26: 4 + s + b; // File
+			case 0x27: 8 + s * 2 + w[T.IImplementation]; // ExportedType
+			case 0x28: 8 + s + w[T.IImplementation]; // ManifestResource
+			case 0x29: w[T.ITypeDef] * 2; // NestedClass
+			case 0x2A: 4 + w[T.ITypeOrMethodDef] + s; // GenericParam
+			case 0x2B: w[T.IMethodDefOrRef] + b; // MethodSpec
+			case 0x2C: w[T.IGenericParam] + w[T.ITypeDefOrRef]; // GenericParamConstraint
+			case _: -1;
+		};
+	}
+
+	// The light reading of the tables: where each one starts follows from the row counts and row sizes,
+	// and only the type, nesting, assembly reference and forwarder rows are read. Null when the stream is
+	// not exactly its header and those rows, since a row size was then not what the standard gives.
+	function readLightTables():Null<IlLight> {
+		var s = metaStream;
+		// an extra word after the row counts
+		if (sget(s, 6) & 0x40 != 0) return null;
+		var h = readHeader();
+		var rows = h.rows;
+		var start = [for (_ in 0...64) 0];
+		var pos = h.c.pos;
+		for (n in 0...64) {
+			start[n] = pos;
+			if (!h.setTable[n]) continue;
+			var size = rowSize(n);
+			if (size < 0) return null;
+			pos += rows[n] * size;
+		}
+		// the stream ends with the last row and its padding: up to three zero bytes, or the one zero byte
+		// some writers add and then the padding
+		if (pos > s.length || s.length - pos > 4) return null;
+		for (k in pos...s.length) if (sget(s, k) != 0) return null;
+
+		var c = new Cur(s, 0);
+		var nTypes = rows[T.ITypeDef];
+		var names:Array<String> = [], nss:Array<Array<String>> = [];
+		var size = rowSize(T.ITypeDef);
+		for (i in 0...nTypes) {
+			c.pos = start[T.ITypeDef] + i * size + 4;
+			names.push(readSstringIdx(c));
+			nss.push(parseNs(readSstringIdx(c)));
+		}
+		var enclosing = [for (_ in 0...nTypes) -1];
+		var w = tableSizes[T.ITypeDef];
+		c.pos = start[T.INestedClass];
+		for (_ in 0...rows[T.INestedClass]) {
+			var nested = sreadWidth(w, c) - 1;
+			var outer = sreadWidth(w, c) - 1;
+			if (nested < 0 || nested >= nTypes || outer < 0 || outer >= nTypes || enclosing[nested] != -1) return null;
+			enclosing[nested] = outer;
+		}
+		// as IlMetaTools.getPath has it: a nested type takes its outermost type's namespace
+		var paths:Array<Null<IlPath>> = [for (_ in 0...nTypes) null];
+		var failed = false;
+		function path(i:Int, depth:Int):IlPath {
+			var p = paths[i];
+			if (p != null) return p;
+			if (enclosing[i] < 0 || depth > 64) {
+				if (enclosing[i] >= 0) failed = true;
+				p = {ns: nss[i], nested: [], name: names[i]};
+			} else {
+				var o = path(enclosing[i], depth + 1);
+				p = {ns: o.ns, nested: o.nested.concat([o.name]), name: names[i]};
+			}
+			paths[i] = p;
+			return p;
+		}
+		var types:Array<IlPath> = [for (i in 0...nTypes) path(i, 0)];
+		if (failed) return null;
+
+		var refs:Array<String> = [];
+		size = rowSize(T.IAssemblyRef);
+		for (i in 0...rows[T.IAssemblyRef]) {
+			c.pos = start[T.IAssemblyRef] + i * size + 12 + blobOffset;
+			refs.push(readSstringIdx(c));
+		}
+
+		var forwarders:Array<IlForwarder> = [];
+		size = rowSize(T.IExportedType);
+		var d = codedDescription[T.IImplementation - 64];
+		for (i in 0...rows[T.IExportedType]) {
+			c.pos = start[T.IExportedType] + i * size + 8;
+			var name = readSstringIdx(c);
+			var ns = parseNs(readSstringIdx(c));
+			var rid = sreadWidth(tableSizes[T.IImplementation], c);
+			var tidx = rid & ((1 << d.size) - 1), real = rid >>> d.size;
+			if (tidx >= d.tbls.length || real == 0 || real > rows[d.tbls[tidx]]) return null;
+			forwarders.push({name: name, ns: ns, to: d.tbls[tidx] == T.IAssemblyRef ? refs[real - 1] : null});
+		}
+		return new IlLight(types, refs, forwarders);
 	}
 
 	static function readPadded(i:PeInput, npad:Int):String {
@@ -1270,6 +1413,27 @@ class IlMetaReader {
 	}
 
 	public static function readMetaTables(pctx:PeFile, header:ClrHeader):IlCtx {
+		var r = open(pctx, header, false);
+		r.tables = [for (_ in 0...64) []];
+		r.readMeta();
+		// the delays run most recent first
+		var delays = r.delays;
+		r.delays = [];
+		var k = delays.length;
+		while (k-- > 0) delays[k]();
+		return new IlCtx(r.tables, r.relations, r.typedefs, r.typedefOrder);
+	}
+
+	// What the assembly's tables tell without all their rows being read (IlLight), or null when it takes
+	// readMetaTables to know: tables that are not compressed, or not laid out as the standard has them.
+	public static function readLight(pctx:PeFile, header:ClrHeader):Null<IlLight> {
+		var r = open(pctx, header, true);
+		if (!r.compressed) return null;
+		return try r.readLightTables() catch (_:Dynamic) null;
+	}
+
+	// The metadata root and its streams. `light` leaves the heaps the light reading does not use.
+	static function open(pctx:PeFile, header:ClrHeader, light:Bool):IlMetaReader {
 		var i = pctx.input;
 		PeReader.seekRva(pctx, header.meta.addr);
 		var magic = i.nreadString(4);
@@ -1306,10 +1470,10 @@ class IlMetaReader {
 		for (s in streams) {
 			PeReader.seekRva(pctx, header.meta.addr + s.offset);
 			switch (s.name.toLowerCase()) {
-				case "#guid": r.guidStream = i.nread(s.size);
+				case "#guid": if (!light) r.guidStream = i.nread(s.size);
 				case "#strings": r.stringsStream = i.nread(s.size);
-				case "#us": r.usStream = i.nread(s.size);
-				case "#blob": r.blobStream = i.nread(s.size);
+				case "#us": if (!light) r.usStream = i.nread(s.size);
+				case "#blob": if (!light) r.blobStream = i.nread(s.size);
 				case "#~":
 					if (compressed != null) throw "Assertion failed: read_meta_tables";
 					compressed = true;
@@ -1325,14 +1489,7 @@ class IlMetaReader {
 		if (compressed == null) throw new PeErrorMessage("No compressed or uncompressed metadata streams was found!");
 		r.compressed = compressed;
 		r.extraStreams = extra;
-		r.tables = [for (_ in 0...64) []];
 		r.tableSizes = [for (_ in 0...maxClrMetaIdx + 1) 2];
-		r.readMeta();
-		// the delays run most recent first
-		var delays = r.delays;
-		r.delays = [];
-		var k = delays.length;
-		while (k-- > 0) delays[k]();
-		return new IlCtx(r.tables, r.relations, r.typedefs, r.typedefOrder);
+		return r;
 	}
 }

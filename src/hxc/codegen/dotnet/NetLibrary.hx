@@ -13,7 +13,9 @@ import hxc.codegen.dotnet.IlMetaTools.IlNotFound;
 import hxc.codegen.dotnet.NetConverter;
 
 // an assembly indexed by Haxe path when it loads, whose classes are converted only when a module is
-// asked for.
+// asked for. Loading reads which types it defines, what it references and what it forwards; the rest of
+// its tables are read when one of its classes is first converted, which most assemblies of a build never
+// see.
 class NetLibrary {
 	public var name(default, null):String;
 	public var filePath(default, null):String;
@@ -25,7 +27,13 @@ class NetLibrary {
 	public var refOnly:Bool = false;
 
 	var com:Context;
+	// the whole tables, once something needed them
 	var ilctx:Null<NetLibCtx> = null;
+	// set by load: the types the assembly defines in table order, their IlPaths.key, and the light
+	// reading they came from (null when the tables had to be read whole to know)
+	var typePaths:Null<Array<IlPath>> = null;
+	var typeKeys:Map<String, Bool> = new Map();
+	var light:Null<IlLight> = null;
 	// keyed by sTypePath; a type the library lacks is cached as null too
 	var cache:Map<String, Null<IlClass>> = new Map();
 	// rawClass's, keyed by IlPaths.key
@@ -41,15 +49,17 @@ class NetLibrary {
 	function netpathToHx(path:IlPath):Path return NetConverter.netpathToHx(isStd, path);
 
 	public function load():Void {
+		if (typePaths != null) return;
 		var pe = PeReader.read(sys.io.File.getBytes(filePath));
 		var clrHeader = PeReader.readClrHeader(pe);
-		var meta = IlMetaReader.readMetaTables(pe, clrHeader);
+		var l = IlMetaReader.readLight(pe, clrHeader);
+		// -D net-loader-check reads the tables whole as well, and the two readings must agree
+		if (l != null && com.defines.rawDefined("net_loader_check")) checkLight(l, IlMetaReader.readMetaTables(pe, clrHeader));
+		var meta = l == null ? IlMetaReader.readMetaTables(pe, clrHeader) : null;
+		var paths = l != null ? l.types : [for (td in meta.typedefOrder) IlMetaTools.getPath(TypeDef(td))];
 		var debug = com.defines.rawDefined("net_loader_debug");
 		if (debug) Sys.println("for lib " + filePath);
-		// the types are keyed again now that nested ones know their enclosing type
-		meta.typedefs = new Map();
-		for (td in meta.typedefOrder) {
-			var path = IlMetaTools.getPath(TypeDef(td));
+		for (path in paths) {
 			var hx = netpathToHx(path);
 			if (debug) Sys.println("found " + Globals.sTypePath(hx));
 			if (!refOnly) {
@@ -57,13 +67,72 @@ class NetLibrary {
 				var dotted = NetConverter.ilpathS(path);
 				if (!com.netDottedMap.exists(dotted)) com.netDottedMap.set(dotted, path);
 			}
-			meta.typedefs.set(IlPaths.key(path), td);
+			typeKeys.set(IlPaths.key(path), true);
 		}
+		if (meta != null) setTables(meta);
+		light = l;
+		typePaths = paths;
+	}
+
+	function checkLight(l:IlLight, meta:IlCtx):Void {
+		var why:Null<String> = null;
+		if (l.types.length != meta.typedefOrder.length) why = "defines " + meta.typedefOrder.length + " types, not " + l.types.length;
+		else for (i in 0...l.types.length) {
+			var p = IlMetaTools.getPath(TypeDef(meta.typedefOrder[i]));
+			if (!IlPaths.equals(p, l.types[i])) {
+				why = "defines " + NetConverter.ilpathS(p) + ", not " + NetConverter.ilpathS(l.types[i]);
+				break;
+			}
+		}
+		var refs = [for (m in meta.tables[TableIdx.IAssemblyRef]) switch (m) {
+			case AssemblyRef(a): a.name;
+			case _: "";
+		}];
+		if (why == null && refs.join("|") != l.assemblyRefs.join("|")) why = "references " + refs.join(", ") + ", not " + l.assemblyRefs.join(", ");
+		if (why == null) {
+			var n = 0;
+			for (m in meta.tables[TableIdx.IExportedType]) switch (m) {
+				case ExportedType(e):
+					var f = l.forwarders[n++];
+					var to = switch (e.implementation) {
+						case AssemblyRef(r): r.name;
+						case _: null;
+					};
+					if (f == null || f.name != e.typeName || !IlPaths.strsEq(f.ns, e.typeNamespace) || f.to != to) {
+						why = "forwards " + e.typeNamespace.concat([e.typeName]).join(".") + " to " + to + ", not as read";
+						break;
+					}
+				case _:
+			}
+			if (why == null && n != l.forwarders.length) why = "has " + n + " type forwarders, not " + l.forwarders.length;
+		}
+		if (why != null) throw "internal error: " + filePath + " " + why;
+	}
+
+	function setTables(meta:IlCtx):Void {
+		// the types are keyed again now that nested ones know their enclosing type
+		meta.typedefs = new Map();
+		for (td in meta.typedefOrder) meta.typedefs.set(IlPaths.key(IlMetaTools.getPath(TypeDef(td))), td);
 		ilctx = {nstd: isStd, ncom: com, nil: meta};
 	}
 
+	// The assembly's tables, read whole the first time they are asked for.
 	function getCtx():NetLibCtx {
-		if (ilctx == null) load();
+		if (ilctx != null) return ilctx;
+		load();
+		if (ilctx == null) {
+			var pe = PeReader.read(sys.io.File.getBytes(filePath));
+			var meta = IlMetaReader.readMetaTables(pe, PeReader.readClrHeader(pe));
+			// the light reading said which types there are; the tables must say the same
+			var same = meta.typedefOrder.length == typePaths.length;
+			if (same) for (i in 0...typePaths.length)
+				if (!IlPaths.equals(IlMetaTools.getPath(TypeDef(meta.typedefOrder[i])), typePaths[i])) {
+					same = false;
+					break;
+				}
+			if (!same) throw "internal error: " + filePath + " does not define the types its tables were read to hold";
+			setTables(meta);
+		}
 		return ilctx;
 	}
 
@@ -87,21 +156,20 @@ class NetLibrary {
 
 	// Whether the assembly itself holds the type's definition (not a forwarder to it).
 	public function definesType(path:IlPath):Bool {
-		return getCtx().nil.typedefs.exists(IlPaths.key(path));
+		load();
+		return typeKeys.exists(IlPaths.key(path));
 	}
 
 	// The top-level types the assembly defines, in table order.
 	public function topLevelTypes():Array<IlPath> {
-		return [
-			for (td in getCtx().nil.typedefOrder) {
-				var path = IlMetaTools.getPath(TypeDef(td));
-				if (path.nested.length == 0) path;
-			}
-		];
+		load();
+		return [for (path in typePaths) if (path.nested.length == 0) path];
 	}
 
 	// The names of the assemblies this one references, in table order.
 	public function assemblyRefs():Array<String> {
+		load();
+		if (light != null) return light.assemblyRefs.copy();
 		var r = [];
 		for (m in getCtx().nil.tables[TableIdx.IAssemblyRef]) switch (m) {
 			case AssemblyRef(a): r.push(a.name);
@@ -114,6 +182,11 @@ class NetLibrary {
 	// outermost type does.
 	public function forwarderTarget(path:IlPath):Null<String> {
 		var top = path.nested.length > 0 ? path.nested[0] : path.name;
+		load();
+		if (light != null) {
+			for (f in light.forwarders) if (f.to != null && f.name == top && IlPaths.strsEq(f.ns, path.ns)) return f.to;
+			return null;
+		}
 		for (m in getCtx().nil.tables[TableIdx.IExportedType]) switch (m) {
 			case ExportedType(e) if (e.typeName == top && IlPaths.strsEq(e.typeNamespace, path.ns)):
 				switch (e.implementation) {
@@ -129,31 +202,30 @@ class NetLibrary {
 	public function rawClass(path:IlPath):Null<IlClass> {
 		var key = IlPaths.key(path);
 		if (rawCache.exists(key)) return rawCache.get(key);
-		// most assemblies asked for a type do not hold it: that is answered without a raise
-		var r = !getCtx().nil.typedefs.exists(key) ? null : try IlMetaTools.convertClass(getCtx().nil, path) catch (_:IlNotFound) null;
+		// most assemblies asked for a type do not hold it: that is answered without a raise, and without
+		// reading their tables
+		load();
+		var r = !typeKeys.exists(key) ? null : try IlMetaTools.convertClass(getCtx().nil, path) catch (_:IlNotFound) null;
 		rawCache.set(key, r);
 		return r;
 	}
 
 	// the top-level types, in table order
 	public function listModules():Array<Path> {
-		return [
-			for (td in getCtx().nil.typedefOrder) {
-				var path = IlMetaTools.getPath(TypeDef(td));
-				if (path.nested.length == 0) netpathToHx(path);
-			}
-		];
+		load();
+		return [for (path in typePaths) if (path.nested.length == 0) netpathToHx(path)];
 	}
 
 	public function lookup(path:Path):Null<IlClass> {
 		var key = Globals.sTypePath(path);
 		if (cache.exists(key)) return cache.get(key);
 		var r:Null<IlClass> = try {
-			var ctx = getCtx();
+			load();
 			var netPath = NetConverter.hxpathToNet(com, path);
 			// A type is asked of every assembly until one holds it, so most of these answers are "not
-			// here": that one is given without a raise.
-			if (!ctx.nil.typedefs.exists(IlPaths.key(netPath))) null else {
+			// here": that one is given without a raise, and without reading the assembly's tables.
+			if (!typeKeys.exists(IlPaths.key(netPath))) null else {
+				var ctx = getCtx();
 				var cls = IlMetaTools.convertClass(ctx.nil, netPath);
 				NetConverter.normalizeIlcls(ctx, cls);
 			}

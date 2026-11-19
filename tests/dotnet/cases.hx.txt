@@ -20157,6 +20157,18 @@ P.hx:24: characters 15-21 : dotnet: operators of generic .NET types are not supp
 # are nested types of a --net-lib assembly: their @:native joins the enclosing types with dots, and
 # DotnetTypes.externPathOf split it into a namespace. hxc 4b17dec9: six "the .NET type LibA.Outer.Inner
 # (.Deep) outside the referenced assemblies" errors. TypeRefs must nest (LibA.Outer/Inner/Mode), as gencs's.
+--- netlib-light-reading-agrees @netlib=LibA,ValLib + -D net-loader-check
+import vallib.Pt;
+
+class P {
+	static function main() {
+		var p = new Pt(3);
+		Sys.println(p.X + " " + cs.system.Math.Max(1, 2));
+	}
+}
+===
+[run]
+3 2
 --- netlib-nested-types @gencs @netlib=LibA
 import liba.Outer;
 

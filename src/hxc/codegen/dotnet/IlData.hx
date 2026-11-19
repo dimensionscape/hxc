@@ -227,6 +227,24 @@ class IlCtx {
 	}
 }
 
+// A type forwarder: the type it names and the assembly it sends it to (null when it sends it elsewhere,
+// to a file of this assembly or to another forwarder's type).
+typedef IlForwarder = {name:String, ns:Array<String>, to:Null<String>};
+
+// What an assembly's tables tell without all their rows being read: the types it defines, in table
+// order, the names of the assemblies it references, in table order, and its type forwarders.
+class IlLight {
+	public var types:Array<IlPath>;
+	public var assemblyRefs:Array<String>;
+	public var forwarders:Array<IlForwarder>;
+
+	public function new(types, assemblyRefs, forwarders) {
+		this.types = types;
+		this.assemblyRefs = assemblyRefs;
+		this.forwarders = forwarders;
+	}
+}
+
 class IlPaths {
 	public static function key(p:IlPath):String
 		return p.ns.join(".") + "\n" + p.nested.join("\n") + "\n" + p.nested.length + "\n" + p.name;
