@@ -380,6 +380,7 @@ class HlTypes {
 		while (i >= 0) {
 			var e = ctx.recCache[i];
 			if (e.t == t) {
+				ctx.recCacheHits++;
 				var v = e.r.v;
 				return v == null ? noneCallback() : v;
 			}
@@ -649,7 +650,75 @@ class HlTypes {
 						case _: throw "Unknown core type " + Globals.sTypePath(a.path);
 					}
 				}
-				return getRecCache(ctx, t, () -> HDyn, tref -> toType(ctx, TypeFunctions.getUnderlyingType(a, pl), tref));
+				var key = ctx.recordPMapAdds || !TypeFunctions.hasMeta(":multiType", a.meta) ? null : settledKey(ctx, t, 0);
+				if (key != null) {
+					var known = ctx.multiTypes.get(key);
+					if (known != null) return known;
+				}
+				var hits = ctx.recCacheHits;
+				var r = getRecCache(ctx, t, () -> HDyn, tref -> toType(ctx, TypeFunctions.getUnderlyingType(a, pl), tref));
+				if (key != null && ctx.recCacheHits == hits) ctx.multiTypes.set(key, r);
+				return r;
+		}
+	}
+
+	// A key that is the same for two types exactly when they are the same declarations with the same parameters
+	// (declarations numbered by identity, as anonKey does), or null for a type that can still change or that the
+	// key does not look into: an unbound monomorph, a lazy type, an anon. Gives up past a few levels.
+	static function settledKey(ctx:HlContext, t:T, depth:Int):Null<String> {
+		if (depth > 6) return null;
+		function id(o:{}):Int {
+			var i = ctx.anonKeyIds.get(o);
+			if (i == null) {
+				i = ctx.anonKeyNext++;
+				ctx.anonKeyIds.set(o, i);
+			}
+			return i;
+		}
+		function params(tag:String, o:{}, tl:TParams):Null<String> {
+			var b = new StringBuf();
+			b.add(tag);
+			b.add(id(o));
+			b.add("<");
+			for (p in tl) {
+				var k = settledKey(ctx, p, depth + 1);
+				if (k == null) return null;
+				b.add(k);
+				b.add(",");
+			}
+			b.add(">");
+			return b.toString();
+		}
+		return switch t {
+			case TMono(r):
+				if (r.type == null) null else {
+					var k = settledKey(ctx, r.type, depth + 1);
+					k == null ? null : "M(" + k + ")";
+				}
+			case TEnum(e, tl): params("E", e, tl);
+			case TInst(c, tl): params("I", c, tl);
+			case TType(d, tl): params("T", d, tl);
+			case TAbstract(a, tl): params("B", a, tl);
+			case TFun(sig):
+				var b = new StringBuf();
+				b.add("F(");
+				for (arg in sig.args) {
+					var k = settledKey(ctx, arg.t, depth + 1);
+					if (k == null) return null;
+					b.add(arg.opt ? "?" : "");
+					b.add(k);
+					b.add(",");
+				}
+				var k = settledKey(ctx, sig.ret, depth + 1);
+				if (k == null) return null;
+				b.add(")");
+				b.add(k);
+				b.toString();
+			case TDynamic(null): "D";
+			case TDynamic(t2):
+				var k = settledKey(ctx, t2, depth + 1);
+				k == null ? null : "D(" + k + ")";
+			case TAnon(_) | TLazy(_): null;
 		}
 	}
 

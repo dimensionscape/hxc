@@ -1479,3 +1479,46 @@ private class KeyValuePair<K, V> {
 	}
 }
 ===
+
+--- multitype-maps-many-ways
+// The generator remembers a Map type's HL type: through the top-level Map typedef and haxe.ds.Map, with
+// key types that pick each implementation, inside a recursive typedef that holds a Map of itself, with an
+// anon value (not remembered), and from a monomorph bound later.
+typedef Tree = {name:String, kids:Map<String, Tree>};
+typedef Ids = Map<Int, String>;
+
+enum Color { Red; Green; }
+
+class Key {
+	public var n:Int;
+	public function new(n) this.n = n;
+}
+
+class P {
+	static var byName:Map<String, Int> = ["a" => 1];
+	static var byId:haxe.ds.Map<Int, Array<Float>> = new Map();
+
+	static function count<K, V>(m:Map<K, V>):Int {
+		var n = 0;
+		for (_ in m) n++;
+		return n;
+	}
+
+	static function main() {
+		var tree:Tree = {name: "root", kids: new Map()};
+		tree.kids.set("leaf", {name: "leaf", kids: new Map()});
+		var ids:Ids = [1 => "one", 2 => "two"];
+		var colors = new Map<Color, Int>();
+		colors.set(Red, 1);
+		var keys = new Map<Key, String>();
+		keys.set(new Key(3), "three");
+		var anons = new Map<String, {x:Int, y:Int}>();
+		anons.set("p", {x: 1, y: 2});
+		var later = new Map();
+		later.set("k", 1.5);
+		byId.set(7, [1.0]);
+		trace(count(byName) + count(byId) + count(tree.kids) + count(ids) + count(colors) + count(keys) + count(anons) + count(later));
+		trace(tree.kids.get("leaf").name, ids.get(2), anons.get("p").y, later.get("k"));
+	}
+}
+===

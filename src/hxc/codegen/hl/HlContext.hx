@@ -139,7 +139,16 @@ class HlContext {
 	// expression, so every use of one declaration shares one OCaml string and HL/C's t$fun_ digests see a
 	// back-reference; one HlType object per class gives HlcOcaml.ttypeValue that sharing.
 	public var abstractTypes:ObjectMap<{}, HlType> = new ObjectMap();
+	// A @:multiType abstract's HL type by HlTypes.settledKey, for .hl output only: genhl finds the underlying type
+	// again on every to_type, and for a @:multiType abstract (Map) that is a unification search that throws on
+	// each candidate that fails, about four exceptions per Map type met. Filled only for parameters that can no
+	// longer change, and only when working the type out met no type still in progress (recCacheHits). HL/C is
+	// left out: its digests see which HL type values are shared, and this would share values genhl builds afresh.
+	public var multiTypes:Map<String, HlType> = new Map();
 	public var methodWrappers:Map<String, Int> = new Map();
+	// how many times getRecCache found a type already in progress: a result computed while this did not move
+	// depends on nothing in progress further out
+	public var recCacheHits = 0;
 	// a list in OCaml (head first); here the head is the last element
 	public var recCache:Array<{t:T, r:{v:Null<HlType>}}> = [];
 	public var cachedTuples:Map<String, HlType> = new Map();
