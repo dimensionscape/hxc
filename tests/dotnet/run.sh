@@ -867,7 +867,8 @@ run_case() {
 		case "$file" in */*) mkdir -p "$casedir/m/${file%/*}" ;; *) mkdir "$casedir/m" ;; esac
 		write_sources "$source" "$casedir/m" "$file"
 	fi
-	# --cs adds -lib hxcs, and haxelib would find the checkout's own .haxelib above the case directory;
+	# --cs adds -lib hxcs when haxelib finds it, and haxelib would look in the checkout's own .haxelib above the case
+	# directory (no hxcs there, so hxc would use its own copy of the reference assemblies, the same bytes);
 	# --haxelib-global, which only counts after the library, keeps the global hxcs.
 	set -f
 	local cout ccode=0 bcode=0

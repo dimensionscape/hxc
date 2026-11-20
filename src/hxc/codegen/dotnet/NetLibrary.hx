@@ -50,7 +50,7 @@ class NetLibrary {
 
 	public function load():Void {
 		if (typePaths != null) return;
-		var pe = PeReader.read(sys.io.File.getBytes(filePath));
+		var pe = PeReader.read(Netlib.getBytes(filePath));
 		var clrHeader = PeReader.readClrHeader(pe);
 		var l = IlMetaReader.readLight(pe, clrHeader);
 		// -D net-loader-check reads the tables whole as well, and the two readings must agree
@@ -121,7 +121,7 @@ class NetLibrary {
 		if (ilctx != null) return ilctx;
 		load();
 		if (ilctx == null) {
-			var pe = PeReader.read(sys.io.File.getBytes(filePath));
+			var pe = PeReader.read(Netlib.getBytes(filePath));
 			var meta = IlMetaReader.readMetaTables(pe, PeReader.readClrHeader(pe));
 			// the light reading said which types there are; the tables must say the same
 			var same = meta.typedefOrder.length == typePaths.length;

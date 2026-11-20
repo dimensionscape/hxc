@@ -4577,11 +4577,21 @@ class Compiler {
 				i = 0;
 				continue;
 			}
-			// A C# target likewise pulls in hxcs.
+			// A C# target likewise pulls in hxcs, as Haxe does, but only when it is installed: without it,
+			// hxc's own copy of hxcs's Mono reference assemblies serves (NetSetup, Netlib).
 			if ((a == "--cs" || a == "-cs" || a == "--dotnet") && hasValue) {
 				acc.push(a);
 				acc.push(l[i + 1]);
-				l = ["-lib", "hxcs"].concat(l.slice(i + 2));
+				var rest = l.slice(i + 2);
+				// An explicit `-lib hxcs` still fails when it is not installed: only a found one is marked added.
+				if (!addedLibs.exists("hxcs")) {
+					var found = try addLibs(["hxcs"], rest) catch (_:ArgFailure) null;
+					if (found != null) {
+						addedLibs.set("hxcs", true);
+						rest = found.concat(rest);
+					}
+				}
+				l = rest;
 				i = 0;
 				continue;
 			}

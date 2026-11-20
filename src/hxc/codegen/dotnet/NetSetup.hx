@@ -51,12 +51,16 @@ class NetSetup {
 			var dir = ModuleLoader.findFileOpt(ctx, std + "/" + digraph);
 			if (dir != null && FileSystem.exists(dir) && FileSystem.isDirectory(dir)) matched.push(dir);
 		}
-		if (matched.length == 0)
+		// With no --net-std and no netlib directory on the class path (hxcs not installed), hxc's own copy
+		// of hxcs's Mono netlib directories serves the digraphs it carries (Netlib).
+		var bundled = ctx.netStd.length == 0 && matched.length == 0 ? Netlib.files(digraph) : [];
+		if (matched.length == 0 && bundled.length == 0)
 			throw "No .NET std lib directory with the pattern '" + digraph + "' was found in the -net-std search path. "
 				+ "Try updating the hxcs lib to the latest version, or specifying another -net-std path.";
 		for (dir in matched)
 			for (f in FileSystem.readDirectory(dir))
 				if (StringTools.endsWith(f.toLowerCase(), ".dll")) ctx.netStdFiles.push(dir + "/" + f);
+		for (f in bundled) ctx.netStdFiles.push(f);
 		// each std library is read as soon as it is found
 		for (f in ctx.netStdFiles) addNetLib(ctx, f, true, false).load();
 	}
@@ -64,7 +68,7 @@ class NetSetup {
 	// Registers the library: it is looked up by Haxe path after every library added before it, and
 	// its types are built by the first extern loader that has them. The caller reads it with load().
 	public static function addNetLib(ctx:Context, file:String, isStd:Bool, isExtern:Bool):NetLibrary {
-		var realFile = if (FileSystem.exists(file)) file else {
+		var realFile = if (Netlib.isVirtual(file) || FileSystem.exists(file)) file else {
 			var f = ModuleLoader.findFileOpt(ctx, file);
 			if (f == null) f = ModuleLoader.findFileOpt(ctx, file + ".dll");
 			if (f == null) throw ".NET lib " + file + " not found";
