@@ -356,3 +356,37 @@ class P {
 		trace(sum(Compress.run(Bytes.alloc(0), 9)), sum(Uncompress.run(Compress.run(Bytes.alloc(0), 9))));
 	}
 }
+
+--- reflect-copy-gives-an-object-its-own-fields
+typedef D = {to:String, text:String};
+
+class C {
+	public var a:Int;
+
+	public function new(a:Int) {
+		this.a = a;
+	}
+}
+
+class P {
+	static function make():D
+		return {to: "a", text: "x"};
+
+	static function main() {
+		var start = make();
+		var now = Reflect.copy(start);
+		now.text = "changed";
+		trace(start.text + "," + now.text + "," + (now == start));
+		var lit:D = {to: "a", text: "x"};
+		var c = Reflect.copy(lit);
+		c.to = "b";
+		Reflect.setField(c, "extra", 1);
+		trace(lit.to + "," + c.to + "," + Reflect.hasField(lit, "extra") + "," + Reflect.hasField(c, "extra"));
+		Reflect.deleteField(c, "text");
+		trace(lit.text + "," + Reflect.hasField(c, "text"));
+		var i = new C(1);
+		var j = Reflect.copy(i);
+		j.a = 2;
+		trace(i.a + "," + j.a);
+	}
+}

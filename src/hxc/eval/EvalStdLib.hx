@@ -876,7 +876,13 @@ class EvalStdLib {
 		return switch (EvalValueTools.vresolve(v)) {
 			case VNull: VNull;
 			case VObject(o):
-				var copy = new VObject(o.ofields.copy(), o.oproto);
+				// An anonymous object's fields live in its ODictionary map, which is mutable here
+				// (unlike OCaml's), so the copy needs a map of its own.
+				var proto = switch (o.oproto) {
+					case ODictionary(m): ODictionary(m.copy());
+					case p: p;
+				};
+				var copy = new VObject(o.ofields.copy(), proto);
 				var order = objectFieldOrders.get(o);
 				if (order != null) objectFieldOrders.set(copy, order.copy());
 				VObject(copy);
