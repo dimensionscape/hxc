@@ -1480,6 +1480,57 @@ class TclassToIl {
 		}
 	}
 
+	// -D dotnet-seal: the assembly is taken to hold every class that extends one of its own, as a program's
+	// does. A class no plan extends is sealed, and a virtual method of a class some plan extends is final
+	// when no plan below it has a method of that name overriding it (an overload of the name keeps it virtual
+	// too). The JIT then calls such a method directly and can inline it, and a test or cast for a sealed class
+	// is one comparison of the method table, with or without profiling (ReadyToRun and Native AOT have none).
+	// Plans are followed by their base type, not their Haxe superclass: an enum's constructor classes have no
+	// TClass and override their enum class's methods. Interface methods and the MethodImpl rows of explicit
+	// implementations are left as they are. Another assembly can no longer extend the sealed classes or
+	// override the final methods, so this is opt-in.
+	public static function sealLeaves(g:DotnetCtx):Void {
+		var byPath = new Map<String, ClassPlan>();
+		for (p in g.plans) byPath.set(NetConverter.ilpathS(p.path), p);
+		function parent(p:ClassPlan):Null<ClassPlan> {
+			return switch (p.superSig) {
+				case LClass(path, _): byPath.get(NetConverter.ilpathS(path));
+				case _: null;
+			}
+		}
+		var extended = new Map<String, Bool>();
+		var overridden = new Map<String, Bool>();
+		function note(p:ClassPlan, m:Null<MethodPlan>) {
+			if (m == null || m.flags & MethodAttrs.VIRTUAL == 0 || m.flags & MethodAttrs.NEW_SLOT != 0) return;
+			var s = parent(p);
+			while (s != null) {
+				overridden.set(NetConverter.ilpathS(s.path) + "::" + m.name, true);
+				s = parent(s);
+			}
+		}
+		for (p in g.plans) {
+			var s = parent(p);
+			if (s != null) extended.set(NetConverter.ilpathS(s.path), true);
+			for (m in p.methods) note(p, m);
+			for (pr in p.properties) {
+				note(p, pr.getter);
+				note(p, pr.setter);
+			}
+		}
+		for (p in g.plans) {
+			if (p.flags & (TypeAttrs.INTERFACE | TypeAttrs.ABSTRACT | TypeAttrs.SEALED) != 0) continue;
+			var own = NetConverter.ilpathS(p.path);
+			if (!extended.exists(own)) {
+				p.flags |= TypeAttrs.SEALED;
+				continue;
+			}
+			for (m in p.methods)
+				if (m.flags & (MethodAttrs.VIRTUAL | MethodAttrs.FINAL | MethodAttrs.ABSTRACT | MethodAttrs.STATIC) == MethodAttrs.VIRTUAL
+					&& !overridden.exists(own + "::" + m.name))
+					m.flags |= MethodAttrs.FINAL;
+		}
+	}
+
 	// gencs's modifiers: virtual unless final or inline, override without newslot (unless FixOverrides
 	// made the method a new overload: `overrides` false), abstract, and final virtual for a non-virtual
 	// method that implements an interface method.

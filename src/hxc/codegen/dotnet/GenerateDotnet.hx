@@ -631,6 +631,7 @@ class GenerateDotnet {
 			}
 		}
 		TclassToIl.openInheritedFinals(g);
+		if (ctx.defines.rawDefined("dotnet_seal")) TclassToIl.sealLeaves(g);
 		var plans = [];
 		for (p in g.plans) {
 			plans.push(p);

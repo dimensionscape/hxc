@@ -8661,6 +8661,90 @@ True
 True
 True
 Exception: inner
+# -D dotnet-seal: a class nothing in the program extends is sealed (Leaf, Alone), and a
+# virtual method of an extended class is final when nothing below it overrides it (Base.fixed, Mid.kind); an
+# overridden one stays virtual (Base.name, Base.kind). Calls through the base, the interface and a method value
+# dispatch as before, and an enum's constructor classes still override their enum class.
+--- seal-leaf-classes @dump=Base,Mid,Leaf,Alone + -D dotnet-seal
+interface Named {
+	function name():String;
+}
+class Base implements Named {
+	public function new() {}
+	public function name():String return "base";
+	public function kind():Int return 1;
+	public function fixed():Int return 10;
+}
+class Mid extends Base {
+	override public function kind():Int return 2;
+}
+class Leaf extends Mid {
+	override public function name():String return "leaf";
+	public function extra():Int return fixed() + kind();
+}
+class Alone {
+	public function new() {}
+	public function v():Int return 7;
+}
+enum Shade {
+	Light;
+	Dark(n:Int);
+}
+class P {
+	static function main() {
+		var bs:Array<Base> = [new Base(), new Mid(), new Leaf()];
+		for (b in bs) Sys.println(b.name() + " " + b.kind() + " " + b.fixed());
+		var n:Named = new Leaf();
+		Sys.println(n.name());
+		var f = new Leaf().extra;
+		Sys.println(f());
+		Sys.println(new Alone().v());
+		Sys.println(Std.isOfType(new Leaf(), Mid) + " " + Std.isOfType(new Mid(), Leaf));
+		for (s in [Light, Dark(3)]) Sys.println(Type.enumIndex(s) + " " + Std.string(s));
+	}
+}
+===
+[run]
+base 1 10
+base 2 10
+leaf 2 10
+leaf
+12
+7
+true false
+0 Light
+1 Dark(3)
+[dump]
+type public beforefieldinit Base extends haxe.lang.HxObject implements Named, haxe.lang.IHxObject
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor__Base(Base)
+  method public virtual hidebysig newslot string name()
+  method public virtual hidebysig newslot int32 kind()
+  method public final virtual hidebysig newslot int32 fixed()
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
+type public beforefieldinit Mid extends Base
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor__Mid(Mid)
+  method public final virtual hidebysig int32 kind()
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+type public sealed beforefieldinit Leaf extends Mid
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor__Leaf(Leaf)
+  method public virtual hidebysig string name()
+  method public virtual hidebysig newslot int32 extra()
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
+type public sealed beforefieldinit Alone extends haxe.lang.HxObject
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor__Alone(Alone)
+  method public virtual hidebysig newslot int32 v()
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
 --- file-read-whole @gencs
 class P {
 	static function main() {
