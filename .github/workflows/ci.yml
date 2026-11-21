@@ -108,6 +108,7 @@ jobs:
           cd "${{ steps.t.outputs.conformance }}"
           neko run.n run --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH" \
             --cases "$GITHUB_WORKSPACE/tests/cases" --expected "$GITHUB_WORKSPACE/tests/expected" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences.json" \
             -j 4 --junit "$RUNNER_TEMP/hxc.xml" --title "hxc"
 
   jvm:
@@ -253,6 +254,8 @@ jobs:
           cd "${{ steps.t.outputs.conformance }}"
           neko run.n run --compiler "$(cygpath -m "$RUNNER_TEMP/hxc-dotnet/hxc.exe")" --std "$HAXE_STD_PATH" \
             --cases "$GITHUB_WORKSPACE/tests/cases" --expected "$GITHUB_WORKSPACE/tests/expected" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences.json" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences-dotnet-host.json" \
             -j 4 --junit "$RUNNER_TEMP/dotnet-host-own.xml" --title "hxc on .NET, own tests"
 
       - name: Upload the .NET build
