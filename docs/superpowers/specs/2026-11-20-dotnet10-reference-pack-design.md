@@ -172,7 +172,10 @@ rules 1–5 and the converter's existing drops that lose a callable member (a me
 field, a property already declared). Exact-duplicate overloads are not listed: nothing is lost. Members refused
 at a call site are not listed either: they are compile errors already, not silent. Only members of classes
 that were converted are listed (the light reader means unconverted classes are never examined). In a
-Mono-reference build the report lists the existing drops only.
+Mono-reference build the report lists the existing drops only. A value narrows it:
+`-D dotnet-netlib-report=<prefix>[,<prefix>…]` lists only lines whose .NET type name starts with one of the
+prefixes (`=packlib`, `=System.Text.Json`), since a whole program's report is dominated by the framework's
+generic-math interfaces.
 
 ### Optional parameters (decided for `--dotnet` only)
 
@@ -193,9 +196,12 @@ reference-type parameter is `null` even where the default is `"dflt"`. A value-t
 `null`, so a literal `null` there counts as omitted; a non-constant `Null<T>` value there is converted as Haxe
 converts `Null<T>` to `T` anywhere (ordinary Haxe semantics, not a new approximation).
 
-Overload resolution keeps Haxe's rules, with one tie-break from C#: when two candidates both match, the one
-that needs no omitted arguments beats one that does (C# 12.6.4.3; `F(int)` over `F(int, int b = 0)` for
-`F(1)`). Nothing else of C#'s rules is taken in phase 1; an ambiguity stays a compile error. The builder
+Overload resolution keeps Haxe's rules. They already hold C#'s tie-break for optional parameters
+(C# 12.6.4.3; `F(int)` over `F(int, int b = 0)` for `F(1)`): `Overloads.reduceCompatible` keeps the matching
+candidates with the fewest optional parameters before it rates conversions, so this needs no new code, only a
+case. Haxe applies it earlier than C# does (`F(long, long)` beats `F(int, int b = 0)` for `F(1, 2)`, where C#
+picks the `int` one); that difference is recorded, not changed. Nothing else of C#'s rules is taken in phase
+1; an ambiguity stays a compile error. The builder
 checks `JsonSerializer.Serialize(value)` picks `(TValue, JsonSerializerOptions)` as C# does, and records in
 this document any call in the goal-4 checks where Haxe's pick differs from C#'s.
 
