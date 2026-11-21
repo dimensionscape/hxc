@@ -40,16 +40,18 @@ time, what Haxe cannot express today.
 1. `--dotnet` reads the reference pack for `-D dotnet-version` (default 10):
    `<dotnet root>/packs/Microsoft.NETCore.App.Ref/<N>.0.<highest patch>/ref/net<N>.0`, every DLL in it, as
    std. The output references `System.Runtime`, `System.Text.Json` and so on at `<N>.0.0.0`.
-2. Every member of those assemblies that Haxe can express is callable; every one it cannot is left out, and
-   `-D dotnet-netlib-report` lists each with the reason.
+2. Every member of those assemblies is either callable, refused at its call with a compile error (as today:
+   volatile fields, init-only setters, `modreq`/`in` parameters of virtual methods, …), or left out and listed
+   with its reason by `-D dotnet-netlib-report`. Nothing is dropped without one of the three.
 3. The whole std (`tools/stdall.sh`'s include set) builds with `--dotnet`, with no more stubs than with
    `--cs -D dotnet`.
 4. These run correctly with `--dotnet`: `System.Text.Json` (`JsonSerializer.Serialize`/`Deserialize` of a
    `Dictionary`, `JsonDocument.Parse` and property access), `HttpClient` constructed and configured (no
    network), `System.Threading.Channels` (create, write, read), `PriorityQueue`, `HashSet`,
    `ConcurrentDictionary`.
-5. A .NET parameter that C# lets a caller leave out is optional in Haxe, and leaving it out passes the
-   value C# would pass. `JsonSerializer.Serialize(d)` compiles and picks the overload C# picks.
+5. A parameter of a non-virtual .NET method or constructor that C# lets a caller leave out is optional in
+   Haxe, and leaving it out passes the value C# would pass. `JsonSerializer.Serialize(d)` compiles and picks
+   the overload C# picks.
 6. Inherited members of a generic base class instantiated with repeated or reordered parameters
    (`Channel<T> extends Channel<T, T>`) are referenced correctly, on both reference sets.
 7. `--cs` builds are unchanged: the same bytes for every existing case.
@@ -138,6 +140,12 @@ What the spike changed, which phase 1 does properly:
 
 ### Leaving members out (decided rules; the report format is my call)
 
+The rules below apply in a reference-pack build (`--dotnet` without `--net-std`) to every assembly it
+converts, `--net-lib` DLLs included. A Mono-reference build (`--cs`, `--cs -D dotnet`, `--dotnet --net-std`)
+converts exactly as today; the only change there is the `ref`/`out` erasure fix, which only turns a former
+`Type not found : T0` into a working conversion. So the existing case `netlib-modreq-members-are-refused`
+(a `ref` return under `--cs -D dotnet`) keeps its current error.
+
 A member is left out, with its reason, when:
 
 1. it is a static abstract or static virtual member of an interface;
@@ -147,27 +155,49 @@ A member is left out, with its reason, when:
 4. its signature contains a function pointer;
 5. (existing) it uses unmanaged pointers without `-D unsafe`.
 
-And at type level: a ref-returning indexer adds no `ArrayAccess`; a byref-like type is still converted (its
-name exists) but keeps only members that pass the rules. Rule 3 is new since the spike; the builder measures
-how many members it removes from the API program and the std and records it in the plan.
+At type level:
 
-`-D dotnet-netlib-report` prints one line per left-out member, after the compile, sorted and deduplicated, as
-`-D dotnet-stub-report` does: `left out <Type>.<member> <signature>: <reason>`. Only members of classes that
-were converted are listed (the light reader means unconverted classes are never examined).
+- A byref-like type is **not converted at all** in phase 1: writing its name is `Type not found`. Haxe cannot
+  keep a value of one within the runtime's rules (no closures, no `Dynamic`, no fields of ordinary classes,
+  no type arguments), so it gets no constructor, member or name until phase 2 designs them. Rule 3 finds
+  these types by the attribute on their definition, without needing a Haxe type for them.
+- A ref-returning indexer adds no `ArrayAccess`.
+- A Haxe class that extends a .NET class, or implements a .NET interface, with an abstract member that was
+  left out is a compile error naming that member (it could only fail to load). The same for a static
+  abstract interface member: implementing `INumber<T>` and the like is refused in phase 1.
 
-Rules 2 and 4 and the `ref`/`out` erasure fix apply on both reference sets, since they fix wrong conversions
-(today a `ref` return becomes `cs.Pointer<T>`). That changes `--cs` only if some existing case reaches such a
-member; goal 7 says it must not change any existing case's output, and the builder confirms it.
+`-D dotnet-netlib-report` prints one line per member the converter drops, after the compile, sorted and
+deduplicated, as `-D dotnet-stub-report` does: `left out <Type>.<member> <signature>: <reason>`. It covers
+rules 1–5 and the converter's existing drops that lose a callable member (a method sharing its name with a
+field, a property already declared). Exact-duplicate overloads are not listed: nothing is lost. Members refused
+at a call site are not listed either: they are compile errors already, not silent. Only members of classes
+that were converted are listed (the light reader means unconverted classes are never examined). In a
+Mono-reference build the report lists the existing drops only.
 
 ### Optional parameters (decided for `--dotnet` only)
 
 A parameter `ExternMembers.canOmit` accepts (a default value, `[Optional]`, or a trailing `params` array; never
-`ref`/`out`) becomes an optional Haxe argument (`?name`) in the converted extern, with the reference pack only.
-At a call that leaves it out, the generator passes what C# passes: the constant default (`a.constant`), the
+`ref`/`out`) becomes an optional Haxe argument (`?name`) in the converted extern, with the reference pack only,
+and only on static methods, constructors and non-virtual instance methods. Virtual, abstract and interface
+methods keep every parameter required, so a Haxe override or implementation never has to match optional
+flags, and a Haxe body never receives a padded argument (`Stream.ReadAsync(…, CancellationToken)` still
+takes its token).
+
+Which arguments were left out is decided in the **typer**, not guessed by the generator: the C# platform pads
+omitted arguments with `null` (`padNulls`), which the generator cannot tell from a `null` the user wrote. For
+calls to these .NET members the typer marks each padded argument as omitted (trailing or skipped in the
+middle). At an omitted argument the generator passes what C# passes: the constant default (`a.constant`), the
 `[DefaultParameterValue]`/`pdefault` value, `null` for a reference type, `default(T)` for a value type, and an
-empty array for `params`. Overload resolution then follows Haxe's rules for optional arguments; the builder
-checks `JsonSerializer.Serialize(value)` picks `(TValue, JsonSerializerOptions)` as C# does and records any
-case where Haxe's choice differs from C#'s.
+empty array for `params`. An argument the user wrote is passed as written, as in C#: an explicit `null` to a
+reference-type parameter is `null` even where the default is `"dflt"`. A value-type parameter cannot take
+`null`, so a literal `null` there counts as omitted; a non-constant `Null<T>` value there is converted as Haxe
+converts `Null<T>` to `T` anywhere (ordinary Haxe semantics, not a new approximation).
+
+Overload resolution keeps Haxe's rules, with one tie-break from C#: when two candidates both match, the one
+that needs no omitted arguments beats one that does (C# 12.6.4.3; `F(int)` over `F(int, int b = 0)` for
+`F(1)`). Nothing else of C#'s rules is taken in phase 1; an ambiguity stays a compile error. The builder
+checks `JsonSerializer.Serialize(value)` picks `(TValue, JsonSerializerOptions)` as C# does, and records in
+this document any call in the goal-4 checks where Haxe's pick differs from C#'s.
 
 ### The generic base bug (decided: fix in the generator)
 
@@ -197,9 +227,11 @@ still passes.
   their expected dumps are updated where assembly scopes change (`[mscorlib]` → `[System.Runtime]`). A new
   tag is unnecessary.
 - New `@dotnet-flag` cases: the goal-4 API checks (each prints what it checked), the optional-parameter rules
-  (each default kind), `Same`/`Swap` from the fixture, a left-out member reported by
-  `-D dotnet-netlib-report` and refused at a call as an unknown field, and the missing-pack error (by pointing
-  `DOTNET_ROOT` at an empty folder).
+  (each default kind, an explicit `null` against a non-null default, a skipped middle argument, the
+  fewer-omitted tie-break, a virtual method staying required), `Same`/`Swap` from the fixture, a left-out
+  member reported by `-D dotnet-netlib-report` and refused at a call as an unknown field, `Span` as
+  `Type not found`, extending a class with a left-out abstract member refused, and the missing-pack error (by
+  pointing `DOTNET_ROOT` at an empty folder).
 - `tools/stdall.sh` takes an optional flag to build with `--dotnet`; the plan runs both.
 - All existing cases keep passing with unchanged bytes (goal 7).
 - CI's `.NET` job already installs the .NET 10 SDK, so the pack is there.
@@ -215,7 +247,7 @@ added to the report's reasons and to this document's list).
 
 - Goals 1–7 hold, with the cases above passing on the native and the .NET host.
 - `stdall.sh` with `--dotnet`: exit 0, stubs equal to the `--cs -D dotnet` run.
-- `-D dotnet-netlib-report` on the API program lists only phase-2 categories (rules 1–4).
+- `-D dotnet-netlib-report` on the API program lists only rules 1–4 and the existing drops named above.
 - The .NET suite (all cases), hxc's own conformance cases and `cs-target` pass; the .NET host still builds
   itself to the same bytes.
 - hello-world with `--dotnet` builds within 0.3 s of `--cs -D dotnet` (pinned, best of 3).
