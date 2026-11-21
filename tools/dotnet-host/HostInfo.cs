@@ -65,5 +65,101 @@ namespace hxchost {
 			LocalFree((IntPtr)argv);
 			return name;
 		}
+
+		// The C library's time calls, so that a macro's Date agrees with the native host's: the same range
+		// (Windows' mktime refuses years before 1969 and after 3001, and any result before the epoch), the
+		// same carrying of out-of-range fields, and the same local time zone. A struct tm is nine ints
+		// (sec, min, hour, mday, mon, year, wday, yday, isdst), followed elsewhere by tm_gmtoff and tm_zone,
+		// so each call gets 64 bytes.
+		[DllImport("ucrtbase", EntryPoint = "_mktime64")] static extern long WinMktime(int* tm);
+		[DllImport("ucrtbase", EntryPoint = "_localtime64_s")] static extern int WinLocaltime(int* tm, long* time);
+		[DllImport("ucrtbase", EntryPoint = "_gmtime64_s")] static extern int WinGmtime(int* tm, long* time);
+		[DllImport("libc", EntryPoint = "mktime")] static extern long PosixMktime(int* tm);
+		[DllImport("libc", EntryPoint = "localtime_r")] static extern IntPtr PosixLocaltime(long* time, int* tm);
+		[DllImport("libc", EntryPoint = "gmtime_r")] static extern IntPtr PosixGmtime(long* time, int* tm);
+
+		static readonly bool windows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+		// Cleared when the C library cannot be loaded; the framework's own dates answer from then on.
+		static bool useLibc = true;
+
+		static long CMktime(int* tm) => windows ? WinMktime(tm) : PosixMktime(tm);
+
+		static bool CBrokenDown(long time, bool utc, int* tm) {
+			if (windows) return (utc ? WinGmtime(tm, &time) : WinLocaltime(tm, &time)) == 0;
+			return (utc ? PosixGmtime(&time, tm) : PosixLocaltime(&time, tm)) != IntPtr.Zero;
+		}
+
+		// mktime over the fields with tm_isdst -1: the clock in seconds, or -1 where mktime fails.
+		public static double Mktime(int year, int month, int day, int hour, int minute, int second) {
+			if (useLibc) try {
+				int* tm = stackalloc int[16];
+				tm[0] = second; tm[1] = minute; tm[2] = hour; tm[3] = day; tm[4] = month; tm[5] = year - 1900; tm[8] = -1;
+				return CMktime(tm);
+			} catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException) {
+				useLibc = false;
+			}
+			try {
+				var local = new DateTime(year, 1, 1, 0, 0, 0, DateTimeKind.Unspecified).AddMonths(month).AddDays(day - 1)
+					.AddHours(hour).AddMinutes(minute).AddSeconds(second);
+				var utc = local - TimeZoneInfo.Local.GetUtcOffset(local);
+				return Math.Floor((utc - DateTime.UnixEpoch).TotalSeconds);
+			} catch (ArgumentException) {
+				return -1;
+			}
+		}
+
+		// One field of localtime (or gmtime) of a clock in seconds: 0 sec, 1 min, 2 hour, 3 mday, 4 mon,
+		// 5 year, 6 wday. int.MinValue where the C library answers no tm (Windows' does before 1970).
+		public static int TmField(double seconds, bool utc, int field) {
+			if (useLibc) try {
+				int* tm = stackalloc int[16];
+				if (!CBrokenDown((long)seconds, utc, tm)) return int.MinValue;
+				return tm[field];
+			} catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException) {
+				useLibc = false;
+			}
+			DateTime dt;
+			try {
+				var u = DateTime.UnixEpoch.AddSeconds(Math.Floor(seconds));
+				dt = utc ? u : TimeZoneInfo.ConvertTimeFromUtc(u, TimeZoneInfo.Local);
+			} catch (ArgumentException) {
+				return int.MinValue;
+			}
+			switch (field) {
+				case 0: return dt.Second;
+				case 1: return dt.Minute;
+				case 2: return dt.Hour;
+				case 3: return dt.Day;
+				case 4: return dt.Month - 1;
+				case 5: return dt.Year - 1900;
+				default: return (int)dt.DayOfWeek;
+			}
+		}
+
+		// Date.getTimezoneOffset as the native host works it out: localtime and gmtime of the clock, each back
+		// through mktime with tm_isdst -1, and their difference in minutes. 1e300 when localtime fails, 2e300
+		// when gmtime does, 3e300 when either mktime does.
+		public static double TimezoneOffset(double seconds) {
+			if (useLibc) try {
+				int* lt = stackalloc int[16];
+				int* gt = stackalloc int[16];
+				if (!CBrokenDown((long)seconds, false, lt)) return 1e300;
+				if (!CBrokenDown((long)seconds, true, gt)) return 2e300;
+				lt[8] = -1; gt[8] = -1;
+				long a = CMktime(lt);
+				if (a == -1) return 3e300;
+				long b = CMktime(gt);
+				if (b == -1) return 3e300;
+				return ((double)b - (double)a) / 60.0;
+			} catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException) {
+				useLibc = false;
+			}
+			try {
+				var u = DateTime.UnixEpoch.AddSeconds(Math.Floor(seconds));
+				return -TimeZoneInfo.Local.GetUtcOffset(u).TotalMinutes;
+			} catch (ArgumentException) {
+				return 1e300;
+			}
+		}
 	}
 }

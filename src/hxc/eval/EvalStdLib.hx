@@ -228,6 +228,8 @@ class EvalStdLib {
 	static function unixMktime(ctx:EvalContext, y:Int, mo:Int, d:Int, h:Int, mi:Int, s:Int):Float {
 		#if cpp
 		var clock:Float = untyped __cpp__('([](int y, int mo, int d, int h, int mi, int s) { struct tm t; memset(&t, 0, sizeof(t)); t.tm_year = y - 1900; t.tm_mon = mo; t.tm_mday = d; t.tm_hour = h; t.tm_min = mi; t.tm_sec = s; t.tm_isdst = -1; return (double)mktime(&t); })({0}, {1}, {2}, {3}, {4}, {5})', y, mo, d, h, mi, s);
+		#elseif (cs && hxc_pcre2_netlib)
+		var clock = hxchost.HostInfo.Mktime(y, mo, d, h, mi, s);
 		#else
 		var clock = new Date(y, mo, d, h, mi, s).getTime() / 1000;
 		#end
@@ -252,6 +254,8 @@ class EvalStdLib {
 	static function unixTmField(seconds:Float, utc:Bool, field:Int):Int {
 		#if cpp
 		return untyped __cpp__('([](double s, bool utc, int f) { time_t c = (time_t)s; struct tm *t = utc ? gmtime(&c) : localtime(&c); if (!t) return (int)0x80000000; switch (f) { case 0: return t->tm_sec; case 1: return t->tm_min; case 2: return t->tm_hour; case 3: return t->tm_mday; case 4: return t->tm_mon; case 5: return t->tm_year; default: return t->tm_wday; } })({0}, {1}, {2})', seconds, utc, field);
+		#elseif (cs && hxc_pcre2_netlib)
+		return hxchost.HostInfo.TmField(seconds, utc, field);
 		#else
 		var dt = Date.fromTime(seconds * 1000);
 		return switch (field) {
@@ -276,8 +280,12 @@ class EvalStdLib {
 	// getTimezoneOffset: the local and UTC broken-down times, each back through mktime, and their
 	// difference in minutes.
 	static function dateTimezoneOffset(ctx:EvalContext, ms:Float):Int {
+		#if (cpp || (cs && hxc_pcre2_netlib))
 		#if cpp
 		var r:Float = untyped __cpp__('([](double s) { time_t c = (time_t)s; struct tm *l = localtime(&c); if (!l) return 1e300; struct tm lt = *l; struct tm *g = gmtime(&c); if (!g) return 2e300; struct tm gt = *g; lt.tm_isdst = -1; gt.tm_isdst = -1; time_t a = mktime(&lt); if (a == (time_t)-1) return 3e300; time_t b = mktime(&gt); if (b == (time_t)-1) return 3e300; return ((double)b - (double)a) / 60.0; })({0})', ms / 1000);
+		#else
+		var r = hxchost.HostInfo.TimezoneOffset(ms / 1000);
+		#end
 		if (r == 1e300) EvalExceptions.excString(ctx, "Invalid argument(localtime, )");
 		if (r == 2e300) EvalExceptions.excString(ctx, "Invalid argument(gmtime, )");
 		if (r == 3e300) mktimeError(ctx);
@@ -1684,6 +1692,15 @@ class EvalStdLib {
 
 	static function mkFileOutput(ctx:EvalContext, output:sys.io.FileOutput):EvalValue {
 		return mkOutput(ctx, output, output);
+	}
+
+	// A file opened for writing in text mode. The C library writes each LF as CR LF there on Windows; the .NET
+	// std's files are always binary, so the .NET host puts the same translation in front of the file.
+	static function mkFileOutputMode(ctx:EvalContext, output:sys.io.FileOutput, binary:Bool):EvalValue {
+		#if cs
+		if (!binary && Sys.systemName() == "Windows") return mkOutput(ctx, new TextModeOutput(output), output);
+		#end
+		return mkFileOutput(ctx, output);
 	}
 
 	static function mkOutput(ctx:EvalContext, output:haxe.io.Output, file:Null<sys.io.FileOutput>):EvalValue {
@@ -4700,7 +4717,8 @@ class EvalStdLib {
 		// is a system error, "<path>: <strerror>".
 		reg(s, "sys.io.File", "append", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
-			mkFileOutput(ctx, try sys.io.File.append(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+			var binary = fileBinaryFlag(arg(a, 1));
+			mkFileOutputMode(ctx, try sys.io.File.append(path, binary) catch (e:Dynamic) openError(ctx, path, 7, e), binary);
 		}));
 		// An unreadable file raises "Could not read file <path>".
 		reg(s, "sys.io.File", "getBytes", vfn(a -> {
@@ -4735,11 +4753,13 @@ class EvalStdLib {
 		}));
 		reg(s, "sys.io.File", "update", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
-			mkFileOutput(ctx, try sys.io.File.update(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+			var binary = fileBinaryFlag(arg(a, 1));
+			mkFileOutputMode(ctx, try sys.io.File.update(path, binary) catch (e:Dynamic) openError(ctx, path, 7, e), binary);
 		}));
 		reg(s, "sys.io.File", "write", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
-			mkFileOutput(ctx, try sys.io.File.write(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+			var binary = fileBinaryFlag(arg(a, 1));
+			mkFileOutputMode(ctx, try sys.io.File.write(path, binary) catch (e:Dynamic) openError(ctx, path, 7, e), binary);
 		}));
 		// Close: the channel stays, and closing it again does nothing. The position of a closed channel
 		// is the fd offset its buffer reached: refills of up to 64KB from where the last seek left it,
@@ -5519,3 +5539,40 @@ class EvalStdLib {
 		return EvalString.join(EvalString.emptyString(), [ascii("["), EvalString.join(ascii(","), l), ascii("]")]);
 	}
 }
+
+#if cs
+// Windows' text mode for writing: each LF goes to the file as CR LF. Unbuffered, so the file's own position
+// is where the next byte goes; a write counts the bytes it was given, as fwrite does.
+private class TextModeOutput extends haxe.io.Output {
+	final file:sys.io.FileOutput;
+
+	public function new(file:sys.io.FileOutput) {
+		this.file = file;
+	}
+
+	override public function writeByte(c:Int):Void {
+		if (c & 0xFF == 10) file.writeByte(13);
+		file.writeByte(c);
+	}
+
+	override public function writeBytes(s:haxe.io.Bytes, pos:Int, len:Int):Int {
+		if (pos < 0 || len < 0 || pos + len > s.length) throw haxe.io.Error.OutsideBounds;
+		var start = pos, end = pos + len;
+		for (i in pos...end) if (s.get(i) == 10) {
+			if (i > start) file.writeFullBytes(s, start, i - start);
+			file.writeByte(13);
+			start = i;
+		}
+		if (end > start) file.writeFullBytes(s, start, end - start);
+		return len;
+	}
+
+	override public function flush():Void {
+		file.flush();
+	}
+
+	override public function close():Void {
+		file.close();
+	}
+}
+#end
