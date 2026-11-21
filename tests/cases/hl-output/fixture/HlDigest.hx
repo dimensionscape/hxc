@@ -6,7 +6,8 @@ class HlDigest {
 	// Prints "== <path> <length> <md5>" once the .hl is written: the length and MD5 of its bytes with the
 	// case directory replaced by $CASE and the std directory by $STD in the strings table and the
 	// debug-files table. Those tables are length-prefixed, so they are decoded, substituted entry by entry and
-	// written again with their lengths recomputed; every other byte is kept. The result is only hashed, never
+	// written again with their lengths recomputed, and a substituted string's length in the ints table follows
+	// it (see normalise); every other byte is kept. The result is only hashed, never
 	// written. The std root is HAXE_STD_PATH, or else the class path entry that ends in hl/_std with that
 	// removed; entries under it (std/hl/_std/) stay distinct as $STD/hl/_std/.
 	// Each table is substituted only in the spellings Haxe 4.3.7 writes there, so that a compiler spelling a
@@ -92,8 +93,9 @@ class HlDigest {
 	}
 
 	// Reads the string table of n entries at pos (i32 size, the strings each ended by NUL, n lengths), writes it
-	// again with each entry substituted, and returns where it ended.
-	static function strings(b:Bytes, pos:Int, n:Int, subs:Array<Array<String>>, out:BytesBuffer):Int {
+	// again with each entry substituted, and returns where it ended. When `lengths` is given, each entry the
+	// substitution changed maps its length in characters to the new one there (the first such entry wins).
+	static function strings(b:Bytes, pos:Int, n:Int, subs:Array<Array<String>>, out:BytesBuffer, ?lengths:Map<Int, Int>):Int {
 		var size = b.getInt32(pos);
 		var data = pos + 4;
 		var p = pos + 4 + size;
@@ -102,7 +104,10 @@ class HlDigest {
 		for (_ in 0...n) {
 			var r = readIndex(b, p);
 			p = r.pos;
-			list.push(sub(b.getString(at, r.v), subs));
+			var s = b.getString(at, r.v);
+			var t = sub(s, subs);
+			if (lengths != null && t != s && !lengths.exists(s.length)) lengths.set(s.length, t.length);
+			list.push(t);
 			at += r.v + 1;
 		}
 		var total = 0;
@@ -135,9 +140,23 @@ class HlDigest {
 		}
 		var nints = counts[0], nfloats = counts[1], nstrings = counts[2];
 		var nbytes = version >= 5 ? counts[3] : 0;
+		// A String constant is its bytes in the strings table and its length in characters in the ints table, so
+		// a substituted string's old length is put back as its new one there: a -D absolute-path PosInfos file
+		// name in the std otherwise makes the digest depend on how long the std's path is. The ints are pooled by
+		// value, so a path whose length equals another constant still shares that entry, and digests differently
+		// from a machine where it does not.
+		var intsAt = pos;
 		pos += nints * 4 + nfloats * 8;
-		out.addBytes(b, 0, pos);
-		pos = strings(b, pos, nstrings, stringSubs, out);
+		var lengths = new Map<Int, Int>();
+		var table = new BytesBuffer();
+		pos = strings(b, pos, nstrings, stringSubs, table, lengths);
+		var head = b.sub(0, intsAt + nints * 4 + nfloats * 8);
+		for (i in 0...nints) {
+			var v = head.getInt32(intsAt + i * 4);
+			if (lengths.exists(v)) head.setInt32(intsAt + i * 4, lengths.get(v));
+		}
+		out.add(head);
+		out.add(table.getBytes());
 		var start = pos;
 		if (version >= 5) {
 			var total = b.getInt32(pos);
