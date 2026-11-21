@@ -29,6 +29,22 @@ the same results on either. The first build takes about a minute, later ones abo
 
 The compiler is as current as the sources it was built from: rebuild it when hxc changes.
 
+## Using it through haxelib
+
+`haxelib run hxc` runs `bin/hxc.exe` when there is one, and the native `bin/hxc-windows-x64.exe`
+otherwise. To make it run this compiler, or to refresh it after hxc changes:
+
+```sh
+tools/dotnet-host/update-bin.sh
+```
+
+It builds with whichever of `bin/`'s two compilers is newer, in a folder outside the repository
+(`%LOCALAPPDATA%\hxc\dotnet-host`, or `HXC_DOTNET_HOST_WORK`), and puts the six files in `bin/`. A compile
+running at the time keeps the files it has open. After a change to the .NET generator itself, add
+`--bootstrap`: the first build only runs the new generator, so it builds again with its own result and checks
+the two are identical. Deleting `bin/hxc.exe` goes back to the native compiler, and `haxelib run hxc rebuild`
+replaces it with a native one.
+
 ## What it is checked against
 
 The result of this script building itself is byte-identical whichever compiler ran the build, native or
