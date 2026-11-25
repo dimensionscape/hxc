@@ -128,7 +128,7 @@ class EvalSsl {
 			r == null ? VNull : encodeString(r);
 		}));
 
-		stat("sys.ssl.Mbedtls", "loadDefaults", vfn(a -> VInt(Mbedtls.certLoadDefaults(asX509Crt(ctx, arg(a, 0))))));
+		stat("sys.ssl.Mbedtls", "loadDefaults", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.certLoadDefaults(asX509Crt(ctx, arg(a, 0))))));
 		stat("sys.ssl.Mbedtls", "setSocket", vfn(a -> {
 			var ssl = asSsl(ctx, arg(a, 0));
 			var socket = asSocket(ctx, arg(a, 1));
@@ -142,15 +142,15 @@ class EvalSsl {
 		}));
 		meth("mbedtls.X509Crt", "parse", vmethod(a -> {
 			var bytes = EvalStdLib.decodeBytes(arg(a, 1));
-			VInt(Mbedtls.x509CrtParse(asX509Crt(ctx, arg(a, 0)), bytes));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.x509CrtParse(asX509Crt(ctx, arg(a, 0)), bytes));
 		}));
 		meth("mbedtls.X509Crt", "parse_file", vmethod(a -> {
 			var path = EvalStdLib.decodeString(ctx, arg(a, 1));
-			VInt(Mbedtls.x509CrtParseFile(asX509Crt(ctx, arg(a, 0)), path));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.x509CrtParseFile(asX509Crt(ctx, arg(a, 0)), path));
 		}));
 		meth("mbedtls.X509Crt", "parse_path", vmethod(a -> {
 			var path = EvalStdLib.decodeString(ctx, arg(a, 1));
-			VInt(Mbedtls.x509CrtParsePath(asX509Crt(ctx, arg(a, 0)), path));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.x509CrtParsePath(asX509Crt(ctx, arg(a, 0)), path));
 		}));
 
 		meth("mbedtls.Config", "authmode", vmethod(a -> {
@@ -167,7 +167,7 @@ class EvalSsl {
 			var preset = EvalStdLib.decodeInt(ctx, arg(a, 3));
 			var transport = EvalStdLib.decodeInt(ctx, arg(a, 2));
 			var endpoint = EvalStdLib.decodeInt(ctx, arg(a, 1));
-			VInt(Mbedtls.sslConfigDefaults(asConfig(ctx, arg(a, 0)), endpoint, transport, preset));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.sslConfigDefaults(asConfig(ctx, arg(a, 0)), endpoint, transport, preset));
 		}));
 		meth("mbedtls.Config", "rng", vmethod(a -> {
 			var rng = asCtrDrbg(ctx, arg(a, 1));
@@ -179,11 +179,11 @@ class EvalSsl {
 		meth("mbedtls.CtrDrbg", "random", vmethod(a -> {
 			var outputLen = EvalStdLib.decodeInt(ctx, arg(a, 2));
 			var output = EvalStdLib.decodeBytes(arg(a, 1));
-			VInt(Mbedtls.ctrDrbgRandom(asCtrDrbg(ctx, arg(a, 0)), output, outputLen));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.ctrDrbgRandom(asCtrDrbg(ctx, arg(a, 0)), output, outputLen));
 		}));
 		meth("mbedtls.CtrDrbg", "seed", vmethod(a -> {
 			var entropy = asEntropy(ctx, arg(a, 1));
-			VInt(Mbedtls.ctrDrbgSeed(asCtrDrbg(ctx, arg(a, 0)), entropy));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.ctrDrbgSeed(asCtrDrbg(ctx, arg(a, 0)), entropy));
 		}));
 
 		stat("mbedtls.Error", "strerror", vfn(a -> encodeString(Mbedtls.strerror(EvalStdLib.decodeInt(ctx, arg(a, 0))))));
@@ -192,52 +192,52 @@ class EvalSsl {
 			var rng = asCtrDrbg(ctx, arg(a, 3));
 			var password = optionalString(ctx, arg(a, 2));
 			var key = EvalStdLib.decodeBytes(arg(a, 1));
-			VInt(Mbedtls.pkParseKey(asPkContext(ctx, arg(a, 0)), key, password, rng));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.pkParseKey(asPkContext(ctx, arg(a, 0)), key, password, rng));
 		}));
 		meth("mbedtls.PkContext", "parse_keyfile", vmethod(a -> {
 			var rng = asCtrDrbg(ctx, arg(a, 3));
 			var password = optionalString(ctx, arg(a, 2));
 			var path = EvalStdLib.decodeString(ctx, arg(a, 1));
-			VInt(Mbedtls.pkParseKeyfile(asPkContext(ctx, arg(a, 0)), path, password, rng));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.pkParseKeyfile(asPkContext(ctx, arg(a, 0)), path, password, rng));
 		}));
 		meth("mbedtls.PkContext", "parse_public_key", vmethod(a -> {
 			var key = EvalStdLib.decodeBytes(arg(a, 1));
-			VInt(Mbedtls.pkParsePublicKey(asPkContext(ctx, arg(a, 0)), key));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.pkParsePublicKey(asPkContext(ctx, arg(a, 0)), key));
 		}));
 		meth("mbedtls.PkContext", "parse_public_keyfile", vmethod(a -> {
 			var path = EvalStdLib.decodeString(ctx, arg(a, 1));
-			VInt(Mbedtls.pkParsePublicKeyfile(asPkContext(ctx, arg(a, 0)), path));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.pkParsePublicKeyfile(asPkContext(ctx, arg(a, 0)), path));
 		}));
 
 		meth("mbedtls.Ssl", "get_peer_cert", vmethod(a -> {
 			var cert = Mbedtls.sslGetPeerCert(asSsl(ctx, arg(a, 0)));
 			cert == null ? VNull : encodeInstance(ctx, "mbedtls.X509Crt", IMbedtlsX509Crt(cert));
 		}));
-		meth("mbedtls.Ssl", "handshake", vmethod(a -> VInt(Mbedtls.sslHandshake(asSsl(ctx, arg(a, 0))))));
+		meth("mbedtls.Ssl", "handshake", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.sslHandshake(asSsl(ctx, arg(a, 0))))));
 		meth("mbedtls.Ssl", "read", vmethod(a -> {
 			var len = EvalStdLib.decodeInt(ctx, arg(a, 3));
 			var pos = EvalStdLib.decodeInt(ctx, arg(a, 2));
 			var buf = EvalStdLib.decodeBytes(arg(a, 1));
-			VInt(Mbedtls.sslRead(asSsl(ctx, arg(a, 0)), buf, pos, len));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.sslRead(asSsl(ctx, arg(a, 0)), buf, pos, len));
 		}));
 		meth("mbedtls.Ssl", "set_hostname", vmethod(a -> {
 			var hostname = EvalStdLib.decodeString(ctx, arg(a, 1));
-			VInt(Mbedtls.sslSetHostname(asSsl(ctx, arg(a, 0)), hostname));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.sslSetHostname(asSsl(ctx, arg(a, 0)), hostname));
 		}));
 		meth("mbedtls.Ssl", "setup", vmethod(a -> {
 			var conf = asConfig(ctx, arg(a, 1));
-			VInt(Mbedtls.sslSetup(asSsl(ctx, arg(a, 0)), conf));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.sslSetup(asSsl(ctx, arg(a, 0)), conf));
 		}));
 		meth("mbedtls.Ssl", "write", vmethod(a -> {
 			var len = EvalStdLib.decodeInt(ctx, arg(a, 3));
 			var pos = EvalStdLib.decodeInt(ctx, arg(a, 2));
 			var buf = EvalStdLib.decodeBytes(arg(a, 1));
-			VInt(Mbedtls.sslWrite(asSsl(ctx, arg(a, 0)), buf, pos, len));
+			hxc.eval.EvalValue.EvalValueTools.vint(Mbedtls.sslWrite(asSsl(ctx, arg(a, 0)), buf, pos, len));
 		}));
 
 		for (t in [{path: "mbedtls.SslAuthmode", group: 0}, {path: "mbedtls.SslEndpoint", group: 1},
 				{path: "mbedtls.SslPreset", group: 2}, {path: "mbedtls.SslTransport", group: 3}])
-			for (f in Mbedtls.flags(t.group)) stat(t.path, f.name, VInt(f.value));
+			for (f in Mbedtls.flags(t.group)) stat(t.path, f.name, hxc.eval.EvalValue.EvalValueTools.vint(f.value));
 	}
 }
 #end

@@ -1,0 +1,1737 @@
+# The .hl file Haxe writes, as its length and MD5 (HlDigest).
+--- empty-main
+class P { static function main() {} }
+===
+
+--- empty-main-dce-full + -dce full
+class P { static function main() {} }
+===
+
+--- trace-hello
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
+
+--- no-debug + -D hl_no_debug
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
+
+--- statics-strings
+class P {
+	static var count = 3;
+	static var ratio:Float = 1.5;
+	static var name = "hl";
+	static var flag:Bool;
+
+	static function twice(x:Int):Int {
+		return x * 2;
+	}
+
+	static function describe(i:Int, f:Float, b:Bool, s:String):String {
+		return s + ":" + i + "/" + f + "/" + b;
+	}
+
+	static function main() {
+		var a = 7;
+		var b = 3;
+		Sys.println(a + b);
+		Sys.println(a - b);
+		Sys.println(a * b);
+		Sys.println(a / b);
+		Sys.println(a % b);
+		Sys.println(a > b);
+		Sys.println(a <= b);
+		Sys.println(a == b);
+		Sys.println(a != b);
+		var f = 2.5;
+		Sys.println(f * ratio + a);
+		Sys.println(f < ratio);
+		flag = a > 5 && b < 5;
+		Sys.println(flag || false);
+		Sys.println(!flag);
+		Sys.println(-a);
+		Sys.println(twice(count));
+		Sys.println(Std.string(a) + Std.string(f));
+		Sys.println(name + " " + count + " " + ratio + " " + flag);
+		Sys.println(describe(a, f, flag, name));
+		var s = "x";
+		s += "y";
+		Sys.println(s == "xy");
+		Sys.println(s.length);
+	}
+}
+===
+
+--- classes
+class Base {
+	public var x:Int;
+	public var label(get, never):String;
+
+	public function new(x:Int) {
+		this.x = x;
+	}
+
+	function get_label():String {
+		return "base" + x;
+	}
+
+	public function value():Int {
+		return x;
+	}
+
+	public function add(n:Int):Int {
+		return value() + n;
+	}
+}
+
+class Child extends Base {
+	public var y:Float;
+
+	public function new(x:Int, y:Float) {
+		super(x + 1);
+		this.y = y;
+	}
+
+	override public function value():Int {
+		return super.value() * 10;
+	}
+}
+
+class P {
+	static function main() {
+		var b = new Base(2);
+		var c = new Child(3, 0.5);
+		Sys.println(b.value());
+		Sys.println(c.value());
+		Sys.println(c.add(5));
+		Sys.println(b.label);
+		Sys.println(c.label);
+		Sys.println(c.y + c.x);
+		var o:Base = c;
+		Sys.println(o.value());
+	}
+}
+===
+
+--- control-flow
+class P {
+	static function find(limit:Int):Int {
+		var i = 0;
+		while (true) {
+			if (i * i > limit) return i;
+			i++;
+		}
+		return -1;
+	}
+
+	static function main() {
+		var n = 10;
+		var total = 0;
+		for (i in 0...n) {
+			if (i % 2 == 0) continue;
+			if (i > 7) break;
+			total += i;
+		}
+		Sys.println(total);
+		var j = 0;
+		while (j < 5) {
+			j++;
+		}
+		Sys.println(j);
+		var k = 0;
+		do {
+			k += 3;
+		} while (k < 10);
+		Sys.println(k);
+		var count = 0;
+		for (a in 0...4) {
+			for (b in 0...a) {
+				count++;
+			}
+		}
+		Sys.println(count);
+		if (count > 5) {
+			Sys.println("big");
+		} else if (count > 2) {
+			Sys.println("medium");
+		} else {
+			Sys.println("small");
+		}
+		Sys.println(find(50));
+	}
+}
+===
+
+--- strings-unicode
+class P {
+	static function main() {
+		var s = "héllo €";
+		var e = "smile \u{1F600}!";
+		Sys.println(s);
+		Sys.println(e);
+		Sys.println(s.length);
+		Sys.println(e.length);
+	}
+}
+===
+
+--- closures
+class Counter {
+	public var n:Int;
+
+	public function new(n:Int) {
+		this.n = n;
+	}
+
+	public function add(k:Int):Int {
+		n += k;
+		return n;
+	}
+}
+
+class P {
+	static function twice(x:Int):Int {
+		return x * 2;
+	}
+
+	static function apply(f:Int->Int, v:Int):Int {
+		return f(v);
+	}
+
+	static function main() {
+		var fs:Array<Void->Int> = [];
+		for (i in 0...3) {
+			var j = i;
+			fs.push(() -> j * 10 + i);
+		}
+		for (f in fs) Sys.println(f());
+		var total = 0;
+		var label = "t";
+		var addTo = function(k:Int) {
+			total += k;
+			label += k;
+		};
+		addTo(4);
+		addTo(5);
+		Sys.println(label + total);
+		var only = 7;
+		var one = () -> only + 1;
+		Sys.println(one());
+		var c = new Counter(1);
+		var m = c.add;
+		Sys.println(m(2));
+		Sys.println(apply(c.add, 3));
+		var g = twice;
+		Sys.println(g(21));
+		Sys.println(apply(twice, 4));
+		var d:Dynamic = function(a:Int, b:Int) return a - b;
+		Sys.println(d(10, 3));
+		var dd:Dynamic = twice;
+		Sys.println(dd(5));
+		var nested = function(x:Int) {
+			return function(y:Int) return x * y + total;
+		};
+		Sys.println(nested(3)(4));
+	}
+}
+===
+
+--- anon-dynamic
+typedef Point = {x:Int, y:Int};
+
+class P {
+	static function sum(p:Point):Int {
+		return p.x + p.y;
+	}
+
+	static function show(d:Dynamic):String {
+		return d.name + "=" + d.value;
+	}
+
+	static function main() {
+		var p = {x: 1, y: 2};
+		Sys.println(sum(p));
+		p.x = 10;
+		Sys.println(sum(p));
+		var d:Dynamic = {name: "a", value: 3};
+		Sys.println(show(d));
+		d.value = 4;
+		d.extra = "e";
+		Sys.println(d.value + 1);
+		Sys.println(Reflect.field(d, "name"));
+		Sys.println(Reflect.field(d, "extra"));
+		Sys.println(Reflect.hasField(d, "missing"));
+		var o:Dynamic = {f: function(x:Int) return x + 1};
+		Sys.println(o.f(4));
+		var anon:{name:String, ?opt:Int} = {name: "n"};
+		Sys.println(anon.opt == null);
+		var withStr = {v: 2, toString: function() return "custom"};
+		Sys.println(withStr.v);
+		var empty = {};
+		Sys.println(Reflect.fields(empty).length);
+	}
+}
+===
+
+--- arrays
+class Item {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class P {
+	static function main() {
+		var ai = [3, 1, 2];
+		ai.push(5);
+		ai[0] = 4;
+		ai[1] += 1;
+		Sys.println(ai[0] + ai[1]);
+		var sum = 0;
+		for (x in ai) sum += x;
+		Sys.println(sum);
+		ai.sort((a, b) -> a - b);
+		Sys.println(ai.join(","));
+		var af = [1.5, 2.5];
+		af.push(3.0);
+		af[2] *= 2;
+		Sys.println(af[2]);
+		var as = ["b", "a"];
+		as.push("c");
+		as[0] += "!";
+		as.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		Sys.println(as.join("|"));
+		var ad:Array<Dynamic> = [1, "two", 3.5];
+		ad.push(null);
+		ad[0] = ad[0] + 1;
+		Sys.println(ad.length);
+		Sys.println(ad[1]);
+		Sys.println(ad[0]);
+		var items = [new Item(2), new Item(1)];
+		items.push(new Item(3));
+		items[0].v += 10;
+		var vs = items.map(i -> i.v * 2);
+		Sys.println(vs.join(","));
+		items.sort((a, b) -> a.v - b.v);
+		Sys.println(items[0].v);
+		var strs = ai.map(i -> "#" + i);
+		Sys.println(strs);
+		var empty:Array<Int> = [];
+		Sys.println(empty.length);
+	}
+}
+===
+
+--- enums-switch
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+
+enum Shape {
+	Circle(r:Float);
+	Rect(w:Int, h:Int);
+	Named(name:String, inner:Shape);
+	Empty;
+}
+
+enum Solo {
+	Only(v:Int);
+}
+
+class P {
+	static function area(s:Shape):Float {
+		return switch s {
+			case Circle(r): r * r * 3;
+			case Rect(w, h) if (w == h): w * w;
+			case Rect(w, h): w * h;
+			case Named(_, inner): area(inner);
+			case Empty: 0;
+		}
+	}
+
+	static function colorName(c:Color):String {
+		return switch c {
+			case Red: "red";
+			case Green: "green";
+			case Blue: "blue";
+		}
+	}
+
+	static function bucket(i:Int):String {
+		return switch i {
+			case 0: "zero";
+			case 1 | 2: "small";
+			case 10: "ten";
+			default: "other";
+		}
+	}
+
+	static function code(s:String):Int {
+		return switch s {
+			case "a": 1;
+			case "bb": 2;
+			case "héllo": 3;
+			default: -1;
+		}
+	}
+
+	static function main() {
+		Sys.println(area(Circle(1.0)));
+		Sys.println(area(Rect(2, 2)));
+		Sys.println(area(Rect(2, 3)));
+		Sys.println(area(Named("n", Rect(1, 5))));
+		Sys.println(area(Empty));
+		Sys.println(colorName(Green));
+		Sys.println(Type.enumIndex(Blue));
+		Sys.println(Type.enumIndex(Rect(1, 1)));
+		for (i in [0, 2, 10, 99]) Sys.println(bucket(i));
+		for (s in ["a", "bb", "héllo", "z"]) Sys.println(code(s));
+		var c = Red;
+		Sys.println(c == Red);
+		var o = Only(5);
+		switch o {
+			case Only(v): Sys.println(v);
+		}
+		Sys.println(Type.enumConstructor(Rect(1, 2)));
+		Sys.println(Type.enumParameters(Named("x", Empty)).length);
+	}
+}
+===
+
+--- compound-assign
+class Box {
+	public var v:Int = 1;
+	public var f:Float = 1.5;
+	public var nf:Null<Int> = 1;
+	public var prop(get, set):Int;
+
+	var store:Int = 2;
+
+	public function new() {}
+
+	function get_prop() {
+		return store;
+	}
+
+	function set_prop(x:Int) {
+		return store = x;
+	}
+}
+
+class P {
+	static var s:Int = 5;
+	static var sp(default, set):Int = 3;
+
+	static function set_sp(x:Int) {
+		return sp = x;
+	}
+
+	static function main() {
+		var l = 3;
+		l += 2;
+		l -= 1;
+		l *= 3;
+		l |= 1;
+		l <<= 2;
+		Sys.println(l);
+		Sys.println(l++);
+		Sys.println(--l);
+		var b = new Box();
+		b.v += 2;
+		b.v -= 1;
+		b.v *= 3;
+		b.v |= 8;
+		b.v <<= 1;
+		Sys.println(b.v);
+		Sys.println(b.v++);
+		Sys.println(--b.v);
+		b.f += 0.25;
+		b.f *= 2;
+		Sys.println(b.f);
+		b.nf += 2;
+		b.nf++;
+		Sys.println(b.nf);
+		s += 2;
+		s -= 1;
+		s *= 3;
+		s |= 16;
+		s <<= 1;
+		Sys.println(s);
+		Sys.println(s++);
+		Sys.println(--s);
+		var a = [1, 2, 3];
+		a[1] += 2;
+		a[1] -= 1;
+		a[1] *= 3;
+		a[1] |= 32;
+		a[1] <<= 1;
+		Sys.println(a[1]);
+		Sys.println(a[2]++);
+		Sys.println(--a[2]);
+		b.prop += 2;
+		b.prop -= 1;
+		b.prop *= 3;
+		b.prop |= 64;
+		b.prop <<= 1;
+		Sys.println(b.prop);
+		Sys.println(b.prop++);
+		Sys.println(--b.prop);
+		sp += 1;
+		sp <<= 2;
+		Sys.println(sp);
+		Sys.println(sp++);
+		Sys.println(--sp);
+		var cap = 1;
+		var fcap = () -> {
+			cap += 5;
+			cap++;
+			return cap;
+		};
+		Sys.println(fcap());
+		var d:Dynamic = {n: 1};
+		d.n += 2;
+		d.n++;
+		Sys.println(d.n);
+		var nl:Null<Int> = 4;
+		nl += 1;
+		nl++;
+		Sys.println(nl);
+		var fa = [1.0];
+		fa[0] += 0.5;
+		Sys.println(fa[0]);
+	}
+}
+===
+
+--- interfaces-many
+interface IA {
+	function a():Int;
+}
+
+interface IB {
+	function b():Int;
+}
+
+interface IC {
+	function c():Int;
+}
+
+interface ID {
+	function d():Int;
+}
+
+class One implements IA implements IB implements IC implements ID {
+	public function new() {}
+
+	public function a():Int {
+		return 1;
+	}
+
+	public function b():Int {
+		return 2;
+	}
+
+	public function c():Int {
+		return 3;
+	}
+
+	public function d():Int {
+		return 4;
+	}
+}
+
+class Two implements ID implements IC implements IB implements IA {
+	public function new() {}
+
+	public function d():Int {
+		return 40;
+	}
+
+	public function c():Int {
+		return 30;
+	}
+
+	public function b():Int {
+		return 20;
+	}
+
+	public function a():Int {
+		return 10;
+	}
+}
+
+class Three implements IC implements IA implements ID implements IB {
+	public function new() {}
+
+	public function b():Int {
+		return 200;
+	}
+
+	public function d():Int {
+		return 400;
+	}
+
+	public function a():Int {
+		return 100;
+	}
+
+	public function c():Int {
+		return 300;
+	}
+}
+
+class P {
+	static function viaA(x:IA):Int {
+		return x.a();
+	}
+
+	static function viaB(x:IB):Int {
+		return x.b();
+	}
+
+	static function viaC(x:IC):Int {
+		return x.c();
+	}
+
+	static function viaD(x:ID):Int {
+		return x.d();
+	}
+
+	static function main() {
+		var one = new One();
+		var two = new Two();
+		var three = new Three();
+		Sys.println(viaA(one) + viaB(one) + viaC(one) + viaD(one));
+		Sys.println(viaA(two) + viaB(two) + viaC(two) + viaD(two));
+		Sys.println(viaA(three) + viaB(three) + viaC(three) + viaD(three));
+		var ds:Array<ID> = [one, two, three];
+		var total = 0;
+		for (x in ds) total += x.d();
+		Sys.println(total);
+	}
+}
+===
+
+--- std-downcast
+interface Named {
+	function name():String;
+}
+
+class Animal implements Named {
+	public function new() {}
+
+	public function name():String {
+		return "animal";
+	}
+}
+
+class Dog extends Animal {
+	override public function name():String {
+		return "dog";
+	}
+
+	public function bark():String {
+		return "woof";
+	}
+}
+
+class P {
+	static function main() {
+		var a:Animal = new Dog();
+		var b:Animal = new Animal();
+		Sys.println(Std.isOfType(a, Dog));
+		Sys.println(Std.isOfType(b, Dog));
+		Sys.println(Std.isOfType(1, Int));
+		Sys.println(Std.isOfType("s", String));
+		var d = Std.downcast(a, Dog);
+		Sys.println(d != null ? d.bark() : "null");
+		var d2 = Std.downcast(b, Dog);
+		Sys.println(d2 == null);
+		var d3 = Std.instance(a, Dog);
+		Sys.println(d3 != null);
+		var f = Reflect.makeVarArgs(args -> args.length);
+		Sys.println(f(1, 2, 3));
+		var dyn:Dynamic = new Dog();
+		var c = cast(dyn, Dog);
+		Sys.println(c.bark());
+		var n = cast(dyn, Named);
+		Sys.println(n.name());
+		var dd:Dynamic = "str";
+		var s = cast(dd, String);
+		Sys.println(s.length);
+	}
+}
+===
+
+--- exceptions
+class MyException extends haxe.Exception {
+	public var code:Int;
+
+	public function new(msg:String, code:Int) {
+		super(msg);
+		this.code = code;
+	}
+}
+
+class P {
+	static function fail(kind:Int):Void {
+		switch kind {
+			case 0: throw "plain";
+			case 1: throw new MyException("mine", 7);
+			case 2: throw 42;
+			case -1: throw "negative";
+			case 1000: throw new haxe.Exception("big");
+			case _:
+		}
+	}
+
+	static function attempt(kind:Int):String {
+		try {
+			fail(kind);
+			return "none";
+		} catch (e:String) {
+			return "string " + e;
+		} catch (e:MyException) {
+			return "mine " + e.message + " " + e.code;
+		} catch (e:Dynamic) {
+			return "dynamic " + Std.string(e);
+		}
+	}
+
+	static function rethrow():Void {
+		try {
+			fail(1);
+		} catch (e:MyException) {
+			Sys.println("caught once: " + e.message);
+			throw e;
+		}
+	}
+
+	static function main() {
+		for (k in [0, 1, 2, 3, -1, 1000]) Sys.println(attempt(k));
+		try {
+			rethrow();
+		} catch (e:haxe.Exception) {
+			Sys.println("caught again: " + e.message + " " + (e.stack != null));
+		}
+		var count = 0;
+		for (i in 0...10) {
+			try {
+				if (i == 1) continue;
+				if (i == 5) break;
+				count += i;
+			} catch (e:Dynamic) {
+				count = -1;
+			}
+		}
+		Sys.println(count);
+		var v = try Std.parseInt("12") catch (e:Dynamic) -1;
+		Sys.println(v);
+		var w:Int = try {
+			fail(2);
+			0;
+		} catch (e:Dynamic) {
+			5;
+		}
+		Sys.println(w);
+	}
+}
+===
+
+--- hl-natives
+@:hlNative("std")
+class StdNatives {
+	public static function mathSqrt(v:Float):Float {
+		return 0.;
+	}
+
+	public static function gcMajor():Void {}
+
+	public static function twice(v:Int):Int {
+		return v * 2;
+	}
+}
+
+@:hlNative("std", "math_")
+class MathNatives {
+	public static function abs(v:Float):Float {
+		return 0.;
+	}
+
+	public static function fceil(v:Float):Float {
+		return 0.;
+	}
+}
+
+class Thing {
+	public var n:Int;
+
+	public function new() {
+		n = 3;
+	}
+}
+
+class P {
+	static function inc(r:hl.Ref<Int>):Void {
+		r.set(r.get() + 1);
+	}
+
+	static function main() {
+		var b = new hl.Bytes(16);
+		b.setI32(0, 42);
+		b.setI32(4, -7);
+		Sys.println(b.getI32(0) + b.getI32(4));
+		b.setF64(8, 2.5);
+		Sys.println(b.getF64(8));
+		b[1] = 255;
+		Sys.println(b[1]);
+		var a = new hl.NativeArray<Int>(4);
+		a[0] = 5;
+		a[3] = a[0] * 2;
+		Sys.println(a[3] + " " + a.length);
+		var x = 1;
+		inc(x);
+		inc(x);
+		Sys.println(x);
+		var r:hl.Ref<Int> = untyped $ref(x);
+		r.set(20);
+		Sys.println(x);
+		var i:hl.I64 = 5;
+		var j:hl.I64 = 1000000;
+		var k = i * j * j + i - j;
+		Sys.println(Std.string(k));
+		Sys.println(k > j);
+		b.setF32(12, 1.5);
+		Sys.println(b.getF32(12));
+		var big:hl.I64 = 123456789;
+		untyped $bseti64(b, 0, big * big);
+		var back:hl.I64 = untyped $bgeti64(b, 0);
+		Sys.println(Std.string(back));
+		var ra:hl.Ref<Int> = a;
+		Sys.println(ra.offset(3).get());
+		var arr = [7, 8, 9];
+		var ab:hl.Bytes = untyped $abytes(arr);
+		Sys.println(ab.getI32(4));
+		var t:Thing = untyped $new(Thing);
+		Sys.println(t.n);
+		Sys.println(StdNatives.mathSqrt(16.) + " " + StdNatives.twice(4));
+		StdNatives.gcMajor();
+		Sys.println(MathNatives.abs(-3.5) + " " + MathNatives.fceil(1.2));
+	}
+}
+===
+
+--- int64-maps
+import haxe.Int64;
+
+class Key {
+	public var name:String;
+
+	public function new(name:String) {
+		this.name = name;
+	}
+}
+
+class P {
+	static function main() {
+		var a = Int64.make(1, 2);
+		var b = Int64.ofInt(1000000);
+		var c = a * b + Int64.ofInt(-3);
+		Sys.println(Int64.toStr(c));
+		Sys.println("" + c);
+		Sys.println(c > a);
+		Sys.println(Int64.div(c, b) + " " + Int64.mod(c, b));
+		Sys.println(Int64.toInt(Int64.ofInt(7) << 2) + " " + (c.high) + " " + (c.low));
+		var mi = new Map<Int, String>();
+		mi.set(3, "three");
+		mi[1] = "one";
+		mi.set(2, "two");
+		mi.remove(3);
+		for (k => v in mi) Sys.println(k + "=" + v);
+		var ms = new Map<String, Int>();
+		ms["x"] = 1;
+		ms["y"] = 2;
+		ms.set("z", 26);
+		Sys.println(ms.exists("y") + " " + ms.get("q"));
+		for (k in ms.keys()) Sys.println(k + ":" + ms[k]);
+		var om = new haxe.ds.ObjectMap<Key, Int>();
+		var k1 = new Key("k1");
+		om.set(k1, 10);
+		om.set(new Key("k2"), 20);
+		var total = 0;
+		for (v in om) total += v;
+		for (k in om.keys()) total += k.name.length;
+		Sys.println(total + " " + om.get(k1));
+	}
+}
+===
+
+--- debug-assigns + --debug
+class Box<T> {
+	public var value:T;
+
+	public function new(v:T) {
+		value = v;
+	}
+
+	public function get():T {
+		return value;
+	}
+}
+
+class P {
+	static function main() {
+		var total = 0;
+		var label = "start";
+		for (i in 0...4) {
+			total += i;
+			label = label + i;
+			var sq = i * i;
+			total = total + sq;
+		}
+		var captured = 10;
+		var add = function(x:Int) {
+			captured += x;
+			return captured;
+		};
+		Sys.println(add(5));
+		Sys.println(total + " " + label + " " + captured);
+		var box = new Box<String>("boxed");
+		var s:String = box.value;
+		Sys.println(s + " " + box.get().length);
+		var d:Dynamic = "dyn";
+		var s2:String = d;
+		Sys.println(s2);
+	}
+}
+===
+
+--- debug-paths @ sub.P + -cp sub
+package sub;
+
+class Helper {
+	public static function greet(n:String):String {
+		return "hi " + n;
+	}
+}
+
+class P {
+	static function main() {
+		Sys.println(Helper.greet("there"));
+		trace("traced");
+	}
+}
+===
+
+--- debug-classpath + -cp sub
+# Greeter is the fixture's package-less sub/Greeter.hx, found through `sub/`: Haxe prepends class paths, so
+# `sub/` comes before the family's `./` and is the entry stripped from its debug file name.
+class P {
+	static function main() {
+		Sys.println(Greeter.greet("sub"));
+		trace("traced");
+	}
+}
+===
+
+--- resources + --macro P.addResources()
+class P {
+	#if macro
+	static function addResources() {
+		haxe.macro.Context.addResource("b", haxe.io.Bytes.ofString("2"));
+		haxe.macro.Context.addResource("a", haxe.io.Bytes.ofString("1"));
+		haxe.macro.Context.addResource("nul", haxe.io.Bytes.ofHex("410042"));
+	}
+	#end
+
+	static function main() {
+		var names = haxe.Resource.listNames();
+		Sys.println(names.join(","));
+		for (n in names) Sys.println(n + "=" + haxe.Resource.getString(n).length + " " + haxe.Resource.getBytes(n).length);
+	}
+}
+===
+
+--- absolute-path + -D absolute-path
+# The absolute path is only in the debug-files table, which HlDigest normalises: a PosInfos file name (trace)
+# would also put its length in the ints table, which would make the digest depend on the case directory.
+class P {
+	static function main() {
+		Sys.println("where");
+	}
+}
+===
+
+--- generics-abstracts
+@:generic
+class Stack<T> {
+	var items:Array<T> = [];
+
+	public function new() {}
+
+	public function push(v:T):Void {
+		items.push(v);
+	}
+
+	public function pop():T {
+		return items.pop();
+	}
+
+	public var size(get, never):Int;
+
+	function get_size():Int {
+		return items.length;
+	}
+}
+
+abstract Meters(Int) {
+	public inline function new(v:Int) {
+		this = v;
+	}
+
+	@:from static function fromString(s:String):Meters {
+		return new Meters(s.length);
+	}
+
+	@:to function toFloat():Float {
+		return this / 2;
+	}
+
+	@:op(A + B) static function add(a:Meters, b:Meters):Meters;
+
+	@:op(A * B) static function scale(a:Meters, b:Int):Meters {
+		return new Meters(a.raw() * b);
+	}
+
+	@:op(-A) static function neg(a:Meters):Meters;
+
+	@:op(A > B) static function gt(a:Meters, b:Meters):Bool;
+
+	@:op(A == B) static function eq(a:Meters, b:Meters):Bool;
+
+	public inline function raw():Int {
+		return this;
+	}
+
+	public function toString():String {
+		return this + "m";
+	}
+}
+
+class P {
+	static inline function clamp(v:Int, lo:Int, hi:Int):Int {
+		return v < lo ? lo : (v > hi ? hi : v);
+	}
+
+	static function main() {
+		var si = new Stack<Int>();
+		si.push(1);
+		si.push(2);
+		var ss = new Stack<String>();
+		ss.push("a");
+		Sys.println(si.pop() + si.size + " " + ss.pop() + ss.size);
+		var a = new Meters(3);
+		var b:Meters = "hello";
+		var c = a + b;
+		var d = c * 2;
+		var e = -d;
+		Sys.println(c.toString() + " " + d.raw() + " " + e.toString());
+		Sys.println(d > c);
+		Sys.println(a == new Meters(3));
+		var f:Float = d;
+		Sys.println(f);
+		Sys.println(clamp(15, 0, 10) + clamp(-3, 0, 10) + clamp(4, 0, 10));
+		var x = 7;
+		Sys.println(clamp(x, 0, 5));
+	}
+}
+===
+
+--- string-buf-math
+class P {
+	static function main() {
+		var b = new StringBuf();
+		b.add("x=");
+		b.add(12);
+		b.addChar(0x41);
+		b.addChar(0xE9);
+		b.addSub("abcdef", 1, 3);
+		b.add(1.5);
+		b.add(true);
+		b.add(null);
+		Sys.println(b.toString());
+		Sys.println(b.length);
+		Sys.println(Math.floor(2.7) + " " + Math.floor(-2.5) + " " + Math.ceil(2.1) + " " + Math.round(2.5));
+		Sys.println(Math.sqrt(16) + " " + Math.sqrt(2));
+		Sys.println(Math.pow(2, 10) + " " + Math.pow(2, 0.5));
+		Sys.println(Math.abs(-3) + " " + Math.min(1, 2) + " " + Math.max(1.5, -1));
+		Sys.println(Std.parseInt("42") + " " + Std.parseInt("0x1F") + " " + Std.parseInt("  -7z") + " " + Std.parseInt("x"));
+		Sys.println(Std.parseFloat("3.25") + " " + Std.parseFloat("1e3") + " " + Std.parseFloat("abc"));
+		Sys.println(Std.int(3.9) + " " + Std.int(-3.9));
+		Sys.println(0.1);
+		Sys.println(1e21);
+		Sys.println(-0.0);
+		Sys.println(Math.NaN);
+		Sys.println(Math.POSITIVE_INFINITY + " " + Math.NEGATIVE_INFINITY);
+		Sys.println(Math.isNaN(Math.NaN) + " " + Math.isFinite(1.0));
+		Sys.println(1 / 3);
+		Sys.println(0.1 + 0.2);
+		Sys.println(123456789.125);
+		var f:Float = 5;
+		Sys.println(f);
+	}
+}
+===
+
+--- reflect-type
+class Animal {
+	public var name:String;
+
+	public function new(name:String) {
+		this.name = name;
+	}
+
+	public function speak():String {
+		return name + " speaks";
+	}
+}
+
+class Dog extends Animal {
+	public function new(name:String) {
+		super(name);
+	}
+
+	override public function speak():String {
+		return name + " barks";
+	}
+}
+
+enum Kind {
+	KA;
+	KB(v:Int);
+}
+
+class P {
+	static function main() {
+		var d = new Dog("rex");
+		Sys.println(Type.getClassName(Type.getClass(d)));
+		Sys.println(Type.getClassName(Type.getSuperClass(Dog)));
+		Sys.println(Type.getClassName(Animal));
+		var a:Animal = Type.createInstance(Dog, ["fido"]);
+		Sys.println(a.speak());
+		var cl = Type.resolveClass("Animal");
+		Sys.println(cl == Animal);
+		Sys.println(Type.getEnumName(Kind));
+		Sys.println(Type.enumConstructor(KB(3)) + " " + Type.enumParameters(KB(3)) + " " + Type.enumIndex(KB(3)));
+		var o = {x: 1, y: "two", z: 3.5};
+		var fs = Reflect.fields(o);
+		fs.sort((a, b) -> a < b ? -1 : (a > b ? 1 : 0));
+		Sys.println(fs.join(","));
+		Sys.println(Reflect.field(o, "y"));
+		Reflect.setField(o, "x", 10);
+		Sys.println(o.x);
+		Sys.println(Reflect.hasField(o, "z") + " " + Reflect.hasField(o, "w"));
+		var values:Array<Dynamic> = [1, 2.5, "s", true, null, d, KA, o, Dog, Kind, function() {}];
+		for (v in values) Sys.println(Type.typeof(v));
+		Sys.println(Std.isOfType(d, Animal) + " " + Std.isOfType(a, Dog) + " " + Std.isOfType("s", Int));
+		Sys.println(Type.getInstanceFields(Dog).length > 0);
+		Sys.println(Reflect.isFunction(d.speak) + " " + Reflect.isObject(o));
+	}
+}
+===
+
+# A recursive generic typedef: each apply_typedef makes a fresh anon, and the second visit of Node<Int> finds
+# the first in genhl's anons_cache only because OCaml compares the anons structurally. Pair swaps its
+# parameters, so the hit is two applications away; Tree recurses through Array<>. No second instance of Node:
+# Haxe 4.3.7 itself runs out of memory comparing Node<Int>'s virtual with Node<String>'s (the recursive field
+# `next` sorts before `value`, so OCaml's compare recurses through `next` without end).
+--- recursive-typedef
+typedef Node<T> = {value:T, ?next:Node<T>}
+typedef Pair<A, B> = {a:A, b:Null<Pair<B, A>>}
+typedef Tree<T> = {label:T, children:Array<Tree<T>>}
+
+class P {
+	static function sum(n:Node<Int>):Int {
+		var s = 0;
+		while (n != null) {
+			s += n.value;
+			n = n.next;
+		}
+		return s;
+	}
+
+	static function count<T>(t:Tree<T>):Int {
+		var c = 1;
+		for (x in t.children) c += count(x);
+		return c;
+	}
+
+	static function main() {
+		var n:Node<Int> = {value: 1, next: {value: 2}};
+		Sys.println(n.next.value);
+		Sys.println(sum({value: 3, next: n}));
+		var p:Pair<Int, String> = {a: 1, b: {a: "x", b: {a: 2, b: null}}};
+		Sys.println(p.b.a + p.b.b.a);
+		var t:Tree<String> = {label: "root", children: [{label: "leaf", children: []}, {label: "leaf2", children: []}]};
+		Sys.println(t.children[1].label + " " + count(t));
+	}
+}
+===
+
+# ---- Optimiser cases (hlopt): each gives the optimiser aliases, dead moves, temporaries or null checks. ----
+
+--- opt-temps
+// Pins register reuse: many temporaries of one type, anonymous-structure and closure temporaries,
+// and a value held across a call.
+class P {
+	static function id(x:Int):Int {
+		return x;
+	}
+
+	static function add3(a:Int, b:Int, c:Int):Int {
+		return a + b + c;
+	}
+
+	static function pt(x:Int, y:Int):{x:Int, y:Int} {
+		return {x: x, y: y};
+	}
+
+	static function mk(k:Int):Int->Int {
+		return function(v:Int) return v + k;
+	}
+
+	static function main() {
+		var a = id(1) + id(2) * id(3) - id(4) / id(5) + add3(id(6), id(7) + id(8), id(9) * id(10));
+		Sys.println(a);
+		var s = pt(id(1), id(2));
+		var t = pt(s.x + id(3), s.y * id(4));
+		var u = pt(t.x + s.x, t.y + s.y);
+		Sys.println(s.x + t.x + u.x + s.y + t.y + u.y);
+		var f = mk(id(5));
+		var g = mk(id(6));
+		var h = mk(f(id(1)) + g(id(2)));
+		Sys.println(f(1) + g(1) + h(1));
+		// held across a call
+		var held = id(10) * 3;
+		var r = id(held) + id(1);
+		Sys.println(held + r);
+		var fl = id(2) * 1.5 + id(3) / 2.0 - id(1) * 0.25;
+		Sys.println(fl);
+	}
+}
+===
+
+--- opt-loops
+// Pins liveness over back edges: while and for with break and continue, a do-while, a nested loop,
+// and a variable live across the back edge.
+class P {
+	static function main() {
+		var i = 0;
+		var acc = 0;
+		while (i < 20) {
+			i++;
+			if (i % 3 == 0) continue;
+			if (i > 15) break;
+			acc += i;
+		}
+		Sys.println(acc + ":" + i);
+		var sum = 0;
+		for (k in 0...10) {
+			if (k == 2) continue;
+			if (k == 8) break;
+			sum += k * k;
+		}
+		Sys.println(sum);
+		var n = 0;
+		do {
+			n += 2;
+		} while (n < 9);
+		Sys.println(n);
+		var tot = 0;
+		for (a in 0...5) {
+			var row = 0;
+			for (b in 0...5) {
+				if (b > a) break;
+				row += a * b;
+			}
+			tot += row;
+		}
+		Sys.println(tot);
+		// live across the back edge
+		var prev = 1;
+		var cur = 1;
+		for (_ in 0...10) {
+			var nx = prev + cur;
+			prev = cur;
+			cur = nx;
+		}
+		Sys.println(cur + prev);
+		var arr = [3, 1, 2];
+		var m = 0;
+		for (v in arr) if (v > m) m = v;
+		Sys.println(m);
+	}
+}
+===
+
+--- opt-switch
+// Pins jump-table switches: a dense Int switch (OSwitch), an enum switch and a string switch.
+enum Color {
+	Red;
+	Green;
+	Blue;
+	Rgb(r:Int, g:Int, b:Int);
+}
+
+class P {
+	static function dense(x:Int):String {
+		return switch (x) {
+			case 0: "zero";
+			case 1: "one";
+			case 2: "two";
+			case 3: "three";
+			case 4: "four";
+			case 5: "five";
+			default: "many";
+		}
+	}
+
+	static function color(c:Color):Int {
+		return switch (c) {
+			case Red: 1;
+			case Green: 2;
+			case Blue: 3;
+			case Rgb(r, g, b): r + g + b;
+		}
+	}
+
+	static function str(s:String):Int {
+		return switch (s) {
+			case "a": 1;
+			case "bb": 2;
+			case "ccc": 3;
+			default: -1;
+		}
+	}
+
+	static function main() {
+		for (i in -1...8) Sys.println(dense(i));
+		Sys.println(color(Red) + color(Green) + color(Blue) + color(Rgb(4, 5, 6)));
+		Sys.println(str("a") + str("bb") + str("ccc") + str("zzz"));
+	}
+}
+===
+
+--- opt-trycatch
+// Pins exception handlers: nested try with a throw inside catch and a rethrow, a try whose body always
+// returns, and catch (String) beside catch (Dynamic).
+class P {
+	static function nested(x:Int):String {
+		try {
+			try {
+				if (x == 1) throw "inner";
+				if (x == 2) throw 42;
+				return "none";
+			} catch (e:String) {
+				if (x == 1) throw "again " + e;
+				return "s";
+			}
+		} catch (e:Dynamic) {
+			return "outer " + e;
+		}
+	}
+
+	static function rethrow(x:Int):Int {
+		try {
+			try {
+				if (x > 0) throw "boom";
+				return 0;
+			} catch (e:Dynamic) {
+				throw e;
+			}
+		} catch (e:String) {
+			return e.length;
+		}
+	}
+
+	static function alwaysReturns():Int {
+		try {
+			return 7;
+		} catch (e:Dynamic) {
+			return 8;
+		}
+	}
+
+	static function kinds(x:Int):String {
+		try {
+			if (x == 0) throw "str";
+			if (x == 1) throw 5;
+			return "fine";
+		} catch (e:String) {
+			return "String " + e;
+		} catch (e:Dynamic) {
+			return "Dynamic " + e;
+		}
+	}
+
+	static function main() {
+		Sys.println(nested(0));
+		Sys.println(nested(1));
+		Sys.println(nested(2));
+		Sys.println(rethrow(0));
+		Sys.println(rethrow(1));
+		Sys.println(alwaysReturns());
+		Sys.println(kinds(0));
+		Sys.println(kinds(1));
+		Sys.println(kinds(2));
+	}
+}
+===
+
+--- opt-nullcheck
+// Pins null-check removal: repeated field reads and writes on one object, the same after new,
+// and through a local alias.
+class Box {
+	public var x:Int;
+	public var y:Int;
+	public var next:Box;
+
+	public function new(x:Int, y:Int) {
+		this.x = x;
+		this.y = y;
+	}
+
+	public function sum():Int {
+		return x + y + x + y;
+	}
+}
+
+class P {
+	static function same(a:Box):Int {
+		a.x = a.x + 1;
+		a.y = a.x + a.y;
+		a.x = a.y * 2;
+		return a.x + a.y;
+	}
+
+	static function alias(a:Box):Int {
+		var b = a;
+		var r = b.x;
+		a.y = r + 1;
+		b.x = a.y + b.y;
+		return a.x + b.y;
+	}
+
+	static function main() {
+		var o = new Box(1, 2);
+		o.x += 5;
+		o.y += o.x;
+		Sys.println(o.x + o.y + o.sum());
+		Sys.println(same(new Box(3, 4)));
+		Sys.println(alias(new Box(5, 6)));
+		var chain = new Box(1, 1);
+		chain.next = new Box(2, 2);
+		chain.next.x = chain.next.y + chain.x;
+		Sys.println(chain.next.x + chain.next.y);
+	}
+}
+===
+
+--- opt-unreachable
+// Pins dead-code removal: code after return and throw in branches, a value computed and never read,
+// and an if whose jump lands on the next op once dead code is gone.
+class P {
+	static function afterReturn(x:Int):Int {
+		if (x > 0) {
+			return 1;
+			x = 5;
+			Sys.println("dead");
+		} else {
+			return 2;
+		}
+		return 3;
+	}
+
+	static function afterThrow(x:Int):Int {
+		try {
+			if (x > 0) {
+				throw "t";
+				x = 9;
+			}
+			return x;
+		} catch (e:String) {
+			return -1;
+		}
+	}
+
+	static function unused(x:Int):Int {
+		var a = x * 2;
+		var b = a + 1;
+		var c = b;
+		var s = "never read " + x;
+		return x;
+	}
+
+	static function nojmp(x:Int):Int {
+		var r = 0;
+		if (x > 3) {
+			// empty branch: its jump falls onto the next op
+		}
+		if (x > 5) {
+			var dead = x;
+		} else {
+			r = 1;
+		}
+		return r;
+	}
+
+	static function main() {
+		Sys.println(afterReturn(1));
+		Sys.println(afterReturn(-1));
+		Sys.println(afterThrow(0));
+		Sys.println(afterThrow(2));
+		Sys.println(unused(4));
+		Sys.println(nojmp(1));
+		Sys.println(nojmp(9));
+	}
+}
+===
+
+--- opt-closure-dyn
+// Pins OCallClosure on a Dynamic (Issue3218): a typed function stored in a Dynamic then called, and a
+// Dynamic that holds a Dynamic -> Dynamic.
+class P {
+	static function sq(x:Int):Int {
+		return x * x;
+	}
+
+	static function half(x:Float):Float {
+		return x / 2;
+	}
+
+	static function main() {
+		var d:Dynamic = sq;
+		Sys.println(d(7));
+		var e:Dynamic = half;
+		Sys.println(e(5.0));
+		var k = 10;
+		var f:Dynamic = function(v:Int):Int return v + k;
+		Sys.println(f(3) + f(4));
+		var g:Dynamic = function(v:Dynamic):Dynamic return v;
+		Sys.println(g("same"));
+		Sys.println(g(12));
+		var h:Dynamic->Dynamic = function(v:Dynamic):Dynamic return v;
+		var hd:Dynamic = h;
+		Sys.println(hd(3.5));
+	}
+}
+===
+
+--- opt-assigns
+// Pins copy propagation and dead stores: locals merged or dropped, an argument copied into a local,
+// and a local whose only write is removed.
+class P {
+	static function copyArg(x:Int, y:Int):Int {
+		var a = x;
+		var b = y;
+		a = a + b;
+		return a + b;
+	}
+
+	static function chain(x:Int):Int {
+		var a = x;
+		var b = a;
+		var c = b;
+		return c + a;
+	}
+
+	static function onlyWrite(x:Int):Int {
+		var w = x * 3;
+		w = x * 4;
+		var z;
+		z = 1;
+		return x;
+	}
+
+	static function main() {
+		var a = Std.random(1) + 5;
+		var b = a;
+		Sys.println(b);
+		Sys.println(copyArg(2, 3));
+		Sys.println(chain(4));
+		Sys.println(onlyWrite(6));
+		var s = "x";
+		var t = s;
+		var u = t;
+		s = "y";
+		Sys.println(s + t + u);
+	}
+}
+===
+
+--- opt-ref-struct
+// Pins hl.Ref passed to a function, and an @:struct class with an @:packed field read twice
+// (the packed OField null-check rule).
+@:struct class Inner {
+	public var a:Int;
+	public var b:Int;
+
+	public function new(a:Int, b:Int) {
+		this.a = a;
+		this.b = b;
+	}
+}
+
+@:struct class Outer {
+	@:packed public var inner:Inner;
+	public var n:Int;
+
+	public function new() {
+		n = 0;
+	}
+}
+
+class P {
+	static function bump(r:hl.Ref<Int>):Void {
+		r.set(r.get() + 1);
+		r.set(r.get() * 2);
+	}
+
+	static function main() {
+		var v = 3;
+		bump(v);
+		bump(v);
+		Sys.println(v);
+		var o = new Outer();
+		o.inner.a = 4;
+		o.inner.b = 5;
+		Sys.println(o.inner.a + o.inner.a + o.inner.b);
+		Sys.println(o.n);
+	}
+}
+===
+
+--- opt-long-function
+// Stress: one function with 2000 `if (x == i) y += i;` statements and a 400-case Int switch, built by a
+// macro, so the optimiser's blocks, liveness and assigns remap run over a long function.
+class P {
+	static macro function gen() {
+		var stmts = [];
+		for (i in 0...2000) stmts.push(macro if (x == $v{i}) y += $v{i});
+		var cases = [for (i in 0...400) {values: [macro $v{i}], expr: macro y += $v{i * 3}, guard: null}];
+		stmts.push({expr: ESwitch(macro x, cases, macro y -= 1), pos: haxe.macro.Context.currentPos()});
+		return macro $b{stmts};
+	}
+
+	static function main() {
+		var x = Std.random(1) + 7;
+		var y = 0;
+		gen();
+		Sys.println(y);
+	}
+}
+===
+
+--- opt-assigns-debug + --debug
+// opt-assigns with --debug: the assigns remap runs over the debug information.
+class P {
+	static function copyArg(x:Int, y:Int):Int {
+		var a = x;
+		var b = y;
+		a = a + b;
+		return a + b;
+	}
+
+	static function chain(x:Int):Int {
+		var a = x;
+		var b = a;
+		var c = b;
+		return c + a;
+	}
+
+	static function onlyWrite(x:Int):Int {
+		var w = x * 3;
+		w = x * 4;
+		var z;
+		z = 1;
+		return x;
+	}
+
+	static function main() {
+		var a = Std.random(1) + 5;
+		var b = a;
+		Sys.println(b);
+		Sys.println(copyArg(2, 3));
+		Sys.println(chain(4));
+		Sys.println(onlyWrite(6));
+		var s = "x";
+		var t = s;
+		var u = t;
+		s = "y";
+		Sys.println(s + t + u);
+	}
+}
+===
+
+--- opt-dump + -D dump
+// opt-loops with -D dump: the .hl must not change when the optimiser also writes dump/hlopt.txt.
+class P {
+	static function main() {
+		var i = 0;
+		var acc = 0;
+		while (i < 20) {
+			i++;
+			if (i % 3 == 0) continue;
+			if (i > 15) break;
+			acc += i;
+		}
+		Sys.println(acc + ":" + i);
+		var sum = 0;
+		for (k in 0...10) {
+			if (k == 2) continue;
+			if (k == 8) break;
+			sum += k * k;
+		}
+		Sys.println(sum);
+		var n = 0;
+		do {
+			n += 2;
+		} while (n < 9);
+		Sys.println(n);
+		var tot = 0;
+		for (a in 0...5) {
+			var row = 0;
+			for (b in 0...5) {
+				if (b > a) break;
+				row += a * b;
+			}
+			tot += row;
+		}
+		Sys.println(tot);
+		// live across the back edge
+		var prev = 1;
+		var cur = 1;
+		for (_ in 0...10) {
+			var nx = prev + cur;
+			prev = cur;
+			cur = nx;
+		}
+		Sys.println(cur + prev);
+		var arr = [3, 1, 2];
+		var m = 0;
+		for (v in arr) if (v > m) m = v;
+		Sys.println(m);
+	}
+}
+===

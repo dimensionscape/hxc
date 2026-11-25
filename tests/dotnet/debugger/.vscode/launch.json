@@ -1,0 +1,18 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Debug the sample (.NET)",
+			"type": "coreclr",
+			"request": "launch",
+			"program": "${workspaceFolder}/out/out.dll",
+			"cwd": "${workspaceFolder}",
+			"console": "internalConsole",
+			"stopAtEntry": false,
+			"justMyCode": false,
+			"symbolOptions": {
+				"searchPaths": ["${workspaceFolder}/out"]
+			}
+		}
+	]
+}

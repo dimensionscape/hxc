@@ -1,0 +1,122 @@
+# Candidate tests/dotnet cases from the exit area (D:/_hxc4c/exit/NOTES.md). Outputs under [run]/[gencs] are
+# real: probe.sh runs of hxc 7df87731 and Haxe 4.3.7 gencs on 2026-10-28 (probe/nullsurface, probe/unsafe,
+# probe/anonf). Each case's comment says what hxc does today and what it should do.
+
+# haxe.lang.Null<T> has the C# surface hxcs's @:classCode gives it: the implicit conversions from T and from
+# __NoValue__ (C# code passing a bool to a Haxe ?x:Bool parameter needs the first: the server app's cs/Server
+# and cs/SharedServer do it 14 times), the nested __NoValue__ class, _ofDynamic, and initonly fields.
+# Today hxc prints "ofDynamic / False / false false / no op_Implicit(T)"; gencs's output is the expectation.
+--- null-struct-csharp-surface @gencs
+class P {
+	static function main() {
+		var t:cs.system.Type = cs.system.Type.GetType("haxe.lang.Null`1");
+		var names = [];
+		for (m in t.GetMethods()) {
+			var n = m.Name;
+			if (m.IsStatic && (n == "op_Implicit" || n == "_ofDynamic" || n == "ofDynamic")) names.push(n);
+		}
+		names.sort(Reflect.compare);
+		Sys.println(names.join(","));
+		Sys.println(t.GetNestedType("__NoValue__") != null);
+		Sys.println(t.GetField("value").IsInitOnly + " " + t.GetField("hasValue").IsInitOnly);
+		var ti = t.MakeGenericType(cs.NativeArray.make(cs.system.Type.GetType("System.Int32")));
+		var conv = null;
+		for (m in ti.GetMethods())
+			if (m.Name == "op_Implicit" && m.GetParameters()[0].ParameterType == cs.system.Type.GetType("System.Int32")) conv = m;
+		if (conv != null) Sys.println(conv.Invoke(null, cs.NativeArray.make((5 : Dynamic))));
+		else Sys.println("no op_Implicit(T)");
+	}
+}
+===
+[run]
+_ofDynamic,ofDynamic,op_Implicit,op_Implicit
+True
+true true
+5
+
+# The same surface as metadata: gencs's rows (HxcCheck dump of gencs's server DLL, base type's scope adjusted
+# to what an hxc case without --net-std references). Today hxc has no _ofDynamic/op_Implicit/__NoValue__, no
+# initonly, and an extra `string toString()`. Member order is gencs's; if 4c keeps hxc's order (optional item),
+# reorder the expectation instead.
+--- null-struct-csharp-metadata @lib @dump=haxe.lang.Null`1,haxe.lang.Null`1/__NoValue__
+class P {}
+===
+[dump]
+type public sealed sequential beforefieldinit haxe.lang.Null`1<T> extends [mscorlib]System.ValueType
+  field public initonly !0 value
+  field public initonly bool hasValue
+  method public static hidebysig haxe.lang.Null`1<!0> _ofDynamic(object)
+  method public static hidebysig specialname haxe.lang.Null`1<!0> op_Implicit(!0)
+  method public static hidebysig specialname haxe.lang.Null`1<!0> op_Implicit(haxe.lang.Null`1/__NoValue__<!0>)
+  method public virtual hidebysig string ToString()
+  method public hidebysig specialname rtspecialname void .ctor(!0, bool)
+  method public static hidebysig haxe.lang.Null`1<!!0> ofDynamic<D>(object)
+  method public hidebysig object toDynamic()
+type public sealed beforefieldinit haxe.lang.Null`1/__NoValue__<T> extends [mscorlib]System.Object
+  method private hidebysig specialname rtspecialname void .ctor()
+
+# -D unsafe (the server app passes it) must not make the assembly unverifiable: hxc writes no
+# haxe.lang.BoxedPointer, as the server app's Builder.hx deletes gencs's BoxedPointer.cs, so its shipped DLL has
+# none. Today hxc writes the class (field `object*`) and the harness's ILVerify fails:
+#   haxe.lang.BoxedPointer::.ctor: UnmanagedPointer Unmanaged pointers are not a verifiable type. (Offset=7)
+# gencs (no Builder patch) keeps the class, so its run prints True: a deliberate divergence toward what ships.
+--- unsafe-define-verifies @gencs + -D unsafe
+class P {
+	static function main() {
+		Sys.println(cs.system.Type.GetType("haxe.lang.BoxedPointer") != null);
+	}
+}
+===
+[run]
+False
+[gencs]
+True
+
+# A class whose only float-like reflection candidates are anonymous-structure fields gets gencs's own
+# __hx_getField_f/__hx_setField_f overrides (gencs's is_dynamic counts a TAnon that isn't class/enum statics).
+# Behaviour already agrees (both throw on the Float read and accept the Float write); only the declaring type
+# of the override differs: hxc prints haxe.lang.HxObject on the first line today. Optional (reflection only).
+--- reflect-getfield-f-anon-field @gencs
+typedef Pt = {x:Int};
+class C {
+	public var p:Pt;
+	public function new() {
+		p = {x: 1};
+	}
+}
+class P {
+	static function main() {
+		var t:cs.system.Type = cs.system.Type.GetType("C");
+		var m = t.GetMethod("__hx_getField_f");
+		Sys.println(m.DeclaringType.FullName);
+		var d:Dynamic = new C();
+		try {
+			var g:Float = d.p;
+			Sys.println(g);
+		} catch (e:Dynamic) {
+			Sys.println("threw " + Type.getClassName(Type.getClass(e)));
+		}
+		d.p = 3.5;
+		Sys.println(d.p);
+		var c:C = d;
+		Sys.println(Std.string((cast c.p : Dynamic)));
+		Sys.println(Reflect.field(d, "p"));
+		Sys.println(Reflect.fields(d).join(","));
+	}
+}
+===
+[run]
+C
+threw System.NullReferenceException
+3.5
+3.5
+3.5
+p
+
+# Not a harness case (needs the server app): the exit's acceptance, as scripts in D:/_hxc4c/exit/.
+#  1. hxc builds the server hxml + -D dll-name=HaxeServer (+ the owner's source changes) with 0 errors.
+#  2. sln-hxc: cs/Server builds against it with <Reference HintPath> in SharedServer, WebAPI and Server: 0 errors.
+#  3. measure/verify.sh on it: 0 lines.
+#  4. tools/refcheck: consumers compiled against gencs's DLL resolve every reference in hxc's (and the reverse);
+#     tools/loadall: every method JITs in the deployed folder.
+#  5. measure/nochrome.sh: SAME; FieldLookupStressTest with hxc: PASS.

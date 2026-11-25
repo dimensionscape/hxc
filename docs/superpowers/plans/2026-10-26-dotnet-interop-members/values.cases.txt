@@ -1,0 +1,539 @@
+# Candidate tests/dotnet cases for milestone 4a's value-level interop (D:/_hxc4a/values/NOTES.md).
+# Remove this header before pasting: the harness has no comment syntax.
+# Every case needs the proposed @netlib tag (NOTES.md, "Harness change"): the harness builds
+# tests/dotnet/netlib/ValLib.cs (a copy of D:/_hxc4a/values/lib/ValLib.cs, net10.0) once, passes
+# `--net-lib <abs>/ValLib.dll` to hxc and to gencs, references it from gencs's csproj and copies it beside
+# a/P/*.dll after the determinism check (ILVerify and the run resolve it from there).
+# [run] sections are gencs's real output (Haxe 4.3.7 + hxcs 4.2.0, net10.0), except where a [gencs]
+# section follows: there [run] is what hxc should print and [gencs] what gencs really does.
+--- netlib-nullable-null @gencs @netlib
+import cs.system.Nullable_1;
+import cs.system.DateTime;
+import vallib.Nul;
+import vallib.Model;
+
+@:nativeGen class NModel {
+	public var a:Nullable_1<Int> = null;
+	public var d:Nullable_1<DateTime> = null;
+	public var b:Nullable_1<Bool> = new Nullable_1<Bool>(true);
+	public function new() {}
+}
+
+class HModel {
+	public var a:Nullable_1<Int> = null;
+	public var b:Nullable_1<Bool>;
+	public function new() {}
+}
+
+class P {
+	static function ret(b:Bool):Nullable_1<DateTime> {
+		if (b) return null;
+		return new Nullable_1<DateTime>(new DateTime(2021, 3, 4));
+	}
+	static function retT(b:Bool, x:Null<Int>):Nullable_1<Int> {
+		return b ? null : x != null ? new Nullable_1<Int>(x) : null;
+	}
+	static function idOf(v:Nullable_1<Int>):Null<Int> {
+		return v.HasValue ? v.Value : null;
+	}
+	static function main() {
+		// null into locals, fields, returns, arguments, properties
+		var n:Nullable_1<Int> = null;
+		trace("local", n.HasValue);
+		var nm = new NModel();
+		trace("nativeGen fields", nm.a.HasValue, nm.d.HasValue, nm.b.HasValue, nm.b.Value);
+		var hm = new HModel();
+		trace("haxe fields", hm.a.HasValue, hm.b.HasValue);
+		trace("ret", ret(true).HasValue, ret(false).HasValue, ret(false).Value.Year);
+		trace("retT", retT(true, 1).HasValue, retT(false, 2).Value, retT(false, null).HasValue);
+		trace("arg", Nul.Show(null), Nul.Show(new Nullable_1<Int>(3)), Nul.Show(Nul.Maybe(true)));
+		var m = new Model();
+		m.NProp = new Nullable_1<Int>(7);
+		m.NField = new Nullable_1<Int>(8);
+		m.NBool = true ? new Nullable_1<Bool>(false) : null;
+		trace("props", m.ToString());
+		m.NProp = null;
+		m.NField = null;
+		m.NBool = false ? new Nullable_1<Bool>(false) : null;
+		trace("props null", m.ToString());
+		// == null and != null
+		var some = Nul.Maybe(true), none = Nul.Maybe(false);
+		trace("eq", some == null, some != null, none == null, none != null, null == none, null != some);
+		trace("prop eq", m.NProp == null, null != m.NProp);
+		m.NProp = new Nullable_1<Int>(1);
+		trace("prop eq2", m.NProp == null, null != m.NProp);
+		// HasValue, Value, GetValueOrDefault
+		trace("value", some.HasValue, some.Value, none.HasValue, none.GetValueOrDefault(), none.GetValueOrDefault(11));
+		try { trace(none.Value); } catch (e:Dynamic) { trace("none.Value throws", Type.getClassName(Type.getClass(e))); }
+		trace("idOf", idOf(some), idOf(none));
+		// arithmetic and comparisons on .Value
+		trace("math", some.Value + 1, some.Value < 10, some.Value == 5);
+	}
+}
+===
+[run]
+P.hx:33: local, false
+P.hx:35: nativeGen fields, false, false, true, true
+P.hx:37: haxe fields, false, false
+P.hx:38: ret, false, true, 2021
+P.hx:39: retT, false, 2, false
+P.hx:40: arg, none, has 3, has 5
+P.hx:45: props, Model(8,7,False,null,null)
+P.hx:49: props null, Model(null,null,null,null,null)
+P.hx:52: eq, false, true, true, false, true, true
+P.hx:53: prop eq, true, false
+P.hx:55: prop eq2, false, true
+P.hx:57: value, true, 5, false, 0, 11
+P.hx:58: none.Value throws, System.InvalidOperationException
+P.hx:59: idOf, 5, null
+P.hx:61: math, 6, true, true
+--- netlib-nullable-dynamic @gencs @netlib
+import cs.system.Nullable_1;
+import cs.system.DateTime;
+import cs.system.Guid;
+import vallib.Nul;
+import vallib.Model;
+import vallib.Pt;
+
+class Holder {
+	public var n:Nullable_1<Int>;
+	public var dt:Nullable_1<DateTime>;
+	public function new() {}
+}
+
+class P {
+	static function show(d:Dynamic) return d == null ? "null" : Std.string(d) + ":" + Type.getClassName(Type.getClass(d));
+	static function main() {
+		var some = Nul.Maybe(true), none = Nul.Maybe(false);
+		// Nullable into Dynamic
+		var d1:Dynamic = some, d2:Dynamic = none;
+		trace("dyn", show(d1), show(d2), d1 == null, d2 == null);
+		trace("trace direct", some, none);
+		trace("isOfType", Std.isOfType(d1, Int), Std.isOfType(d2, Int));
+		trace("ShowObj", Nul.ShowObj(some), Nul.ShowObj(none));
+		// Dynamic into Nullable
+		var dd:Dynamic = 4;
+		var back:Nullable_1<Int> = dd;
+		trace("from dyn", back.HasValue, back.Value);
+		var dn:Dynamic = null;
+		var back2:Nullable_1<Int> = dn;
+		trace("from dyn null", back2.HasValue);
+		// Reflection on a Haxe object with a Nullable field
+		var h = new Holder();
+		h.n = some;
+		trace("Reflect.field", show(Reflect.field(h, "n")), show(Reflect.field(h, "dt")));
+		Reflect.setField(h, "n", 12);
+		trace("Reflect.setField", h.n.HasValue, h.n.Value);
+		Reflect.setField(h, "n", null);
+		trace("Reflect.setField null", h.n.HasValue);
+		// Reflection on a .NET object's Nullable property
+		var m = new Model();
+		m.NProp = some;
+		trace("Reflect.field net", show(Reflect.field(m, "NProp")), show(Reflect.field(m, "NDate")));
+		Reflect.setProperty(m, "NProp", 21);
+		trace("Reflect.setProperty net", m.NProp.Value);
+		// Serializer
+		h.n = some;
+		trace("serialize", haxe.Serializer.run(h));
+		var l = Nul.ListOf();
+		trace("get_Item", l.get_Item(0).HasValue, l.get_Item(1).HasValue, Nul.ShowList(l));
+		var arr:Array<Nullable_1<Int>> = [some, none];
+		trace("array", arr.length, arr[0].Value, arr[1].HasValue, haxe.Serializer.run(arr));
+		var dyn:Dynamic = arr;
+		trace("dyn array", dyn[0], dyn[1]);
+		var dd:Dynamic = 4.0;
+		try { var back:Nullable_1<Int> = dd; trace("from dyn float", back.Value); } catch (e:Dynamic) trace("from dyn float throws", Type.getClassName(Type.getClass(e)));
+	}
+}
+===
+[run]
+P.hx:20: dyn, 5:Int, null, false, true
+P.hx:21: trace direct, 5, null
+P.hx:22: isOfType, true, false
+P.hx:23: ShowObj, obj System.Int32 5, obj null
+P.hx:27: from dyn, true, 4
+P.hx:30: from dyn null, false
+P.hx:34: Reflect.field, 5:Int, null
+P.hx:36: Reflect.setField, true, 12
+P.hx:38: Reflect.setField null, false
+P.hx:42: Reflect.field net, 5:Int, null
+P.hx:44: Reflect.setProperty net, 21
+P.hx:47: serialize, cy6:Holdery2:dtny1:ni5g
+P.hx:49: get_Item, true, false, 1;null;3;
+P.hx:51: array, 2, 5, false, ai5nh
+P.hx:53: dyn array, 5, null
+P.hx:55: from dyn float throws, System.InvalidCastException
+--- netlib-nullable-string @gencs @netlib
+class P {
+	static function main() {
+		var some = vallib.Nul.Maybe(true), none = vallib.Nul.Maybe(false);
+		trace(Std.string(some));
+		trace("c" + some);
+		trace('i $some');
+		try trace("c" + none) catch (e:Dynamic) trace("concat none throws", Type.getClassName(Type.getClass(e)));
+		try trace('i $none') catch (e:Dynamic) trace("interp none throws", Type.getClassName(Type.getClass(e)));
+		try trace(Std.string(none)) catch (e:Dynamic) trace("Std.string none throws", Type.getClassName(Type.getClass(e)));
+	}
+}
+===
+[run]
+P.hx:4: 5
+P.hx:5: c5
+P.hx:6: i 5
+P.hx:7: cnull
+P.hx:8: i null
+P.hx:9: null
+--- netlib-struct-null @gencs @netlib
+import cs.system.Nullable_1;
+import cs.system.DateTime;
+import cs.system.Guid;
+import vallib.Pt;
+class P {
+	static function completed(b:Bool):Nullable_1<DateTime> {
+		// The server app's WebApiHelpers.hx:630 shape: null into the DateTime argument is default(DateTime), so the
+		// Nullable has a value.
+		return new Nullable_1<DateTime>(b ? new DateTime(2000, 1, 1) : null);
+	}
+	static function main() {
+		var dt:DateTime = null;
+		trace("DateTime", dt.Ticks, dt == null, dt != null);
+		var dt2 = new DateTime(2020, 1, 1);
+		trace("DateTime set", dt2 == null, dt2 != null);
+		var pt:Pt = null;
+		trace("Pt", pt.X, pt == null);
+		pt.X = 1;
+		trace("Pt set", pt == null);
+		var g:Guid = null;
+		trace("Guid", g.ToString(), g == null);
+		var c = completed(false);
+		trace("completed", c.HasValue, c.Value.Year);
+	}
+}
+===
+[run]
+P.hx:13: DateTime, 0, true, false
+P.hx:15: DateTime set, false, true
+P.hx:17: Pt, 0, true
+P.hx:19: Pt set, false
+P.hx:21: Guid, 00000000-0000-0000-0000-000000000000, true
+P.hx:23: completed, true, 1
+--- netlib-nullable-casts @gencs @netlib
+import cs.system.Nullable_1;
+import cs.system.DateTime;
+class P {
+	static function name(e:Dynamic) return Type.getClassName(Type.getClass(e));
+	static function main() {
+		var some = vallib.Nul.Maybe(true), none = vallib.Nul.Maybe(false);
+		var c1:Nullable_1<Int> = cast 5;
+		trace("Int to Nullable", c1.HasValue, c1.Value);
+		var c2:Nullable_1<Bool> = cast true;
+		trace("Bool to Nullable", c2.Value);
+		var i:Int = cast some;
+		var j:Int = cast none;
+		trace("Nullable to Int", i, j);
+		var f:Float = cast some;
+		var b:Bool = cast new Nullable_1<Bool>(true);
+		trace("Nullable to Float and Bool", f, b);
+		var nd = vallib.Nul.MaybeDate(true), nn = vallib.Nul.MaybeDate(false);
+		var d:DateTime = cast nd;
+		trace("Nullable to DateTime", d.Year);
+		try { var e:DateTime = cast nn; trace(e.Year); } catch (x:Dynamic) trace("no value to DateTime throws", name(x));
+		var back:Nullable_1<DateTime> = cast d;
+		trace("DateTime to Nullable", back.Value.Month);
+		try { var ni:Nullable_1<Int> = cast 2.5; trace(ni.Value); } catch (x:Dynamic) trace("Float to Nullable<Int> throws", name(x));
+		var dd:Dynamic = 4;
+		var fromDyn:Nullable_1<Int> = dd;
+		trace("Dynamic to Nullable", fromDyn.Value);
+		var df:Dynamic = 4.0;
+		try { var x:Nullable_1<Int> = df; trace(x.Value); } catch (x:Dynamic) trace("Dynamic Float to Nullable<Int> throws", name(x));
+	}
+}
+===
+[run]
+P.hx:8: Int to Nullable, true, 5
+P.hx:10: Bool to Nullable, true
+P.hx:13: Nullable to Int, 5, 0
+P.hx:16: Nullable to Float and Bool, 5, true
+P.hx:19: Nullable to DateTime, 2020
+P.hx:20: no value to DateTime throws, System.NullReferenceException
+P.hx:22: DateTime to Nullable, 1
+P.hx:23: Float to Nullable<Int> throws, System.InvalidCastException
+P.hx:26: Dynamic to Nullable, 4
+P.hx:28: Dynamic Float to Nullable<Int> throws, System.InvalidCastException
+--- netlib-indexers @gencs @netlib
+import cs.system.collections.generic.List_1;
+import cs.system.collections.generic.IList_1;
+import cs.system.collections.generic.Dictionary_2;
+class Mail { public var Address:String; public function new(a) Address = a; }
+class P {
+	static function main() {
+		var g = new vallib.Grid();
+		trace("grid", g[0], g[2]);
+		g[1] = "B";
+		trace("grid set", g[1], g.get_Item(1));
+		g.set_Item(2, "C");
+		trace("grid set_Item", g[2]);
+		var r = new vallib.RoGrid();
+		trace("ro", r[3]);
+		var ls = new List_1<String>();
+		ls.Add("x"); ls.Add("y");
+		trace("list", ls[0], ls[1], ls.get_Item(1));
+		ls[0] = "X";
+		trace("list set", ls[0]);
+		var il:IList_1<String> = ls;
+		trace("ilist", il.get_Item(0));
+		var lm = new List_1<Mail>();
+		lm.Add(new Mail("a@b"));
+		trace("mail", lm[0].Address, lm.Count == 1 ? lm[0].Address : "none");
+		var li = new List_1<Int>();
+		li.Add(4);
+		var x:Int = li[0];
+		trace("int list", li[0], x + 1, li[0] + 1);
+		var d = new Dictionary_2<Int, String>();
+		d.set_Item(3, "three");
+		trace("dict", d[3], d.get_Item(3));
+		var s = "abc";
+		var cells = new vallib.Cells();
+		trace("cells", cells.get_Item(2, 3));
+		cells.set_Item(1, 2, 9);
+	}
+}
+===
+[run]
+P.hx:8: grid, a, c
+P.hx:10: grid set, B, B
+P.hx:12: grid set_Item, C
+P.hx:14: ro, 1.5
+P.hx:17: list, x, y, y
+P.hx:19: list set, X
+P.hx:21: ilist, X
+P.hx:24: mail, a@b, a@b
+P.hx:28: int list, 4, 5, 5
+P.hx:31: dict, three, three
+P.hx:34: cells, 203
+set 1,2=9
+--- netlib-indexer-compound @gencs @netlib
+import cs.system.collections.generic.List_1;
+class P {
+	static function main() {
+		var li = new List_1<Int>();
+		li.Add(4);
+		li[0] += 2;
+		trace("compound", li[0]);
+		li[0]++;
+		trace("inc", li[0]);
+		var ls = new List_1<String>();
+		ls.Add("a");
+		ls[0] += "b";
+		trace("str compound", ls[0]);
+		var v = (ls[0] = "z");
+		trace("assign value", v);
+		var g = new vallib.Grid();
+		g[0] += "!";
+		trace("grid compound", g[0]);
+		var ln = vallib.Nul.ListOf();
+		trace("nullable elem", ln[0], ln[1], ln[0] == null, ln[1] == null);
+	}
+}
+===
+[run]
+P.hx:7: compound, 6
+P.hx:9: inc, 7
+P.hx:13: str compound, ab
+P.hx:15: assign value, z
+P.hx:18: grid compound, a!
+P.hx:20: nullable elem, 1, null, false, true
+--- netlib-optional-defaults @gencs @netlib
+@:native("ValLib.Element") extern class HElement {
+	function new():Void;
+	function Focus():Bool;
+}
+@:native("ValLib.Input") extern class HInput extends HElement {
+	function new():Void;
+}
+@:native("ValLib.Opt") extern class HOpt {
+	static function All(a:Int, ?b:Int, ?s:String, ?d:Float):String;
+	@:native("All") static function AllFew(a:Int, b:Int):String;
+	static function Structs(a:Int):String;
+	static function Dec(a:Int):String;
+	static function Attr(a:Int):String;
+}
+@:native("ValLib.Opt") extern class HOpt2 {
+	static function Params(a:Int):String;
+}
+class P {
+	static function main() {
+		trace(new HElement().Focus());
+		trace(new HInput().Focus());
+		trace(HOpt.AllFew(1, 2));
+		trace(HOpt.Structs(1));
+		trace(HOpt.Dec(1));
+		trace(HOpt.Attr(1));
+	}
+}
+===
+[run]
+Focus(A,None)
+P.hx:20: true
+Focus(A,None)
+P.hx:21: true
+P.hx:22: All(1,2,dflt,1.5,B,null,True,-3,0.25,z,Ctrl,null)
+P.hx:23: Structs(1,0,Pt(0),null,4,C)
+P.hx:24: Dec(1,1.25)
+P.hx:25: Attr(1,0,42,Missing:System.Reflection.Missing,null)
+--- netlib-optional-declared @gencs @netlib
+@:native("ValLib.Opt") extern class HOpt {
+	static function All(a:Int, b:Int, ?s:String):String;
+}
+class P {
+	static function main() {
+		// Haxe pads ?s with null, which gencs passes; C# fills the rest from the metadata.
+		trace(HOpt.All(1, 2));
+		trace(HOpt.All(1, 2, "s"));
+	}
+}
+===
+[run]
+P.hx:7: All(1,2,null,1.5,B,null,True,-3,0.25,z,Ctrl,null)
+P.hx:8: All(1,2,s,1.5,B,null,True,-3,0.25,z,Ctrl,null)
+--- netlib-extern-signature-match @gencs @netlib
+@:native("ValLib.Visual") extern class HVisual { function new():Void; }
+@:native("ValLib.Control") extern class HControl extends HVisual { function new():Void; }
+@:native("ValLib.Panel") extern class HPanel extends HControl { function new():Void; }
+@:native("ValLib.Sig") extern class HSig {
+	static function Scale(c:HControl):String;
+	@:overload(function(v:HVisual):String {})
+	static function Over(c:HControl):String;
+	static function Num(i:Int):String;
+	static function Obj(s:String):String;
+}
+class P {
+	static function main() {
+		trace(HSig.Scale(new HPanel()));
+		trace(HSig.Over(new HPanel()));
+		trace(HSig.Over(new HVisual()));
+		trace(HSig.Num(3));
+		trace(HSig.Obj("x"));
+	}
+}
+===
+[run]
+P.hx:13: Scale(Panel)
+P.hx:14: Over(Control)
+P.hx:15: Over(Visual)
+P.hx:16: Num(3)
+P.hx:17: Obj(x)
+--- netlib-byref @gencs @netlib
+import vallib.Refs;
+import vallib.Pt;
+class Box { public var v:Int = 0; public var s:String; public function new() {} }
+class P {
+	static var sv:Int = 1;
+	static function main() {
+		var i = 0;
+		trace("TryParse", Refs.TryParse("42", i), i);
+		Refs.Inc(i);
+		trace("Inc local", i);
+		var b = new Box();
+		Refs.Inc(b.v);
+		trace("Inc field", b.v);
+		Refs.Inc(sv);
+		trace("Inc static", sv);
+		var s:String = null;
+		Refs.SetS(s);
+		trace("SetS", s);
+		Refs.SetS(b.s);
+		trace("SetS field", b.s);
+		var p = new Pt(1);
+		Refs.SetPt(p);
+		trace("SetPt", p.X, Refs.ReadIn(p));
+		var o:Dynamic = null;
+		Refs.SetObj(o);
+		trace("SetObj", o);
+		var f = function() { Refs.Inc(i); return i; };
+		trace("captured", f(), i);
+		var n = vallib.Nul.Maybe(false);
+		vallib.Nul.OutNullable(n);
+		trace("out nullable", n.Value);
+	}
+}
+===
+[run]
+P.hx:8: TryParse, true, 42
+P.hx:10: Inc local, 43
+P.hx:13: Inc field, 1
+P.hx:15: Inc static, 2
+P.hx:18: SetS, set
+P.hx:20: SetS field, set
+P.hx:23: SetPt, 101, 101
+P.hx:26: SetObj, 5
+P.hx:28: captured, 44, 43
+P.hx:31: out nullable, 9
+--- netlib-nullable-better @gencs @netlib
+import cs.system.Nullable_1;
+class P {
+	static function main() {
+		var some = vallib.Nul.Maybe(true);
+		var mp = new Map<String, Nullable_1<Int>>();
+		mp.set("a", some);
+		trace("map", mp.get("a").HasValue, mp.get("a").Value);
+		var nn:Null<Nullable_1<Int>> = some;
+		trace("Null<Nullable>", nn.Value);
+	}
+}
+===
+[run]
+P.hx:7: map, true, 5
+P.hx:9: Null<Nullable>, 5
+[gencs]
+Unhandled exception. Method "get_HasValue" not found on type System.Int32
+[exit 127]
+--- netlib-indexer-dynamic-write @netlib
+import cs.system.collections.generic.List_1;
+class P {
+	static function main() {
+		var li = new List_1<Int>();
+		li.Add(4);
+		var dyn:Dynamic = 10;
+		li[0] = dyn;
+		trace(li[0]);
+	}
+}
+===
+[run]
+P.hx:8: 10
+--- netlib-optional-declared-value-type @netlib
+@:native("ValLib.Opt") extern class HOpt {
+	static function All(a:Int, ?b:Int):String;
+}
+class P {
+	static function main() {
+		trace(HOpt.All(1));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-20 : dotnet: the .NET method ValLib.Opt.All with these argument types is not supported yet
+--- netlib-byref-refused @netlib
+import vallib.Refs;
+class P {
+	static function main() {
+		var d:Dynamic = 0;
+		Refs.Inc(d);
+		var ni:Null<Int> = 1;
+		Refs.Inc(ni);
+		var a = [1, 2];
+		Refs.Inc(a[0]);
+		var f = 1.0;
+		Refs.TryParse("3", cast f);
+		Refs.Inc(3);
+		trace(d, ni, a, f);
+	}
+}
+===
+[compile]
+P.hx:5: characters 3-14 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+P.hx:7: characters 3-15 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+P.hx:9: characters 3-17 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+P.hx:11: characters 3-29 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+P.hx:12: characters 3-14 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet

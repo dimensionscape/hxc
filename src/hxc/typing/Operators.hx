@@ -53,19 +53,6 @@ class Operators {
 		}
 	}
 
-	// The RAISING unify. Only OpEq/OpNotEq wants it, to pick the other direction when the first does not
-	// unify (castOrUnifyRaise inside a try whose fallback is the recording cast). Everywhere else uses the
-	// recording unify above, and raising there would swallow every later complaint.
-	static function unifyRaise(ctx:TyperContext, a:T, b:T, p:Position):Void {
-		DebugDump.unify("operator", a, b, p);
-		try {
-			TypeUnification.unifyDefault(a, b);
-		} catch (e:UnifyError) {
-			if (ctx.untypedMode) return;
-			throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), p);
-		}
-	}
-
 	static function checkAssign(ctx:TyperContext, e:TExpr):Void {
 		switch (e.expr) {
 			// When errors are ignored, assigning to a final local is not rejected here either.
@@ -333,18 +320,13 @@ class Operators {
 					case TAbstract(a, _) if (isVoid(e2.type)): throw new TypingError("Cannot compare Void", p);
 					case _:
 				}
+				// As Haxe: cast the FIRST operand to the second's type (a @:to/@:from cast is searched before plain
+				// unification, so `color != -1` with `abstract Color(Int) from Int` and `@:to toInt` calls toInt
+				// although Int would unify with Color), and only when that fails cast the second to the first's
+				// type, which records its own verdict at the binop position without aborting.
 				var c1 = e1, c2 = e2;
-				try unifyRaise(ctx, c1.type, c2.type, p) catch (_:TypingError) {
-					try unifyRaise(ctx, c2.type, c1.type, p) catch (_:TypingError) {
-						// Neither operand unifies directly: follow an abstract @:to/@:from cast so an abstract
-						// compares against its underlying type (plain unify does not chase method casts); the failure
-						// reports at the BINOP position without aborting, so a boolean context around the comparison
-						// still checks. The first operand goes through castOrUnifyRaise, and on its failure the
-						// second through castOrUnify, which records its own verdict.
-						try c1 = Typer.castOrUnifyRaise(ctx, c2.type, c1, p) catch (_:TypingError) {
-							c2 = Typer.castOrUnify(ctx, c1.type, c2, p);
-						}
-					}
+				try c1 = Typer.castOrUnifyRaise(ctx, c2.type, c1, p) catch (_:hxc.core.TypingError.CastUnifyError) {
+					c2 = Typer.castOrUnify(ctx, c1.type, c2, p);
 				}
 				switch [TypeFunctions.follow(c1.type), TypeFunctions.follow(c2.type)] {
 					case [TEnum(en, _), _] | [_, TEnum(en, _)]:
@@ -682,11 +664,14 @@ class Operators {
 				var tmpType = ctx.com.basic.tnull(tmin);
 				// The value-reference temp keeps its plain name (not a gen local), so it renders as tmp,
 				// not _gtmp.
-				var tmp = TypeFunctions.allocVar(VGenerated, "tmp", tmpType, p);
-				var tmpLocal = TexprTools.makeLocal(tmp, p);
-				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(tmpType, p)), ctx.com.basic.tbool, p);
+				// The temp, its reads, the null and the test sit at the left operand; only the if and the
+				// block span the whole `a ?? b`.
+				var p1 = te1.pos;
+				var tmp = TypeFunctions.allocVar(VGenerated, "tmp", tmpType, p1);
+				var tmpLocal = TexprTools.makeLocal(tmp, p1);
+				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(tmpType, p1)), ctx.com.basic.tbool, p1);
 				var iff = Typer.makeIfThenElse(ctx, check, tmpLocal, te2, WithTypeTools.withType(t), p);
-				var decl = TypeFunctions.mk(TVarExpr(tmp, te1), tvoid, p);
+				var decl = TypeFunctions.mk(TVarExpr(tmp, te1), tvoid, p1);
 				// The temp-binding block is wrapped in a :mergeBlock meta, so the analyzer merges it into
 				// the enclosing scope and declares an assigned-in-branches result var before the temp,
 				// rather than splicing the plain block and emitting the temp first.
@@ -950,7 +935,6 @@ class Operators {
 			// `c.next.set_x(c.next.get_x() + 1)`, which would re-evaluate it once per accessor.
 			var recvVars:Array<TExpr> = [];
 			var er = vrGetExprAux(ctx, recvVars, 1, "fh", recv);
-			var tmp = {expr: er, init: recvVars.length > 0 ? recvVars[0] : null};
 			var readVal = accessorReadOn(ctx, er, fa);
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			var br = makeBinop(ctx, sub, readVal, te2, true, withType, p);
@@ -960,7 +944,9 @@ class Operators {
 				case BinopSpecial(opCall, false): opCall;
 				case _: accessorWriteOn(ctx, er, fa, toTexpr(br), p);
 			};
-			return tmp.init == null ? tail : TypeFunctions.mk(TBlock([tmp.init, tail]), tail.type, p);
+			// The receiver bind and the write go out as a @:mergeBlock at the write's position, so in
+			// statement position they splice into the enclosing block like Haxe's value reference does.
+			return vrToTexpr(recvVars, tail);
 		}
 		// The target resolves with a write access so a (default, set) property dispatches through its
 		// setter for the write half.
@@ -1236,8 +1222,11 @@ class Operators {
 					FieldAccessTools.getFieldExpr(sfa, FCall);
 				case _: Typer.accGet(ctx, sAcc);
 			};
+			// The call has the setter's own return type, not the written value's: `c.p += x` on a
+			// Null<Float> property calls a setter that answers Null<Float>, though `c.p + x` is Float.
+			var setterRet = switch (TypeFunctions.follow(setterExpr.type)) { case TFun(s): s.ret; case _: value.type; };
 			return Calls.accessorCallResult(fa, Calls.makeCall(ctx, atFieldPos(setterExpr, fa.pos),
-				[Typer.castOrUnify(ctx, value.type, value, p)], value.type, p));
+				[Typer.castOrUnify(ctx, value.type, value, p)], setterRet, p));
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
 		var target = FieldAccessTools.getFieldExpr(faOn, FWrite);
@@ -1289,7 +1278,9 @@ class Operators {
 			Calls.forceFieldType(setterCf);
 			stmts.push(Calls.accessorCallResult(fa, Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p)));
 			stmts.push(epost);
-			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
+			// value_reference#to_texpr_el: the block is wrapped in a :mergeBlock meta
+			var block = TypeFunctions.mk(TBlock(stmts), epost.type, p);
+			return TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: Position.nullPos}, block), block.type, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
 		Calls.forceFieldType(setterCf);
@@ -1331,7 +1322,9 @@ class Operators {
 			var newv = toTexpr(makeBinop(ctx, binop, eLhs, one, false, withType, p));
 			stmts.push(accessorWriteOn(ctx, er, fa, newv, p));
 			stmts.push(epost);
-			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
+			// value_reference#to_texpr_el: the block is wrapped in a :mergeBlock meta
+			var block = TypeFunctions.mk(TBlock(stmts), epost.type, p);
+			return TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: Position.nullPos}, block), block.type, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
 		var setCall = accessorWriteOn(ctx, er, fa, newv, p);
@@ -1348,8 +1341,13 @@ class Operators {
 			case TAbstract(a, tl) if (a.impl != null):
 				for (au in a.unops) {
 					if (au.op != op || au.flag != flag) continue;
-					var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, au.cf.type))) { case TFun(s): s; case _: null; };
-					var ret = sig != null ? sig.ret : e.type;
+					// The field's own params become monomorphs, and the overload is taken when its type is a
+					// function of the operand (of the abstract's this for an instance one), which binds them.
+					var ret = TypeFunctions.mkMono();
+					var monos = [for (_ in au.cf.params) TypeFunctions.mkMono()];
+					var tcf = TypeFunctions.applyParams(a.params, tl, TypeFunctions.applyParams(au.cf.params, monos, au.cf.type));
+					var targ = TypeFunctions.hasClassFieldFlag(au.cf, CfImpl) ? TypeFunctions.applyParams(a.params, tl, a.thisType) : e.type;
+					if (!TypeUnification.typeIseqDefault(TFun(new TSignature([new TSignatureArg("", false, targ)], ret)), tcf)) continue;
 					if (au.cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, au.cf);
 					// Only an @:op with no body is the plain unop. One whose body a display request leaves untyped
 					// still has an expression there - an @:op field is given a stand-in body because its presence
@@ -1358,6 +1356,7 @@ class Operators {
 						return TypeFunctions.mk(TUnop(op, flag, e), ret, p);
 					var implExpr = hxc.core.TexprTools.makeStaticThis(a.impl, p);
 					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, au.cf, FHStatic(a.impl), false, p), FCall);
+					fieldExpr = TypeFunctions.mk(fieldExpr.expr, tcf, fieldExpr.pos);
 					return Calls.makeCall(ctx, fieldExpr, [e], ret, p);
 				}
 			case _:

@@ -7,13 +7,16 @@ import hxc.core.TypeFunctions;
 import hxc.core.WarningList;
 import hxc.context.Context;
 
+// A property use checked at typing, waiting for run(). `body` is TypeFields.bodyDepth when it was queued.
+typedef PendingPropertyUse = {com:Context, classMeta:Metadata, fieldMeta:Metadata, cf:TClassField, p:Position, body:Int};
+
 // Warns on every use of a @:deprecated type or field.
 class DeprecationCheck {
 	// One warning per usage position.
 	static var warnedPositions:Map<String, Bool> = new Map();
 	static var typedefTypePositions:Map<String, Bool> = new Map();
 	static var deprecatedEnums:Map<TEnum, Bool> = new Map();
-	static var pendingPropertyWarnings:Array<{com:Context, classMeta:Metadata, fieldMeta:Metadata, cf:TClassField, p:Position}> = [];
+	static var pendingPropertyWarnings:Array<PendingPropertyUse> = [];
 
 	// Cleared for each compilation, so a warm server warns again. The rest belongs to the compilation
 	// as well: a property use queued by a request that ended before run() (a display answer) would
@@ -95,7 +98,41 @@ class DeprecationCheck {
 		var classMeta = ctx.curclass != null ? ctx.curclass.meta : [];
 		var fieldMeta = ctx.curfield != null ? ctx.curfield.meta : [];
 		if (TypeFunctions.hasMeta(":deprecated", classMeta) || TypeFunctions.hasMeta(":deprecated", fieldMeta)) return;
-		pendingPropertyWarnings.push({com: ctx.com, classMeta: classMeta, fieldMeta: fieldMeta, cf: cf, p: p});
+		pendingPropertyWarnings.push({com: ctx.com, classMeta: classMeta, fieldMeta: fieldMeta, cf: cf, p: p, body: hxc.typing.TypeFields.bodyDepth});
+	}
+
+	// The queue above stands in for a walk of the final typed tree, so a property use typed only
+	// speculatively, whose expression is then thrown away, must leave it again: Haxe never sees that
+	// expression and never warns. Context.rollbackDiagnostics does not reach this queue;
+	// Context.rollbackSpeculation takes back both.
+	// A field body the speculation forced to type (a function whose return type it needed) is in the final
+	// tree whatever becomes of the speculation, and it is typed once: its uses, queued one body deeper than
+	// the speculation that is back at its own depth by now, stay.
+	public static function pendingPropertyMark():Int return pendingPropertyWarnings.length;
+
+	public static function rollbackPendingProperties(mark:Int):Void {
+		takePendingProperties(mark);
+	}
+
+	// The uses queued since `mark` by the typing in progress, outside the bodies it forced, taken out of
+	// the queue to be put back with restorePendingProperties if that typing is the one kept (an overload
+	// candidate that typed but may lose the resolution).
+	public static function takePendingProperties(mark:Int):Array<PendingPropertyUse> {
+		var n = pendingPropertyWarnings.length;
+		if (n <= mark) return [];
+		var depth = hxc.typing.TypeFields.bodyDepth;
+		var taken = [];
+		var kept = mark;
+		for (i in mark...n) {
+			var u = pendingPropertyWarnings[i];
+			if (u.body > depth) pendingPropertyWarnings[kept++] = u else taken.push(u);
+		}
+		pendingPropertyWarnings.resize(kept);
+		return taken;
+	}
+
+	public static function restorePendingProperties(uses:Array<PendingPropertyUse>):Void {
+		for (u in uses) pendingPropertyWarnings.push(u);
 	}
 
 	public static function run(com:Context):Void {

@@ -1,0 +1,349 @@
+--- function-code-static + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("return 7;") static function f():Int return 0;
+	static function main() {
+		Sys.println(f());
+	}
+}
+
+--- function-code-instance-getter + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	var num:Int = 4;
+	public var x(get, never):Int;
+	@:functionCode("return num * 2;") function get_x():Int return 0;
+	function new() {}
+	static function main() {
+		Sys.println(new P().x);
+	}
+}
+
+--- function-code-then-body + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("if (a > 0) return a;") static function g(a:Int):Int {
+		return -a;
+	}
+	static function main() {
+		Sys.println(g(3));
+	}
+}
+
+--- function-tail-code + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionTailCode("// tail") static function h():Void {
+		Sys.println("h");
+	}
+	static function main() {
+		h();
+	}
+}
+
+--- function-code-void-with-args + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("::printf(\"%d\", (int)n);") static function p(n:Int):Void {}
+	static function main() {
+		p(1);
+	}
+}
+
+--- function-code-multiline-and-tail + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("int k = 1;\n\tk++;\nreturn k;")
+	@:functionTailCode("// t1\n// t2")
+	static function m(a:Int):Int {
+		return a;
+	}
+	static function main() {
+		Sys.println(m(3));
+	}
+}
+
+--- function-code-debugger + -D HXCPP_DEBUGGER --macro Dump.after('cppout/src/P.cpp')
+class P {
+	var z:Int = 1;
+	@:functionCode("return z + n;") function q(n:Int):Int return 0;
+	function new() {}
+	static function main() {
+		Sys.println(new P().q(2));
+	}
+}
+
+--- function-code-constructor + --macro Dump.after('cppout/src/P.cpp') --macro Dump.after('cppout/include/P.h')
+class P {
+	var v:Int;
+	@:functionCode("// ctor code") function new(a:Int) {
+		v = a;
+	}
+	static function main() {
+		Sys.println(new P(3).v);
+	}
+}
+
+--- function-tail-code-constructor + --macro Dump.after('cppout/src/P.cpp') --macro Dump.after('cppout/include/P.h')
+class P {
+	var v:Int;
+	@:functionTailCode("// ctor tail") function new(a:Int) {
+		v = a;
+	}
+	static function main() {
+		Sys.println(new P(3).v);
+	}
+}
+
+--- function-code-dynamic-function + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("// dyn code") @:functionTailCode("// dyn tail") dynamic function d(a:Int):Int {
+		return a;
+	}
+	@:functionCode("// sdyn code") static dynamic function sd(a:Int):Int {
+		return a;
+	}
+	function new() {}
+	static function main() {
+		Sys.println(new P().d(1) + sd(2));
+	}
+}
+
+--- include-prefix-main + -D include-prefix=hxinc --macro Dump.after('cppout/src/P.cpp') --macro Dump.after('cppout/include/hxinc/P.h')
+class P {
+	static function main() {
+		Sys.println("x");
+	}
+}
+
+--- include-prefix-nested-package + -D include-prefix=hxinc --macro Dump.after('cppout/src/P.cpp') --macro Dump.after('cppout/include/hxinc/a/b/Q.h')
+class P {
+	static function main() {
+		Sys.println(a.b.Q.v());
+	}
+}
+
+--- include-prefix-keeps-native-includes + -D include-prefix=hxinc --macro Dump.after('cppout/include/hxinc/P.h') --macro Dump.after('cppout/src/P.cpp')
+@:include("kinc/display.h")
+extern class D {
+	static function f():Int;
+}
+
+@:headerInclude("stdio.h")
+class P {
+	static function main() {
+		Sys.println(D.f());
+	}
+}
+
+--- include-prefix-files-list + -D include-prefix=hxinc --macro Dump.after('cppout/src/__files__.cpp') --macro Dump.after('cppout/src/__boot__.cpp')
+class P {
+	static function main() {
+		Sys.println(a.b.Q.v());
+	}
+}
+
+--- eq-abstract-to-cast-before-from + --macro Dump.after('cppout/src/P.cpp')
+abstract Color(Int) from Int {
+	@:to public function toInt():Int {
+		return this;
+	}
+}
+
+class P {
+	static function main() {
+		var c:Color = -1;
+		var cs:Array<Color> = [3];
+		if (c != -1) Sys.println("a");
+		if (-1 == c) Sys.println("b");
+		if (cs[0] != -1) Sys.println("c");
+	}
+}
+
+--- implicit-super-after-field-inits + --macro Dump.after('cppout/src/P.cpp')
+class B {
+	public var items:Array<Int> = [];
+}
+
+class P extends B {
+	var a:Bool = false;
+
+	public function new() {
+		trace("x");
+	}
+
+	var b:Int = 3;
+
+	static function main() {
+		new P();
+	}
+}
+
+--- implicit-super-through-forwarding-ctor + --macro Dump.after('cppout/src/P.cpp')
+class A {
+	public var items:Array<Int> = [];
+}
+
+class B extends A {}
+
+class P extends B {
+	var a:Bool = false;
+
+	public function new()
+	{
+		var f = function() return 1;
+	}
+
+	static function main() {
+		new P();
+	}
+}
+
+--- property-compound-assign-only-statement + --macro Dump.after('cppout/src/P.cpp')
+class W {
+	public var left(get, set):Float;
+	var l:Float = 0;
+	function get_left() return l;
+	function set_left(v) return l = v;
+	public function new() {}
+}
+
+class P {
+	var w:W = new W();
+
+	function inc(d:Float) {
+		w.left += d;
+	}
+
+	function dec(d:Float)
+	{
+		w.left -= d;
+	}
+
+	public function new() {}
+
+	static function main() {
+		var p = new P();
+		p.inc(1);
+		p.dec(2);
+	}
+}
+
+--- property-compound-assign-in-branch + --macro Dump.after('cppout/src/P.cpp')
+class W {
+	public var left(get, set):Null<Float>;
+	var l:Float = 0;
+	function get_left():Null<Float> return l;
+	function set_left(v:Null<Float>):Null<Float> return l = v;
+	public var width(get, set):Null<Float>;
+	function get_width():Null<Float> return l;
+	function set_width(v:Null<Float>):Null<Float> return l = v;
+	public function new() {}
+}
+
+class P {
+	var w:W = new W();
+	var r:Bool = true;
+
+	function cond(d:Float) {
+		var prev = w.width;
+		if (r) {
+			w.width = 3;
+		} else if (d > 0) {
+			w.width = 4;
+			w.left += prev - w.width;
+			w.left += d;
+		}
+	}
+
+	public function new() {}
+
+	static function main() {
+		new P().cond(2);
+	}
+}
+
+--- function-code-native-gen + --macro Dump.after('cppout/src/NG.cpp') --macro Dump.after('cppout/include/NG.h')
+@:nativeGen
+@:headerInclude("stdio.h")
+@:headerCode("// ng header code")
+class NG {
+	@:functionCode("return 5;") @:functionTailCode("// ng tail") public static function f():Int return 0;
+	@:functionCode("// ng inst code") @:functionTailCode("// ng inst tail") public function g(a:Int):Int {
+		return a;
+	}
+	public function new() {}
+}
+
+class P {
+	static function main() {
+		Sys.println(NG.f() + new NG().g(1));
+	}
+}
+
+--- header-include-and-header-code + --macro Dump.after('cppout/include/P.h')
+@:headerInclude("stdio.h")
+@:headerCode("// header code")
+class P {
+	static function main() {
+		Sys.println("x");
+	}
+}
+
+--- function-code-no-debug + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:noDebug @:functionCode("return 7;") @:functionTailCode("// nd tail") static function f():Int return 0;
+	@:noDebug @:functionCode("// nd code") static function v(a:Int):Void {
+		Sys.println(a);
+	}
+	static function main() {
+		Sys.println(f());
+		v(1);
+	}
+}
+
+--- inline-nullable-arg-value + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	static inline function either(name:String, other:String):String {
+		if (name == "a") return name;
+		return other;
+	}
+	static function f(m:Map<String, Int>, a:Null<String>, b:Null<String>) {
+		inline function resolve(name:String):String {
+			if (name == "a") return name;
+			if (m.exists(name)) return "q" + name;
+			throw "unknown " + name;
+		}
+		var id = resolve(a);
+		Sys.println(id);
+		var e = either(a, b);
+		Sys.println(e);
+	}
+	static function main() {
+		f(["x" => 1], "x", "y");
+	}
+}
+
+--- macro-sin-cos + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	macro static function trig() {
+		var xs = [Math.PI / 2, Math.PI, 3 * Math.PI / 2, 28.8, 0.5, -2.0, 1e-300, 1e10, -6.5e15, 1e18, 9.3e18, 1e22, -1e300];
+		var out = [];
+		for (x in xs) out.push(x + " " + Math.cos(x) + " " + Math.sin(x));
+		out.push("zero " + (1 / Math.sin(0.0)) + " " + (1 / Math.sin(-0.0)) + " " + Math.cos(-0.0));
+		out.push("special " + Math.sin(Math.NaN) + " " + Math.cos(Math.POSITIVE_INFINITY) + " " + Math.sin(Math.NEGATIVE_INFINITY));
+		// A NaN comes back as itself, sign and payload kept; an infinity gives the positive quiet NaN.
+		var bits = function(f:Float) {
+			var b = haxe.io.FPHelper.doubleToI64(f);
+			return StringTools.hex(b.high, 8) + StringTools.hex(b.low, 8);
+		};
+		for (n in [haxe.io.FPHelper.i64ToDouble(0x1234, 0x7FF80001), haxe.io.FPHelper.i64ToDouble(5, 0xFFFC0000)])
+			out.push("nan " + bits(n) + " " + bits(Math.sin(n)) + " " + bits(Math.cos(n)));
+		out.push("inf " + bits(Math.sin(Math.POSITIVE_INFINITY)) + " " + bits(Math.cos(Math.NEGATIVE_INFINITY)));
+		return macro $v{out};
+	}
+	static function main() {
+		var lines:Array<String> = trig();
+		for (s in lines) Sys.println(s);
+	}
+	// Host-dependent: this case's expected output holds only on a Windows host. Haxe's Windows binaries
+	// compute sin and cos with the x87 (FSIN/FCOS), and hxc's macro interpreter emulates that (X87Trig) only
+	// when hxc.core.Globals.isWindows. Elsewhere Haxe and hxc both call the C library, which differs from these
+	// recorded values in the last digits, and the recording also has Windows' three-digit exponents (e-017).
+	// hxc's own tests (tests/cases against tests/expected) run on windows-x64 only (.github/workflows/ci.yml).
+	// The note sits below main so that the line numbers in the recorded C++ stay as they are.
+}

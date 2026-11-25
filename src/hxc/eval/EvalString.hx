@@ -518,7 +518,24 @@ class EvalString {
 		}
 	}
 
+	// An ASCII string's character i is its byte i: no cursor to walk or move (the cursors only save walking,
+	// so leaving them where they are changes no answer).
+	public static function isAscii(s:VString):Bool {
+		if (s.sascii == 0) {
+			var str = s.sstring;
+			var n = str.length;
+			var ascii = n == s.slength;
+			if (ascii) {
+				var raw = str.raw();
+				for (i in 0...n) if (StringTools.fastCodeAt(raw, i) >= 0x80) { ascii = false; break; }
+			}
+			s.sascii = ascii ? 1 : 2;
+		}
+		return s.sascii == 1;
+	}
+
 	public static function getOffset(s:VString, cIndex:Int):Int {
+		if (cIndex >= 0 && cIndex < s.slength && isAscii(s)) return cIndex;
 		var o = getOffsetPrime(s, cIndex);
 		o.r.cIndex = cIndex;
 		o.r.bOffset = o.b;
@@ -527,6 +544,7 @@ class EvalString {
 
 	/** charAt: the code at character cIndex, decoded from its UTF-8 bytes, and the cursor moved past it. */
 	public static function charAt(s:VString, cIndex:Int):Int {
+		if (cIndex >= 0 && cIndex < s.slength && isAscii(s)) return s.sstring.get(cIndex);
 		var o = getOffsetPrime(s, cIndex);
 		var i = o.b;
 		var str = s.sstring;
@@ -569,9 +587,27 @@ class EvalString {
 	}
 
 	/** stringOfCharCode: the UTF-8 encoding of one code, range-checked by ucharOfInt. */
-	public static function stringOfCharCode(i:Int):ByteString return Utf8.encode(Utf8.ucharOfInt(i));
+	// The one-byte strings of the ASCII codes, made once.
+	static final asciiStrings:Array<ByteString> = [for (i in 0...128) ByteString.ofRaw(String.fromCharCode(i))];
+
+	public static function stringOfCharCode(i:Int):ByteString {
+		if (i >= 0 && i < 128 && asciiStrings != null) return asciiStrings[i];
+		return Utf8.encode(Utf8.ucharOfInt(i));
+	}
 
 	public static function fromCharCode(i:Int):VString return createWithLength(stringOfCharCode(i), 1);
+
+	// findSubstring's scan at one byte index: 0 ScanHit, 1 ScanAscii, 2 ScanOther.
+	static function scanSubstring(sThis:ByteString, sSub:ByteString, blSub:Int, bIndex:Int, bLen:Int):Int {
+		while (true) {
+			var c = sThis.unsafeGet(bIndex + bLen);
+			if (c == sSub.unsafeGet(bLen)) {
+				if (bLen + 1 == blSub) return 0;
+				bLen++;
+			} else if (c <= 127) return 1;
+			else return 2;
+		}
+	}
 
 	/** Find sub in this (from the end when reverse): the loop, answering null when it is not found. */
 	public static function findSubstring(self:VString, sub:VString, reverse:Bool):(cIndex:Int, bIndex:Int) -> Null<SubstringHit> {
@@ -581,17 +617,7 @@ class EvalString {
 		var blSub = sub.sstring.length;
 		var sThis = self.sstring;
 		var sSub = sub.sstring;
-		// 0 ScanHit, 1 ScanAscii, 2 ScanOther
-		function scan(bIndex:Int, bLen:Int):Int {
-			while (true) {
-				var c = sThis.unsafeGet(bIndex + bLen);
-				if (c == sSub.unsafeGet(bLen)) {
-					if (bLen + 1 == blSub) return 0;
-					bLen++;
-				} else if (c <= 127) return 1;
-				else return 2;
-			}
-		}
+		inline function scan(bIndex:Int, bLen:Int):Int return scanSubstring(sThis, sSub, blSub, bIndex, bLen);
 		if (!reverse) {
 			return function(cIndex:Int, bIndex:Int):Null<SubstringHit> {
 				while (true) {

@@ -46,7 +46,7 @@ class ServerCache {
 		compilationStep++;
 		changedDirectories = new StringMap();
 		if (Sys.getEnv("HXC_SERVER_DBG") != null)
-			Sys.stdout().writeString("[server] request step=" + compilationStep + "\n");
+			hxc.core.HostStdio.out().writeString("[server] request step=" + compilationStep + "\n");
 	}
 
 	// What a stdio server queued while it answered runs once the answer is out.
@@ -83,7 +83,8 @@ class ServerCache {
 				if (recursive) loop(full + "/");
 			}
 		}
-		for (dir in paths) loop(StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") || dir == "" ? dir : dir + "/");
+		// The .NET runtime's root is no directory.
+		for (dir in paths) if (!hxc.codegen.dotnet.RuntimeSources.isVirtual(dir)) loop(StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") || dir == "" ? dir : dir + "/");
 		return acc;
 	}
 
@@ -262,6 +263,15 @@ class ServerCache {
 
 	// Re-add the cached module and its dependency subgraph to the current compilation, restoring each type
 	// from its typed snapshot.
+	// Gives the compilation the resources a cached module's macros added. Haxe keeps them per module in a
+	// map ordered by name (m_binded_res, a PMap) and replaces the compilation's entries in that order, which
+	// decides where a name the compilation has not seen yet lands among its resources.
+	static function restoreResources(com:Context, m:ModuleDef):Void {
+		var names = [for (name in m.extra.bindedRes.keys()) name];
+		if (names.length > 1) names.sort(hxc.core.StringSort.compareBytes);
+		for (name in names) com.addResource(name, m.extra.bindedRes.get(name));
+	}
+
 	static function addModules(com:Context, mRoot:ModuleDef, p:Position):Void {
 		function add(tabs:String, m0:ModuleDef, m:ModuleDef):Void {
 			if (m.extra.added >= compilationStep) return;
@@ -275,8 +285,7 @@ class ServerCache {
 			switch [m0.extra.kind, m.extra.kind] {
 				case [MCode, MMacro] | [MMacro, MCode]:
 					// A cross-context dependency was only checked; do not add it, just its resources.
-					for (name in m.extra.bindedRes.keys())
-						com.resources.set(name, haxe.io.Bytes.ofString(m.extra.bindedRes.get(name)));
+					restoreResources(com, m);
 				case _:
 					m.extra.added = compilationStep;
 					hxc.compiler.ServerMessage.reusing(com, tabs, m);
@@ -284,8 +293,7 @@ class ServerCache {
 					// Adding the module: the duplicate-type check ran when the module first compiled;
 					// re-adding only registers it with the current context.
 					hxc.context.ModuleLoader.registerReusedModule(com, m);
-					for (name in m.extra.bindedRes.keys())
-						com.resources.set(name, haxe.io.Bytes.ofString(m.extra.bindedRes.get(name)));
+					restoreResources(com, m);
 					// Deps is an ordered map keyed by id: the walk visits the ids in ascending order.
 					for (id in sortedDepIds(m)) add(tabs + "  ", m0, m.extra.deps.get(id));
 			}

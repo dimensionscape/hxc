@@ -228,6 +228,8 @@ class EvalStdLib {
 	static function unixMktime(ctx:EvalContext, y:Int, mo:Int, d:Int, h:Int, mi:Int, s:Int):Float {
 		#if cpp
 		var clock:Float = untyped __cpp__('([](int y, int mo, int d, int h, int mi, int s) { struct tm t; memset(&t, 0, sizeof(t)); t.tm_year = y - 1900; t.tm_mon = mo; t.tm_mday = d; t.tm_hour = h; t.tm_min = mi; t.tm_sec = s; t.tm_isdst = -1; return (double)mktime(&t); })({0}, {1}, {2}, {3}, {4}, {5})', y, mo, d, h, mi, s);
+		#elseif (cs && hxc_pcre2_netlib)
+		var clock = hxchost.HostInfo.Mktime(y, mo, d, h, mi, s);
 		#else
 		var clock = new Date(y, mo, d, h, mi, s).getTime() / 1000;
 		#end
@@ -252,6 +254,8 @@ class EvalStdLib {
 	static function unixTmField(seconds:Float, utc:Bool, field:Int):Int {
 		#if cpp
 		return untyped __cpp__('([](double s, bool utc, int f) { time_t c = (time_t)s; struct tm *t = utc ? gmtime(&c) : localtime(&c); if (!t) return (int)0x80000000; switch (f) { case 0: return t->tm_sec; case 1: return t->tm_min; case 2: return t->tm_hour; case 3: return t->tm_mday; case 4: return t->tm_mon; case 5: return t->tm_year; default: return t->tm_wday; } })({0}, {1}, {2})', seconds, utc, field);
+		#elseif (cs && hxc_pcre2_netlib)
+		return hxchost.HostInfo.TmField(seconds, utc, field);
 		#else
 		var dt = Date.fromTime(seconds * 1000);
 		return switch (field) {
@@ -276,8 +280,12 @@ class EvalStdLib {
 	// getTimezoneOffset: the local and UTC broken-down times, each back through mktime, and their
 	// difference in minutes.
 	static function dateTimezoneOffset(ctx:EvalContext, ms:Float):Int {
+		#if (cpp || (cs && hxc_pcre2_netlib))
 		#if cpp
 		var r:Float = untyped __cpp__('([](double s) { time_t c = (time_t)s; struct tm *l = localtime(&c); if (!l) return 1e300; struct tm lt = *l; struct tm *g = gmtime(&c); if (!g) return 2e300; struct tm gt = *g; lt.tm_isdst = -1; gt.tm_isdst = -1; time_t a = mktime(&lt); if (a == (time_t)-1) return 3e300; time_t b = mktime(&gt); if (b == (time_t)-1) return 3e300; return ((double)b - (double)a) / 60.0; })({0})', ms / 1000);
+		#else
+		var r = hxchost.HostInfo.TimezoneOffset(ms / 1000);
+		#end
 		if (r == 1e300) EvalExceptions.excString(ctx, "Invalid argument(localtime, )");
 		if (r == 2e300) EvalExceptions.excString(ctx, "Invalid argument(gmtime, )");
 		if (r == 3e300) mktimeError(ctx);
@@ -310,9 +318,74 @@ class EvalStdLib {
 		var r:String = untyped __cpp__('hxc_fs_call({0}, {1}, {2})', op, a, b == null ? "" : b);
 		return r;
 		#else
-		return null;
+		return hostFs(op, a, b);
 		#end
 	}
+
+	// A whole file. On .NET the std reads it 16 KB at a time and ends on an Eof exception; the framework reads
+	// it in one call.
+	static function hostFileBytes(path:String):haxe.io.Bytes {
+		#if cs
+		return haxe.io.Bytes.ofData(cs.system.io.File.ReadAllBytes(path));
+		#else
+		return sys.io.File.getBytes(path);
+		#end
+	}
+
+	#if !cpp
+	// The same calls on a host that is not C++, through sys.FileSystem, with the C library's words for the
+	// failures a program meets: a path that is not there, one that is already there, a directory that is
+	// not empty, and "Permission denied" for whatever else the host refuses.
+	static function hostFs(op:Int, a:String, b:Null<String>):Null<String> {
+		inline function there(p:String):Bool return sys.FileSystem.exists(p);
+		inline function isDir(p:String):Bool return sys.FileSystem.isDirectory(p);
+		var missing = "No such file or directory", denied = "Permission denied";
+		try {
+			switch (op) {
+				case 0:
+					if (!there(a)) return missing;
+					if (isDir(a)) return denied;
+					sys.FileSystem.deleteFile(a);
+				case 1:
+					if (!there(a)) return missing;
+					if (!isDir(a)) return "Invalid argument";
+					if (sys.FileSystem.readDirectory(a).length > 0) return "Directory not empty";
+					sys.FileSystem.deleteDirectory(a);
+				case 2:
+					if (there(a)) return "File exists";
+					var parent = haxe.io.Path.directory(haxe.io.Path.removeTrailingSlashes(a));
+					// a parent that is a file is no directory to make it in
+					if (parent != "" && (!there(parent) || !isDir(parent))) return missing;
+					sys.FileSystem.createDirectory(a);
+				case 3:
+					if (!there(a)) return missing;
+					if (b != null) {
+						var into = haxe.io.Path.directory(haxe.io.Path.removeTrailingSlashes(b));
+						if (into != "" && (!there(into) || !isDir(into))) return missing;
+					}
+					// The C++ host's rename replaces a file that is in the way.
+					if (b != null && there(b) && !isDir(b) && !isDir(a)) sys.FileSystem.deleteFile(b);
+					sys.FileSystem.rename(a, b);
+				case 4:
+					if (!there(a) || !isDir(a)) return missing;
+					Sys.setCwd(a);
+				case 5:
+					if (!there(a)) return missing;
+				case 6:
+					if (!there(a)) return missing;
+					if (isDir(a)) return denied;
+					sys.io.File.read(a, true).close();
+				case _:
+					if (!there(a)) return missing;
+					if (isDir(a)) return denied;
+					sys.io.File.append(a, true).close();
+			}
+		} catch (_:Dynamic) {
+			return denied;
+		}
+		return null;
+	}
+	#end
 
 	// A system error: "<path>: <strerror>", which the natives turn into a string exception.
 	static function sysError(ctx:EvalContext, path:String, err:String):Dynamic {
@@ -412,7 +485,7 @@ class EvalStdLib {
 	static function stdStringCharCodeAt(ctx:EvalContext, a:Array<EvalValue>):EvalValue {
 		var self = thisString(ctx, a);
 		var i = decodeInt(ctx, arg(a, 1));
-		return i < 0 || i >= self.slength ? VNull : VInt(EvalString.charAt(self, i));
+		return i < 0 || i >= self.slength ? VNull : hxc.eval.EvalValue.EvalValueTools.vint(EvalString.charAt(self, i));
 	}
 
 	// String.substr, which haxe.Utf8.sub also is: a position past the end is "" before the length is
@@ -691,12 +764,12 @@ class EvalStdLib {
 			case TClassDecl(c):
 				for (cf in c.orderedStatics) {
 					if (!TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern) && TypeFunctions.isPhysicalField(cf))
-						add(EvalHash.hash(cf.name));
+						add(EvalHash.fieldHash(cf));
 				}
 				for (name in c.statics.keys()) {
 					var cf = c.statics.get(name);
 					if (!TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern) && TypeFunctions.isPhysicalField(cf))
-						add(EvalHash.hash(cf.name));
+						add(EvalHash.fieldHash(cf));
 				}
 			case _:
 		}
@@ -811,7 +884,13 @@ class EvalStdLib {
 		return switch (EvalValueTools.vresolve(v)) {
 			case VNull: VNull;
 			case VObject(o):
-				var copy = new VObject(o.ofields.copy(), o.oproto);
+				// An anonymous object's fields live in its ODictionary map, which is mutable here
+				// (unlike OCaml's), so the copy needs a map of its own.
+				var proto = switch (o.oproto) {
+					case ODictionary(m): ODictionary(m.copy());
+					case p: p;
+				};
+				var copy = new VObject(o.ofields.copy(), proto);
 				var order = objectFieldOrders.get(o);
 				if (order != null) objectFieldOrders.set(copy, order.copy());
 				VObject(copy);
@@ -1119,12 +1198,12 @@ class EvalStdLib {
 	}
 
 	static function bytesBufferSetLength(buf:Map<String, MapEntry>, length:Int):Void {
-		bytesBufferSet(buf, bytesBufferLengthKey, VInt(length));
+		bytesBufferSet(buf, bytesBufferLengthKey, hxc.eval.EvalValue.EvalValueTools.vint(length));
 	}
 
 	static function bytesBufferAddByte(buf:Map<String, MapEntry>, byte:Int):Void {
 		var length = bytesBufferLength(buf);
-		bytesBufferSet(buf, bytesBufferByteKey(length), VInt(byte & 0xFF));
+		bytesBufferSet(buf, bytesBufferByteKey(length), hxc.eval.EvalValue.EvalValueTools.vint(byte & 0xFF));
 		bytesBufferSetLength(buf, length + 1);
 	}
 
@@ -1196,8 +1275,8 @@ class EvalStdLib {
 	// Stable per-object identity for ObjectMap keys, assigned lazily on first use.
 	static var objIds = new haxe.ds.ObjectMap<{}, Int>();
 	static var objIdNext = 0;
-	static var zipCompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Compress>();
-	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Uncompress>();
+	static var zipCompress = new haxe.ds.ObjectMap<VInstance, hxc.eval.HostZip.HostCompress>();
+	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, hxc.eval.HostZip.HostUncompress>();
 	static var cryptoHmacs = new haxe.ds.ObjectMap<VInstance, haxe.crypto.Hmac>();
 	static var cryptoBaseCodes = new haxe.ds.ObjectMap<VInstance, haxe.crypto.BaseCode>();
 	static var nativeTemplates = new haxe.ds.ObjectMap<VInstance, haxe.Template>();
@@ -1226,7 +1305,7 @@ class EvalStdLib {
 	// Releasing an UNHELD lock is undefined behavior on the host, so each thread
 	// tracks whether it holds the lock; a blocking native on a non-holding thread
 	// just runs.
-	static var gilHeldTls:sys.thread.Tls<Bool> = new sys.thread.Tls();
+	static var gilHeldTls:hxc.core.HostTls<Bool> = new hxc.core.HostTls();
 
 	public static function gilEnter():Void {
 		gil.acquire();
@@ -1579,8 +1658,8 @@ class EvalStdLib {
 		var hi = proto.pinstanceNames.get(EvalHash.keyHigh);
 		var lo = proto.pinstanceNames.get(EvalHash.keyLow);
 		if (hi == null || lo == null) throw new hxc.eval.EvalExceptions.HostException("Not_found");
-		vi.ifields[hi] = VInt(high);
-		vi.ifields[lo] = VInt(low);
+		vi.ifields[hi] = hxc.eval.EvalValue.EvalValueTools.vint(high);
+		vi.ifields[lo] = hxc.eval.EvalValue.EvalValueTools.vint(low);
 		return VInstance(vi);
 	}
 
@@ -1613,6 +1692,15 @@ class EvalStdLib {
 
 	static function mkFileOutput(ctx:EvalContext, output:sys.io.FileOutput):EvalValue {
 		return mkOutput(ctx, output, output);
+	}
+
+	// A file opened for writing in text mode. The C library writes each LF as CR LF there on Windows; the .NET
+	// std's files are always binary, so the .NET host puts the same translation in front of the file.
+	static function mkFileOutputMode(ctx:EvalContext, output:sys.io.FileOutput, binary:Bool):EvalValue {
+		#if cs
+		if (!binary && Sys.systemName() == "Windows") return mkOutput(ctx, new TextModeOutput(output), output);
+		#end
+		return mkFileOutput(ctx, output);
 	}
 
 	static function mkOutput(ctx:EvalContext, output:haxe.io.Output, file:Null<sys.io.FileOutput>):EvalValue {
@@ -1699,7 +1787,7 @@ class EvalStdLib {
 		}
 		setInstanceFieldIfExists(vi, "h", head);
 		setInstanceFieldIfExists(vi, "q", tail);
-		setInstanceFieldIfExists(vi, "length", VInt(list.length));
+		setInstanceFieldIfExists(vi, "length", hxc.eval.EvalValue.EvalValueTools.vint(list.length));
 	}
 
 	static function mkThreadMutex(ctx:EvalContext):EvalValue {
@@ -1817,7 +1905,7 @@ class EvalStdLib {
 	}
 
 	static function xmlTypeValue(x:Xml):EvalValue {
-		return VInt(cast x.nodeType);
+		return hxc.eval.EvalValue.EvalValueTools.vint(cast x.nodeType);
 	}
 
 	static function setInstanceFieldIfExists(vi:VInstance, name:String, value:EvalValue):Void {
@@ -1971,8 +2059,8 @@ class EvalStdLib {
 
 	static function posInfos(p:Position):EvalValue {
 		return mkObject([
-			{name: "min", value: VInt(p.min)},
-			{name: "max", value: VInt(p.max)},
+			{name: "min", value: hxc.eval.EvalValue.EvalValueTools.vint(p.min)},
+			{name: "max", value: hxc.eval.EvalValue.EvalValueTools.vint(p.max)},
 			{name: "file", value: mkStr(p.file)}
 		]);
 	}
@@ -2079,7 +2167,7 @@ class EvalStdLib {
 		var file = p == null ? "?" : p.file;
 		if (file == null) file = "?";
 		var infos = Position.getInfos(p == null ? Position.nullPos : p);
-		return stackEnum(ctx, "FilePos", [item, mkStr(file), VInt(infos.line), VInt(infos.column + 1)]);
+		return stackEnum(ctx, "FilePos", [item, mkStr(file), hxc.eval.EvalValue.EvalValueTools.vint(infos.line), hxc.eval.EvalValue.EvalValueTools.vint(infos.column + 1)]);
 	}
 
 	// A method or local function is an item at its frame's position; an entry environment
@@ -2087,7 +2175,7 @@ class EvalStdLib {
 	static function stackItem(ctx:EvalContext, p:Position, kind:EvalEnvKind):Null<EvalValue> {
 		return switch (kind) {
 			case EKLocalFunction(index):
-				stackFilePos(ctx, p, stackEnum(ctx, "LocalFunction", [VInt(index)]));
+				stackFilePos(ctx, p, stackEnum(ctx, "LocalFunction", [hxc.eval.EvalValue.EvalValueTools.vint(index)]));
 			case EKMethod(typeKey, fieldKey):
 				var typeName = EvalHash.revHash(typeKey);
 				var fieldName = EvalHash.revHash(fieldKey);
@@ -2169,17 +2257,17 @@ class EvalStdLib {
 		var t = hxc.core.FileTime.statTimes(path);
 		inline function date(s:Float, d:Date):EvalValue return mkDate(ctx, t == null ? d.getTime() : s * 1000.0);
 		return mkObject([
-			{name: "gid", value: VInt(stat.gid)},
-			{name: "uid", value: VInt(stat.uid)},
+			{name: "gid", value: hxc.eval.EvalValue.EvalValueTools.vint(stat.gid)},
+			{name: "uid", value: hxc.eval.EvalValue.EvalValueTools.vint(stat.uid)},
 			{name: "atime", value: date(t == null ? 0.0 : t.atime, stat.atime)},
 			{name: "mtime", value: date(t == null ? 0.0 : t.mtime, stat.mtime)},
 			{name: "ctime", value: date(t == null ? 0.0 : t.ctime, stat.ctime)},
-			{name: "dev", value: VInt(stat.dev)},
-			{name: "ino", value: VInt(stat.ino)},
-			{name: "nlink", value: VInt(stat.nlink)},
-			{name: "rdev", value: VInt(stat.rdev)},
-			{name: "size", value: VInt(stat.size)},
-			{name: "mode", value: VInt(stat.mode)}
+			{name: "dev", value: hxc.eval.EvalValue.EvalValueTools.vint(stat.dev)},
+			{name: "ino", value: hxc.eval.EvalValue.EvalValueTools.vint(stat.ino)},
+			{name: "nlink", value: hxc.eval.EvalValue.EvalValueTools.vint(stat.nlink)},
+			{name: "rdev", value: hxc.eval.EvalValue.EvalValueTools.vint(stat.rdev)},
+			{name: "size", value: hxc.eval.EvalValue.EvalValueTools.vint(stat.size)},
+			{name: "mode", value: hxc.eval.EvalValue.EvalValueTools.vint(stat.mode)}
 		]);
 	}
 
@@ -2195,8 +2283,8 @@ class EvalStdLib {
 		if (wrote == null) wrote = Reflect.field(r, "wriet");
 		return mkObject([
 			{name: "done", value: EvalValueTools.vbool(Reflect.field(r, "done"))},
-			{name: "read", value: VInt(Reflect.field(r, "read"))},
-			{name: "write", value: VInt(wrote)}
+			{name: "read", value: hxc.eval.EvalValue.EvalValueTools.vint(Reflect.field(r, "read"))},
+			{name: "write", value: hxc.eval.EvalValue.EvalValueTools.vint(wrote)}
 		]);
 	}
 
@@ -2253,7 +2341,7 @@ class EvalStdLib {
 			req.writeOut(b, 0, b.length);
 			return;
 		}
-		var out = Sys.stdout();
+		var out = hxc.core.HostStdio.out();
 		if (s.length > 0) out.write(s.toBytes());
 		// Eval's println appends the PLATFORM line end explicitly (stdout itself is binary), so
 		// interpreted output keeps \r\n on Windows.
@@ -2264,7 +2352,7 @@ class EvalStdLib {
 	}
 
 	static function flushStdout():Void {
-		try Sys.stdout().flush() catch (_:Dynamic) {}
+		try hxc.core.HostStdio.out().flush() catch (_:Dynamic) {}
 	}
 
 	static function sysProgramPath(ctx:EvalContext):EvalValue {
@@ -2313,8 +2401,8 @@ class EvalStdLib {
 
 	static function hostInfo(info:{host:sys.net.Host, port:Int}):EvalValue {
 		return mkObject([
-			{name: "ip", value: VInt(hostIpInt(info.host.toString()))},
-			{name: "port", value: VInt(info.port)}
+			{name: "ip", value: hxc.eval.EvalValue.EvalValueTools.vint(hostIpInt(info.host.toString()))},
+			{name: "port", value: hxc.eval.EvalValue.EvalValueTools.vint(info.port)}
 		]);
 	}
 
@@ -2445,6 +2533,11 @@ class EvalStdLib {
 			case _:
 				Std.string(f);
 		}
+		#elseif cs
+		return switch (precision) {
+			case 12 | 15 | 17 | 18: hxc.core.Numeric.printfG(f, precision);
+			case _: Std.string(f);
+		}
 		#else
 		return Std.string(f);
 		#end
@@ -2483,15 +2576,16 @@ class EvalStdLib {
 	// low 32 bits are kept.
 	static function stdInt(v:EvalValue):EvalValue {
 		var f = switch (v) {
-			case VInt(i): return VInt(i);
+			case VInt(i): return hxc.eval.EvalValue.EvalValueTools.vint(i);
 			case VFloat(f): f;
 			case _: return VNull;
 		};
-		if (Math.isNaN(f) || !(Math.abs(f) < 9223372036854775808.0)) return VInt(outOfRangeInt(f));
-		var m = (f < 0 ? Math.ceil(f) : Math.floor(f)) % 4294967296.0;
+		if (Math.isNaN(f) || !(Math.abs(f) < 9223372036854775808.0)) return hxc.eval.EvalValue.EvalValueTools.vint(outOfRangeInt(f));
+		// ffloor and fceil: floor and ceil answer an Int, which a host is free to saturate out of range.
+		var m = (f < 0 ? Math.fceil(f) : Math.ffloor(f)) % 4294967296.0;
 		if (m < 0) m += 4294967296.0;
 		if (m >= 2147483648.0) m -= 4294967296.0;
-		return VInt(Std.int(m));
+		return hxc.eval.EvalValue.EvalValueTools.vint(Std.int(m));
 	}
 
 	static function stdParseInt(s:String):EvalValue {
@@ -2514,7 +2608,7 @@ class EvalStdLib {
 		}
 		if (sp == valueStart || (!isHex && sp == digitsStart)) return VNull;
 		var parsed = Std.parseInt(s.substr(start, sp - start));
-		return parsed == null ? VNull : VInt(parsed);
+		return parsed == null ? VNull : hxc.eval.EvalValue.EvalValueTools.vint(parsed);
 	}
 
 	static function stdParseFloat(s:String):Float {
@@ -2979,7 +3073,7 @@ class EvalStdLib {
 
 	static function gcMajorSlice(n:EvalValue):EvalValue {
 		gcMajor();
-		return VInt(0);
+		return hxc.eval.EvalValue.EvalValueTools.vint(0);
 	}
 
 	static function gcCounters():EvalValue {
@@ -2998,31 +3092,31 @@ class EvalStdLib {
 			{name: "minor_words", value: VFloat(current)},
 			{name: "promoted_words", value: VFloat(0)},
 			{name: "major_words", value: VFloat(current)},
-			{name: "minor_collections", value: VInt(gcMinorCollections)},
-			{name: "major_collections", value: VInt(gcMajorCollections)},
-			{name: "heap_words", value: VInt(current)},
-			{name: "heap_chunks", value: VInt(current == 0 ? 0 : 1)},
-			{name: "live_words", value: VInt(used)},
-			{name: "live_blocks", value: VInt(0)},
-			{name: "free_words", value: VInt(0)},
-			{name: "free_blocks", value: VInt(0)},
-			{name: "largest_free", value: VInt(0)},
-			{name: "fragments", value: VInt(0)},
-			{name: "compactions", value: VInt(gcCompactions)},
-			{name: "top_heap_words", value: VInt(current)},
-			{name: "stack_size", value: VInt(0)}
+			{name: "minor_collections", value: hxc.eval.EvalValue.EvalValueTools.vint(gcMinorCollections)},
+			{name: "major_collections", value: hxc.eval.EvalValue.EvalValueTools.vint(gcMajorCollections)},
+			{name: "heap_words", value: hxc.eval.EvalValue.EvalValueTools.vint(current)},
+			{name: "heap_chunks", value: hxc.eval.EvalValue.EvalValueTools.vint(current == 0 ? 0 : 1)},
+			{name: "live_words", value: hxc.eval.EvalValue.EvalValueTools.vint(used)},
+			{name: "live_blocks", value: hxc.eval.EvalValue.EvalValueTools.vint(0)},
+			{name: "free_words", value: hxc.eval.EvalValue.EvalValueTools.vint(0)},
+			{name: "free_blocks", value: hxc.eval.EvalValue.EvalValueTools.vint(0)},
+			{name: "largest_free", value: hxc.eval.EvalValue.EvalValueTools.vint(0)},
+			{name: "fragments", value: hxc.eval.EvalValue.EvalValueTools.vint(0)},
+			{name: "compactions", value: hxc.eval.EvalValue.EvalValueTools.vint(gcCompactions)},
+			{name: "top_heap_words", value: hxc.eval.EvalValue.EvalValueTools.vint(current)},
+			{name: "stack_size", value: hxc.eval.EvalValue.EvalValueTools.vint(0)}
 		]);
 	}
 
 	static function gcControl():EvalValue {
 		return mkObject([
-			{name: "minor_heap_size", value: VInt(gcMinorHeapSize)},
-			{name: "major_heap_increment", value: VInt(gcMajorHeapIncrement)},
-			{name: "space_overhead", value: VInt(gcSpaceOverhead)},
-			{name: "verbose", value: VInt(gcVerbose)},
-			{name: "max_overhead", value: VInt(gcMaxOverhead)},
-			{name: "stack_limit", value: VInt(gcStackLimit)},
-			{name: "allocation_policy", value: VInt(gcAllocationPolicy)}
+			{name: "minor_heap_size", value: hxc.eval.EvalValue.EvalValueTools.vint(gcMinorHeapSize)},
+			{name: "major_heap_increment", value: hxc.eval.EvalValue.EvalValueTools.vint(gcMajorHeapIncrement)},
+			{name: "space_overhead", value: hxc.eval.EvalValue.EvalValueTools.vint(gcSpaceOverhead)},
+			{name: "verbose", value: hxc.eval.EvalValue.EvalValueTools.vint(gcVerbose)},
+			{name: "max_overhead", value: hxc.eval.EvalValue.EvalValueTools.vint(gcMaxOverhead)},
+			{name: "stack_limit", value: hxc.eval.EvalValue.EvalValueTools.vint(gcStackLimit)},
+			{name: "allocation_policy", value: hxc.eval.EvalValue.EvalValueTools.vint(gcAllocationPolicy)}
 		]);
 	}
 
@@ -3044,6 +3138,9 @@ class EvalStdLib {
 		// mbedtls is unavailable on Emscripten.
 		EvalSsl.initConstructors(ctx);
 		EvalSsl.initFields(ctx);
+		#elseif !cpp
+		// The event loop and the locks, written in Haxe; the rest of eval.luv says it is not there.
+		EvalLuvLite.init(ctx, s);
 		#end
 
 		reg(s, "Math", "PI", VFloat(Math.PI));
@@ -3054,19 +3151,19 @@ class EvalStdLib {
 		// ceil, round and abs as itself, and the arguments of one call are decoded right to left.
 		reg(s, "Math", "floor", vfn(a -> switch (arg(a, 0)) {
 			case v = VInt(_): v;
-			case v: VInt(evalMathInt(Math.ffloor(num(ctx, v))));
+			case v: hxc.eval.EvalValue.EvalValueTools.vint(evalMathInt(Math.ffloor(num(ctx, v))));
 		}));
 		reg(s, "Math", "ceil", vfn(a -> switch (arg(a, 0)) {
 			case v = VInt(_): v;
-			case v: VInt(evalMathInt(Math.fceil(num(ctx, v))));
+			case v: hxc.eval.EvalValue.EvalValueTools.vint(evalMathInt(Math.fceil(num(ctx, v))));
 		}));
 		reg(s, "Math", "round", vfn(a -> switch (arg(a, 0)) {
 			case v = VInt(_): v;
-			case v: VInt(evalMathInt(Math.ffloor(num(ctx, v) + 0.5)));
+			case v: hxc.eval.EvalValue.EvalValueTools.vint(evalMathInt(Math.ffloor(num(ctx, v) + 0.5)));
 		}));
 		// Abs keeps the minimum Int as it is.
 		reg(s, "Math", "abs", vfn(a -> switch (arg(a, 0)) {
-			case VInt(i): VInt(i < 0 && i != 0x80000000 ? -i : i);
+			case VInt(i): hxc.eval.EvalValue.EvalValueTools.vint(i < 0 && i != 0x80000000 ? -i : i);
 			case VFloat(f): VFloat(Math.abs(f));
 			case v: EvalExceptions.unexpectedValue(ctx, v, "number");
 		}));
@@ -3090,8 +3187,9 @@ class EvalStdLib {
 		}));
 		reg(s, "Math", "log", vfn(a -> VFloat(Math.log(num(ctx, arg(a, 0))))));
 		reg(s, "Math", "exp", vfn(a -> VFloat(Math.exp(num(ctx, arg(a, 0))))));
-		reg(s, "Math", "sin", vfn(a -> VFloat(Math.sin(num(ctx, arg(a, 0))))));
-		reg(s, "Math", "cos", vfn(a -> VFloat(Math.cos(num(ctx, arg(a, 0))))));
+		// Haxe's Windows binaries compute sin and cos with the x87 (X87Trig).
+		reg(s, "Math", "sin", vfn(a -> VFloat(hxc.core.Globals.isWindows ? X87Trig.sin(num(ctx, arg(a, 0))) : Math.sin(num(ctx, arg(a, 0))))));
+		reg(s, "Math", "cos", vfn(a -> VFloat(hxc.core.Globals.isWindows ? X87Trig.cos(num(ctx, arg(a, 0))) : Math.cos(num(ctx, arg(a, 0))))));
 		reg(s, "Math", "tan", vfn(a -> VFloat(Math.tan(num(ctx, arg(a, 0))))));
 		reg(s, "Math", "asin", vfn(a -> VFloat(Math.asin(num(ctx, arg(a, 0))))));
 		reg(s, "Math", "acos", vfn(a -> VFloat(Math.acos(num(ctx, arg(a, 0))))));
@@ -3164,7 +3262,7 @@ class EvalStdLib {
 		reg(s, "StringTools", "urlEncode", vfn(a -> EvalString.createUnknown(urlEncode(decodeString(ctx, arg(a, 0))))));
 		reg(s, "StringTools", "urlDecode", vfn(a -> VString(urlDecode(ctx, decodeString(ctx, arg(a, 0))))));
 		// The bound is decoded by decodeI32.
-		reg(s, "Std", "random", vfn(a -> VInt(Std.random(decodeI32(ctx, arg(a, 0))))));
+		reg(s, "Std", "random", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Std.random(decodeI32(ctx, arg(a, 0))))));
 		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfTypeCtx(ctx, arg(a, 0), arg(a, 1)))));
 		reg(s, "Std", "is", vfn(a -> EvalValueTools.vbool(stdIsOfTypeCtx(ctx, arg(a, 0), arg(a, 1)))));
 		reg(s, "Std", "downcast", vfn(a -> stdDowncast(ctx, arg(a, 0), arg(a, 1))));
@@ -3200,7 +3298,7 @@ class EvalStdLib {
 			// The command runs as the compiler runs one: its output relayed as it comes, and its two thread
 			// joins let the interpreter's other threads run meanwhile.
 			var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
-			VInt(hxc.Compiler.runCommand(com, cmd));
+			hxc.eval.EvalValue.EvalValueTools.vint(hxc.Compiler.runCommand(com, cmd));
 		}));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
 		// The process environment, each entry split at its first '=' (so a drive entry
@@ -3224,7 +3322,7 @@ class EvalStdLib {
 			var v = processGetEnv(decodeText(ctx, arg(a, 0)));
 			v == null ? VNull : mkStr(v);
 		}));
-		reg(s, "Sys", "getChar", vfn(a -> VInt(Sys.getChar(decodeBool(ctx, arg(a, 0))))));
+		reg(s, "Sys", "getChar", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Sys.getChar(decodeBool(ctx, arg(a, 0))))));
 		reg(s, "Sys", "programPath", vfn(a -> sysProgramPath(ctx)));
 		// A null value unsets the variable.
 		reg(s, "Sys", "putEnv", vfn(a -> {
@@ -3246,7 +3344,7 @@ class EvalStdLib {
 		// flush.
 		reg(s, "Sys", "stderr", vfn(a -> mkOutput(ctx, new hxc.compiler.HostRuntime.HostStderrOutput(), null)));
 		reg(s, "Sys", "stdin", vfn(a -> mkInput(ctx, Sys.stdin(), null)));
-		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, Sys.stdout(), null)));
+		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, hxc.core.HostStdio.out(), null)));
 		reg(s, "Sys", "systemName", vfn(a -> mkStr(Sys.systemName())));
 		reg(s, "Sys", "time", vfn(a -> VFloat(Sys.time())));
 		reg(s, "haxe.NativeStackTrace", "_callStack", vfn(a -> callStackValue(ctx)));
@@ -3395,11 +3493,25 @@ class EvalStdLib {
 						var name = stringOf(arg(args, 0));
 						if (name == "") EvalExceptions.excString(ctx, "Empty resource name");
 						var bytes = decodeBytes(arg(args, 1));
-						ctx.resources.set(name, bytes.sub(0, bytes.length));
+						// Haxe's add_resource replaces the compile's own entry (a name added before keeps its
+						// position) and binds the bytes to the module being typed, so a cached module gives
+						// them back. The interpreter's own map stays for the macro world's haxe.Resource.
+						var data = bytes.sub(0, bytes.length);
+						ctx.resources.set(name, data);
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						if (com != null) {
+							com.addResource(name, data);
+							var m = EvalMacro.currentModule();
+							if (m != null) m.extra.bindedRes.set(name, data);
+						}
 						return VNull;
 					}, true);
 				case "get_resources":
-					VFunction(function(args) return mkStringBytesMap(ctx, ctx.resources), true);
+					// The compile's resources: the -resource files and everything a macro added.
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						return mkStringBytesMap(ctx, com != null ? com.resources : ctx.resources);
+					}, true);
 				case "make_expr":
 					VFunction(function(args) return EvalMacro.makeExprValueArgs(ctx, arg(args, 0), arg(args, 1)), true);
 				case "add_global_metadata_impl":
@@ -3541,6 +3653,11 @@ class EvalStdLib {
 					VFunction(function(args) {
 						var file = decodeText(ctx, arg(args, 0));
 						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						if (com.platform == Cs) {
+							try hxc.Compiler.registerNativeLibs(com, com.platform, [{file: file, isExtern: false}])
+							catch (e:String) return EvalExceptions.excString(ctx, e);
+							return VNull;
+						}
 						return EvalExceptions.excString(ctx, "Target " + hxc.core.Globals.platformName(com.platform)
 							+ " does not support native libraries (trying to load " + file + ")");
 					}, true);
@@ -3579,14 +3696,14 @@ class EvalStdLib {
 			var str = thisString(ctx, [arg(a, 1)]);
 			var self = thisString(ctx, a);
 			var i = defaultInt(ctx, arg(a, 2), 0);
-			if (str.slength == 0) VInt(Std.int(Math.max(0, Math.min(i, self.slength))))
+			if (str.slength == 0) hxc.eval.EvalValue.EvalValueTools.vint(Std.int(Math.max(0, Math.min(i, self.slength))))
 			else {
-				if (i >= self.slength) VInt(-1)
+				if (i >= self.slength) hxc.eval.EvalValue.EvalValueTools.vint(-1)
 				else {
 					if (i < 0) i = Std.int(Math.max(self.slength + i, 0));
 					var b = EvalString.getOffset(self, i);
 					var hit = EvalString.findSubstring(self, str, false)(i, b);
-					VInt(hit == null ? -1 : hit.c);
+					hxc.eval.EvalValue.EvalValueTools.vint(hit == null ? -1 : hit.c);
 				}
 			}
 		}));
@@ -3595,15 +3712,15 @@ class EvalStdLib {
 			var self = thisString(ctx, a);
 			if (str.slength == 0) {
 				var i = defaultInt(ctx, arg(a, 2), self.slength);
-				VInt(Std.int(Math.max(0, Math.min(i, self.slength))));
+				hxc.eval.EvalValue.EvalValueTools.vint(Std.int(Math.max(0, Math.min(i, self.slength))));
 			} else {
 				var i = defaultInt(ctx, arg(a, 2), self.slength - str.slength);
-				if (i < 0) VInt(-1)
+				if (i < 0) hxc.eval.EvalValue.EvalValueTools.vint(-1)
 				else {
 					if (i >= self.slength - str.slength) i = self.slength - str.slength;
 					var b = EvalString.getOffset(self, i);
 					var hit = EvalString.findSubstring(self, str, true)(i, b);
-					VInt(hit == null ? -1 : hit.c);
+					hxc.eval.EvalValue.EvalValueTools.vint(hit == null ? -1 : hit.c);
 				}
 			}
 		}));
@@ -3664,7 +3781,7 @@ class EvalStdLib {
 
 		reg(inst, "Array", "push", vmethod(a -> {
 			var va = thisArray(ctx, a);
-			VInt(arrayPush(va, arg(a, 1)));
+			hxc.eval.EvalValue.EvalValueTools.vint(arrayPush(va, arg(a, 1)));
 		}));
 		reg(inst, "Array", "pop", vmethod(a -> {
 			var va = thisArray(ctx, a);
@@ -3699,7 +3816,7 @@ class EvalStdLib {
 				idx = i;
 				break;
 			}
-			VInt(idx);
+			hxc.eval.EvalValue.EvalValueTools.vint(idx);
 		}));
 		reg(inst, "Array", "toString", vmethod(a -> {
 			var va = thisArray(ctx, a);
@@ -3821,11 +3938,11 @@ class EvalStdLib {
 		reg(inst, "Array", "lastIndexOf", vmethod(a -> {
 			var va = thisArray(ctx, a); var t = arg(a, 1); var idx = -1; var last = va.alength - 1;
 			var i = defaultInt(ctx, arg(a, 2), last);
-			if (va.alength == 0) return VInt(-1);
+			if (va.alength == 0) return hxc.eval.EvalValue.EvalValueTools.vint(-1);
 			if (i < 0) i = va.alength + i;
 			if (i < 0) i = 0 else if (i > last) i = last;
 			while (i >= 0) { if (EvalValueTools.equals(va.avalues[i], t)) { idx = i; break; } i--; }
-			VInt(idx);
+			hxc.eval.EvalValue.EvalValueTools.vint(idx);
 		}));
 		reg(inst, "Array", "resize", vmethod(a -> {
 			var va = thisArray(ctx, a); var len = decodeInt(ctx, arg(a, 1));
@@ -3905,7 +4022,7 @@ class EvalStdLib {
 			case VFunction(_, _) | VFieldClosure(_, _): true;
 			case _: false;
 		})));
-		reg(s, "Reflect", "compare", vfn(a -> VInt(switch (EvalMisc.compare(arg(a, 0), arg(a, 1))) {
+		reg(s, "Reflect", "compare", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(switch (EvalMisc.compare(arg(a, 0), arg(a, 1))) {
 			case CEq: 0;
 			case CInf: -1;
 			case CSup: 1;
@@ -4057,7 +4174,7 @@ class EvalStdLib {
 		}));
 		reg(s, "Type", "enumEq", vfn(a -> EvalValueTools.vbool(enumEqValue(arg(a, 0), arg(a, 1)))));
 		reg(s, "Type", "enumIndex", vfn(a -> switch (arg(a, 0)) {
-			case VEnumValue(ev): VInt(ev.eindex);
+			case VEnumValue(ev): hxc.eval.EvalValue.EvalValueTools.vint(ev.eindex);
 			case v: EvalExceptions.unexpectedValue(ctx, v, "enum value");
 		}));
 		reg(s, "Type", "enumConstructor", vfn(a -> switch (arg(a, 0)) {
@@ -4137,7 +4254,8 @@ class EvalStdLib {
 		reg(inst, "StringBuf", "addChar", vmethod(a -> {
 			var self = thisBuffer(a);
 			var i = decodeInt(ctx, arg(a, 1));
-			self.bbuffer.addString(EvalString.stringOfCharCode(i));
+			// The code's UTF-8 bytes straight into the buffer (stringOfCharCode's bytes, without the string).
+			Utf8.addUchar(self.bbuffer, Utf8.ucharOfInt(i));
 			self.blength++;
 			VNull;
 		}));
@@ -4158,14 +4276,14 @@ class EvalStdLib {
 			VNull;
 		}));
 		reg(inst, "StringBuf", "toString", vmethod(a -> VString(thisBuffer(a).contents())));
-		reg(inst, "StringBuf", "get_length", vmethod(a -> VInt(thisBuffer(a).blength)));
+		reg(inst, "StringBuf", "get_length", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(thisBuffer(a).blength)));
 
 		// haxe.Utf8, over a UTF-8 buffer (IUtf8): charCodeAt and sub are String's.
 		reg(s, "haxe.Utf8", "charCodeAt", vfn(a -> stdStringCharCodeAt(ctx, a)));
 		reg(s, "haxe.Utf8", "compare", vfn(a -> {
 			var x = decodeString(ctx, arg(a, 0));
 			var y = decodeString(ctx, arg(a, 1));
-			VInt(ByteString.compare(x, y));
+			hxc.eval.EvalValue.EvalValueTools.vint(ByteString.compare(x, y));
 		}));
 		// Each code narrowed to a byte, which raises Out_of_range from 256 up.
 		reg(s, "haxe.Utf8", "decode", vfn(a -> {
@@ -4188,10 +4306,10 @@ class EvalStdLib {
 		reg(s, "haxe.Utf8", "iter", vfn(a -> {
 			var str = decodeString(ctx, arg(a, 0));
 			var fn = arg(a, 1);
-			Utf8.iter(str, uc -> callValue(ctx, fn, [VInt(uc)]));
+			Utf8.iter(str, uc -> callValue(ctx, fn, [hxc.eval.EvalValue.EvalValueTools.vint(uc)]));
 			VNull;
 		}));
-		reg(s, "haxe.Utf8", "length", vfn(a -> VInt(decodeVString(ctx, arg(a, 0)).slength)));
+		reg(s, "haxe.Utf8", "length", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(decodeVString(ctx, arg(a, 0)).slength)));
 		reg(s, "haxe.Utf8", "sub", vfn(a -> stdStringSubstr(ctx, a)));
 		reg(s, "haxe.Utf8", "validate", vfn(a -> EvalValueTools.vbool(Utf8.validate(decodeString(ctx, arg(a, 0))))));
 		reg(inst, "haxe.Utf8", "addChar", vmethod(a -> {
@@ -4209,11 +4327,9 @@ class EvalStdLib {
 			var s = decodeString(ctx, arg(a, 1));
 			re.rString = s;
 			try {
-				re.rGroups = re.r.execAll(Pcre2Flag.NO_UTF_CHECK, 0, s.toBytes());
-				VTrue;
-			} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
-				re.rGroups = [];
-				VFalse;
+				var groups = re.r.execAllOpt(Pcre2Flag.NO_UTF_CHECK, 0, s.toBytes());
+				re.rGroups = groups == null ? [] : groups;
+				groups == null ? VFalse : VTrue;
 			} catch (_:hxc.eval.Pcre2.Pcre2Exception) {
 				EvalExceptions.excString(ctx, "PCRE Error (invalid unicode string?)");
 			}
@@ -4250,8 +4366,8 @@ class EvalStdLib {
 				var f = charOffset(first);
 				var l = charOffset(last);
 				var m = new Map();
-				m.set(EvalNames.hPos(), VInt(f));
-				m.set(EvalNames.hLen(), VInt(l - f));
+				m.set(EvalNames.hPos(), hxc.eval.EvalValue.EvalValueTools.vint(f));
+				m.set(EvalNames.hLen(), hxc.eval.EvalValue.EvalValueTools.vint(l - f));
 				VObject(new VObject([], ODictionary(m)));
 			});
 		}));
@@ -4267,12 +4383,11 @@ class EvalStdLib {
 			if (pos + len > s.length) return VFalse;
 			if (pos + len < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("String.sub / Bytes.sub")');
 			var str = s.sub(0, pos + len);
-			try {
-				var groups = re.r.execAll(Pcre2Flag.NO_UTF_CHECK, pos, str.toBytes());
-				re.rString = s;
-				re.rGroups = groups;
-				VTrue;
-			} catch (_:hxc.eval.Pcre2.Pcre2NotFound) VFalse;
+			var groups = re.r.execAllOpt(Pcre2Flag.NO_UTF_CHECK, pos, str.toBytes());
+			if (groups == null) return VFalse;
+			re.rString = s;
+			re.rGroups = groups;
+			VTrue;
 		}));
 		reg(inst, "EReg", "split", vmethod(a -> {
 			var re = thisRegex(a);
@@ -4289,18 +4404,17 @@ class EvalStdLib {
 			var pos = 0;
 			while (true) {
 				var next:Int;
-				try {
-					var ss = re.r.exec(Pcre2Flag.NO_UTF_CHECK, pos, subj);
-					var o = ss.getSubstringOfs(0);
-					add(copyOffset, o.first);
-					copyOffset = o.last;
-					next = pos == o.last ? o.last + 1 : o.last;
-					if (next >= slength) {
-						acc.push(EvalString.vEmptyString());
-						break;
-					}
-				} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
+				var ss = re.r.execOpt(Pcre2Flag.NO_UTF_CHECK, pos, subj);
+				if (ss == null) {
 					add(copyOffset, slength);
+					break;
+				}
+				var o = ss.getSubstringOfs(0);
+				add(copyOffset, o.first);
+				copyOffset = o.last;
+				next = pos == o.last ? o.last + 1 : o.last;
+				if (next >= slength) {
+					acc.push(EvalString.vEmptyString());
 					break;
 				}
 				if (re.global) pos = next;
@@ -4335,29 +4449,28 @@ class EvalStdLib {
 			re.rString = s;
 			var pos = 0;
 			while (pos < l) {
-				try {
-					var ss = re.r.exec(0, pos, subj);
-					re.rGroups = [ss];
-					var o = ss.getSubstringOfs(0);
-					buf.addSub(s, pos, o.first - pos);
-					buf.addString(decodeString(ctx, callValueOn(recv, fn, [recv])));
-					if (o.last == o.first) {
-						if (o.last >= l) break;
-						if (re.global) {
-							buf.addSub(s, o.first, 1);
-							pos = o.first + 1;
-						} else {
-							buf.addSub(s, o.first, l - o.first);
-							break;
-						}
-					} else if (re.global) {
-						pos = o.last;
+				var ss = re.r.execOpt(0, pos, subj);
+				if (ss == null) {
+					buf.addSub(s, pos, l - pos);
+					break;
+				}
+				re.rGroups = [ss];
+				var o = ss.getSubstringOfs(0);
+				buf.addSub(s, pos, o.first - pos);
+				buf.addString(decodeString(ctx, callValueOn(recv, fn, [recv])));
+				if (o.last == o.first) {
+					if (o.last >= l) break;
+					if (re.global) {
+						buf.addSub(s, o.first, 1);
+						pos = o.first + 1;
 					} else {
-						buf.addSub(s, o.last, l - o.last);
+						buf.addSub(s, o.first, l - o.first);
 						break;
 					}
-				} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
-					buf.addSub(s, pos, l - pos);
+				} else if (re.global) {
+					pos = o.last;
+				} else {
+					buf.addSub(s, o.last, l - o.last);
 					break;
 				}
 			}
@@ -4373,17 +4486,23 @@ class EvalStdLib {
 		function iteratorOf(items:Array<EvalValue>):EvalValue
 			return listIteratorValue(items);
 		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.ObjectMap"]) {
-			// An IntMap key is decodeInt, a StringMap key decodeVString and an ObjectMap key any value.
-			function argKey(v:EvalValue):EvalValue {
-				return switch (mapPath) {
-					case "haxe.ds.IntMap": VInt(decodeInt(ctx, v));
-					case "haxe.ds.StringMap":
+			// An IntMap key is decodeInt, a StringMap key decodeVString and an ObjectMap key any value. The
+			// map's kind is settled here, not compared by path on every call.
+			final mapKind = switch (mapPath) {
+				case "haxe.ds.IntMap": 1;
+				case "haxe.ds.StringMap": 2;
+				case _: 3;
+			};
+			inline function argKey(v:EvalValue):EvalValue {
+				return switch (mapKind) {
+					case 1: hxc.eval.EvalValue.EvalValueTools.vint(decodeInt(ctx, v));
+					case 2:
 						decodeVString(ctx, v);
 						v;
 					case _: v;
 				};
 			}
-			function keyString(v:EvalValue):String return mapPath == "haxe.ds.ObjectMap" ? objectMapKey(v) : mapKey(v);
+			inline function keyString(v:EvalValue):String return mapKind == 3 ? objectMapKey(v) : mapKey(v);
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
 				var vi = new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map()));
@@ -4414,8 +4533,8 @@ class EvalStdLib {
 			}));
 			reg(inst, mapPath, "get", vmethod(a -> {
 				var k = keyString(argKey(arg(a, 1)));
-				var m = thisMap(a);
-				m.exists(k) ? m.get(k).value : VNull;
+				var e = thisMap(a).get(k);
+				e != null ? e.value : VNull;
 			}));
 			reg(inst, mapPath, "exists", vmethod(a -> {
 				var k = keyString(argKey(arg(a, 1)));
@@ -4446,7 +4565,7 @@ class EvalStdLib {
 				var vi0 = thisInstance(a, mapPath);
 				var m = thisMap(a);
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
-				var nm = new Map();
+				var nm:Map<String, MapEntry> = new Map();
 				var order0 = nativeMapOrders.get(vi0);
 				var order = order0 == null ? [for (k in m.keys()) k] : [for (k in order0) if (m.exists(k)) k];
 				for (k in order) nm.set(k, {key: m.get(k).key, value: m.get(k).value});
@@ -4510,7 +4629,9 @@ class EvalStdLib {
 			if (ctx.isMacro) return EvalExceptions.excString(ctx, "Creating threads in macros is not supported");
 			return spawnThread(ctx, arg(a, 0));
 		});
-		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
+		// A macro's Date.now() is the current time in whole seconds, so a build timestamp taken from it
+		// has no milliseconds.
+		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Math.ffloor(Date.now().getTime() / 1000) * 1000)));
 		// The time is num and the string decodeString.
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, num(ctx, arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> dateFromString(ctx, decodeText(ctx, arg(a, 0)))));
@@ -4519,7 +4640,7 @@ class EvalStdLib {
 		// host has real filesystem access.
 		// A path is decoded as a string.
 		reg(s, "sys.FileSystem", "exists", vfn(a -> sys.FileSystem.exists(decodeText(ctx, arg(a, 0))) ? VTrue : VFalse));
-		reg(s, "sys.FileSystem", "isDirectory", vfn(a -> sys.FileSystem.isDirectory(decodeText(ctx, arg(a, 0))) ? VTrue : VFalse));
+		reg(s, "sys.FileSystem", "isDirectory", vfn(a -> hxc.core.HostFile.isDirectory(decodeText(ctx, arg(a, 0))) ? VTrue : VFalse));
 		// A directory check on the patched path (a stat failure is its Sys_error), "No such
 		// directory" for anything else, then the directory's entries.
 		reg(s, "sys.FileSystem", "readDirectory", vfn(a -> {
@@ -4589,25 +4710,26 @@ class EvalStdLib {
 			mkFileStat(ctx, sys.FileSystem.stat(path), fsPatchPath(path));
 		}));
 		reg(s, "sys.net.Host", "localhost", vfn(a -> mkStr(sys.net.Host.localhost())));
-		reg(s, "sys.net.Host", "resolve", vfn(a -> VInt(hostIpInt(stringOf(arg(a, 0))))));
+		reg(s, "sys.net.Host", "resolve", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(hostIpInt(stringOf(arg(a, 0))))));
 		reg(s, "sys.net.Host", "hostToString", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).toString())));
 		reg(s, "sys.net.Host", "hostReverse", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).reverse())));
 		// sys.io.File: a path is decodeString, a binary flag true or null for binary. An open that fails
 		// is a system error, "<path>: <strerror>".
 		reg(s, "sys.io.File", "append", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
-			mkFileOutput(ctx, try sys.io.File.append(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+			var binary = fileBinaryFlag(arg(a, 1));
+			mkFileOutputMode(ctx, try sys.io.File.append(path, binary) catch (e:Dynamic) openError(ctx, path, 7, e), binary);
 		}));
 		// An unreadable file raises "Could not read file <path>".
 		reg(s, "sys.io.File", "getBytes", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
-			try mkBytes(ctx, sys.io.File.getBytes(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
+			try mkBytes(ctx, hostFileBytes(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
 		}));
 		reg(s, "sys.io.File", "getContent", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
 			// The file's bytes, read in binary mode, as a string (createUnknown).
 			try {
-				var b = sys.io.File.getBytes(path);
+				var b = hostFileBytes(path);
 				EvalString.createUnknown(ByteString.ofBytes(b, 0, b.length));
 			} catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
 		}));
@@ -4631,11 +4753,13 @@ class EvalStdLib {
 		}));
 		reg(s, "sys.io.File", "update", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
-			mkFileOutput(ctx, try sys.io.File.update(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+			var binary = fileBinaryFlag(arg(a, 1));
+			mkFileOutputMode(ctx, try sys.io.File.update(path, binary) catch (e:Dynamic) openError(ctx, path, 7, e), binary);
 		}));
 		reg(s, "sys.io.File", "write", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
-			mkFileOutput(ctx, try sys.io.File.write(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+			var binary = fileBinaryFlag(arg(a, 1));
+			mkFileOutputMode(ctx, try sys.io.File.write(path, binary) catch (e:Dynamic) openError(ctx, path, 7, e), binary);
 		}));
 		// Close: the channel stays, and closing it again does nothing. The position of a closed channel
 		// is the fd offset its buffer reached: refills of up to 64KB from where the last seek left it,
@@ -4682,7 +4806,7 @@ class EvalStdLib {
 		}));
 		reg(inst, "sys.io.FileInput", "tell", vmethod(a -> {
 			var ch = thisFileInput(a);
-			VInt(ch.closed ? ch.closedOffset : ch.file.tell());
+			hxc.eval.EvalValue.EvalValueTools.vint(ch.closed ? ch.closedOffset : ch.file.tell());
 		}));
 		// readByte: a failed byte read, a closed channel's included, is Eof.
 		reg(inst, "sys.io.FileInput", "readByte", vmethod(a -> {
@@ -4695,7 +4819,7 @@ class EvalStdLib {
 				// The read that refills the channel runs in a blocking section.
 				var b = released(() -> ch.input.readByte());
 				noteRead(ch);
-				VInt(b);
+				hxc.eval.EvalValue.EvalValueTools.vint(b);
 			} catch (_:Dynamic) {
 				ch.eof = true;
 				eof(ctx);
@@ -4720,7 +4844,7 @@ class EvalStdLib {
 				eof(ctx);
 			}
 			noteRead(ch);
-			VInt(n);
+			hxc.eval.EvalValue.EvalValueTools.vint(n);
 		}));
 		// Close: the channel stays; closing or flushing it again does nothing. Its write cursor is then
 		// its buffer's end, so its position reads the flushed offset plus the 64KB buffer, and every
@@ -4745,10 +4869,10 @@ class EvalStdLib {
 		}));
 		reg(inst, "sys.io.FileOutput", "tell", vmethod(a -> {
 			var out = thisFileOutput(a);
-			VInt(out.closed ? out.closedPos + 65536 : out.file.tell());
+			hxc.eval.EvalValue.EvalValueTools.vint(out.closed ? out.closedPos + 65536 : out.file.tell());
 		}));
 		reg(inst, "sys.io.FileOutput", "writeByte", vmethod(a -> { openFileOutput(a).output.writeByte(toInt(arg(a, 1))); VNull; }));
-		reg(inst, "sys.io.FileOutput", "writeBytes", vmethod(a -> VInt(openFileOutput(a).output.writeBytes(
+		reg(inst, "sys.io.FileOutput", "writeBytes", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(openFileOutput(a).output.writeBytes(
 			decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))))));
 		reg(inst, "sys.io._Process.NativeProcess", "close", vmethod(a -> {
 			var vi = thisInstance(a, "NativeProcess");
@@ -4756,21 +4880,21 @@ class EvalStdLib {
 			nativeProcesses.remove(vi);
 			VNull;
 		}));
-		reg(inst, "sys.io._Process.NativeProcess", "exitCode", vmethod(a -> VInt(thisProcess(a).exitCode())));
-		reg(inst, "sys.io._Process.NativeProcess", "getPid", vmethod(a -> VInt(thisProcess(a).getPid())));
+		reg(inst, "sys.io._Process.NativeProcess", "exitCode", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(thisProcess(a).exitCode())));
+		reg(inst, "sys.io._Process.NativeProcess", "getPid", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(thisProcess(a).getPid())));
 		reg(inst, "sys.io._Process.NativeProcess", "kill", vmethod(a -> { thisProcess(a).kill(); VNull; }));
 		reg(inst, "sys.io._Process.NativeProcess", "readStderr", vmethod(a -> {
-			try VInt(thisProcess(a).stderr.readBytes(decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)))) catch (_:Dynamic) {
+			try hxc.eval.EvalValue.EvalValueTools.vint(thisProcess(a).stderr.readBytes(decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)))) catch (_:Dynamic) {
 				EvalExceptions.excString(ctx, "Could not read stderr");
 			}
 		}));
 		reg(inst, "sys.io._Process.NativeProcess", "readStdout", vmethod(a -> {
-			try VInt(thisProcess(a).stdout.readBytes(decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)))) catch (_:Dynamic) {
+			try hxc.eval.EvalValue.EvalValueTools.vint(thisProcess(a).stdout.readBytes(decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)))) catch (_:Dynamic) {
 				EvalExceptions.excString(ctx, "Could not read stdout");
 			}
 		}));
 		reg(inst, "sys.io._Process.NativeProcess", "closeStdin", vmethod(a -> { thisProcess(a).stdin.close(); VNull; }));
-		reg(inst, "sys.io._Process.NativeProcess", "writeStdin", vmethod(a -> VInt(thisProcess(a).stdin.writeBytes(
+		reg(inst, "sys.io._Process.NativeProcess", "writeStdin", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(thisProcess(a).stdin.writeBytes(
 			decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))))));
 		reg(inst, "sys.io._Process.Stdin", "close", vmethod(a -> {
 			var proc = EvalField.field(ctx, arg(a, 0), EvalNames.hProc());
@@ -4930,7 +5054,7 @@ class EvalStdLib {
 			if (v == null) throw new EvalExceptions.HostException("Option.No_value");
 			v;
 		}));
-		reg(inst, "eval.vm.NativeThread", "id", vmethod(a -> VInt(thisThread(ctx, arg(a, 0)).ident)));
+		reg(inst, "eval.vm.NativeThread", "id", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(thisThread(ctx, arg(a, 0)).ident)));
 		// sendMessage puts the message in FRONT of the deque, so the next readMessage takes the newest.
 		reg(inst, "eval.vm.NativeThread", "sendMessage", vmethod(a -> { thisThread(ctx, arg(a, 0)).deque.push(arg(a, 1)); VNull; }));
 		// get_events/set_events: events is a plain value slot on the thread record, null until the typed
@@ -4963,9 +5087,9 @@ class EvalStdLib {
 		reg(s, "eval._NativeString.NativeString_Impl_", "code", vfn(a -> {
 			var str = decodeNativeString(ctx, arg(a, 0));
 			var index = decodeInt(ctx, arg(a, 1));
-			VInt(try str.get(index) catch (_:hxc.eval.EvalExceptions.HostException) EvalExceptions.excString(ctx, "index out of bounds"));
+			hxc.eval.EvalValue.EvalValueTools.vint(try str.get(index) catch (_:hxc.eval.EvalExceptions.HostException) EvalExceptions.excString(ctx, "index out of bounds"));
 		}));
-		reg(s, "eval._NativeString.NativeString_Impl_", "get_length", vfn(a -> VInt(decodeNativeString(ctx, arg(a, 0)).length)));
+		reg(s, "eval._NativeString.NativeString_Impl_", "get_length", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(decodeNativeString(ctx, arg(a, 0)).length)));
 		reg(s, "eval._NativeString.NativeString_Impl_", "sub", vfn(a -> {
 			var str = decodeNativeString(ctx, arg(a, 0));
 			var start = decodeInt(ctx, arg(a, 1));
@@ -4977,21 +5101,21 @@ class EvalStdLib {
 			VNativeString(try str.sub(start, length) catch (_:hxc.eval.EvalExceptions.HostException) EvalExceptions.excString(ctx, "Invalid arguments for eval.NativeString.sub"));
 		}));
 		reg(inst, "Date", "getTime", vmethod(a -> VFloat(thisDate(a))));
-		reg(inst, "Date", "getFullYear", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 5) + 1900)));
-		reg(inst, "Date", "getMonth", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 4))));
-		reg(inst, "Date", "getDate", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 3))));
-		reg(inst, "Date", "getHours", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 2))));
-		reg(inst, "Date", "getMinutes", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 1))));
-		reg(inst, "Date", "getSeconds", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 0))));
-		reg(inst, "Date", "getDay", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 6))));
-		reg(inst, "Date", "getUTCFullYear", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 5) + 1900)));
-		reg(inst, "Date", "getUTCMonth", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 4))));
-		reg(inst, "Date", "getUTCDate", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 3))));
-		reg(inst, "Date", "getUTCHours", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 2))));
-		reg(inst, "Date", "getUTCMinutes", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 1))));
-		reg(inst, "Date", "getUTCSeconds", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 0))));
-		reg(inst, "Date", "getUTCDay", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 6))));
-		reg(inst, "Date", "getTimezoneOffset", vmethod(a -> VInt(dateTimezoneOffset(ctx, thisDate(a)))));
+		reg(inst, "Date", "getFullYear", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), false, 5) + 1900)));
+		reg(inst, "Date", "getMonth", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), false, 4))));
+		reg(inst, "Date", "getDate", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), false, 3))));
+		reg(inst, "Date", "getHours", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), false, 2))));
+		reg(inst, "Date", "getMinutes", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), false, 1))));
+		reg(inst, "Date", "getSeconds", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), false, 0))));
+		reg(inst, "Date", "getDay", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), false, 6))));
+		reg(inst, "Date", "getUTCFullYear", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), true, 5) + 1900)));
+		reg(inst, "Date", "getUTCMonth", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), true, 4))));
+		reg(inst, "Date", "getUTCDate", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), true, 3))));
+		reg(inst, "Date", "getUTCHours", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), true, 2))));
+		reg(inst, "Date", "getUTCMinutes", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), true, 1))));
+		reg(inst, "Date", "getUTCSeconds", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), true, 0))));
+		reg(inst, "Date", "getUTCDay", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateField(ctx, thisDate(a), true, 6))));
+		reg(inst, "Date", "getTimezoneOffset", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(dateTimezoneOffset(ctx, thisDate(a)))));
 		reg(inst, "Date", "toString", vmethod(a -> mkStr(sDate(thisDate(a)))));
 
 		// haxe.io.Bytes: a native instance wrapping a host byte buffer.
@@ -5020,9 +5144,9 @@ class EvalStdLib {
 		reg(s, "haxe.io.Bytes", "fastGet", vfn(a -> {
 			var b = decodeBytes(arg(a, 0));
 			var pos = decodeInt(ctx, arg(a, 1));
-			pos < 0 || pos >= b.length ? VNull : VInt(b.get(pos));
+			pos < 0 || pos >= b.length ? VNull : hxc.eval.EvalValue.EvalValueTools.vint(b.get(pos));
 		}));
-		reg(s, "haxe.crypto.Crc32", "make", vfn(a -> VInt(haxe.crypto.Crc32.make(decodeBytes(arg(a, 0))))));
+		reg(s, "haxe.crypto.Crc32", "make", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(haxe.crypto.Crc32.make(decodeBytes(arg(a, 0))))));
 		// The digest of the string's bytes.
 		reg(s, "haxe.crypto.Md5", "encode", vfn(a -> mkStr(haxe.crypto.Md5.make(decodeString(ctx, arg(a, 0)).toBytes()).toHex())));
 		reg(s, "haxe.crypto.Md5", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Md5.make(decodeBytes(arg(a, 0))))));
@@ -5031,7 +5155,7 @@ class EvalStdLib {
 		reg(s, "haxe.zip.Compress", "run",
 			vfn(a -> {
 				var src = decodeBytes(arg(a, 0));
-				mkBytes(ctx, haxe.zip.Compress.run(src, decodeInt(ctx, arg(a, 1))));
+				mkBytes(ctx, hxc.eval.HostZip.HostCompress.run(src, decodeInt(ctx, arg(a, 1))));
 			}));
 		reg(s, "haxe.zip.Uncompress", "run",
 			vfn(a -> {
@@ -5047,11 +5171,14 @@ class EvalStdLib {
 				var size = defaultInt(ctx, arg(a, 1), 1 << 16);
 				if (size < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("Bytes.create")');
 				if (size == 0) throw new hxc.eval.EvalExceptions.HostException("zlib_inflate", true);
-				var out = try haxe.zip.Uncompress.run(src, size < 1 << 16 ? 1 << 16 : size) catch (_:Dynamic) throw new hxc.eval.EvalExceptions.HostException("zlib_inflate", true);
+				var out = try hxc.eval.HostZip.HostUncompress.run(src, size < 1 << 16 ? 1 << 16 : size) catch (_:Dynamic) throw new hxc.eval.EvalExceptions.HostException("zlib_inflate", true);
 				mkBytes(ctx, out);
 			}));
 		reg(s, "haxe.Resource", "listNames", vfn(a -> {
-			var names = [for (name in ctx.resources.keys()) mkStr(name)];
+			// The names come in the reverse of the resource table's traversal order, as every target
+			// lists them (the order a macro or the command line added them in is not it).
+			var order = ctx.com != null ? ctx.com.resourceFoldOrder() : [for (name in ctx.resources.keys()) name];
+			var names = [for (i in 0...order.length) if (ctx.resources.exists(order[order.length - 1 - i])) mkStr(order[order.length - 1 - i])];
 			VArray(new VArray(names, names.length));
 		}));
 		reg(s, "haxe.Resource", "getString", vfn(a -> {
@@ -5065,7 +5192,7 @@ class EvalStdLib {
 		}));
 		// FPHelper: a float is num, a word decodeI32.
 		reg(s, "haxe.io.FPHelper", "doubleToI64", vfn(a -> doubleBits(ctx, num(ctx, arg(a, 0)))));
-		reg(s, "haxe.io.FPHelper", "floatToI32", vfn(a -> VInt(floatBits(num(ctx, arg(a, 0))))));
+		reg(s, "haxe.io.FPHelper", "floatToI32", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(floatBits(num(ctx, arg(a, 0))))));
 		reg(s, "haxe.io.FPHelper", "i32ToFloat", vfn(a -> VFloat(floatOfBits(decodeI32(ctx, arg(a, 0))))));
 		reg(s, "haxe.io.FPHelper", "i64ToDouble", vfn(a -> {
 			var low = decodeI32(ctx, arg(a, 0));
@@ -5076,7 +5203,7 @@ class EvalStdLib {
 		reg(inst, "haxe.io.Bytes", "get", vmethod(a -> {
 			var b = thisBytes(a);
 			var pos = decodeInt(ctx, arg(a, 1));
-			pos < 0 || pos >= b.length ? VNull : VInt(b.get(pos));
+			pos < 0 || pos >= b.length ? VNull : hxc.eval.EvalValue.EvalValueTools.vint(b.get(pos));
 		}));
 		// A failed write is ignored, and the byte is the value's low 8 bits.
 		reg(inst, "haxe.io.Bytes", "set", vmethod(a -> {
@@ -5100,7 +5227,7 @@ class EvalStdLib {
 		reg(inst, "haxe.io.Bytes", "getInt32", vmethod(a -> orOutsideBounds(ctx, () -> {
 			var pos = decodeInt(ctx, arg(a, 1));
 			var b = thisBytes(a);
-			pos < 0 || pos > b.length - 4 ? null : VInt(b.getInt32(pos));
+			pos < 0 || pos > b.length - 4 ? null : hxc.eval.EvalValue.EvalValueTools.vint(b.getInt32(pos));
 		})));
 		// The decodes come before the handler, the reads and the instance inside it.
 		reg(inst, "haxe.io.Bytes", "getInt64", vmethod(a -> {
@@ -5119,7 +5246,7 @@ class EvalStdLib {
 		reg(inst, "haxe.io.Bytes", "getUInt16", vmethod(a -> orOutsideBounds(ctx, () -> {
 			var pos = decodeInt(ctx, arg(a, 1));
 			var b = thisBytes(a);
-			pos < 0 || pos > b.length - 2 ? null : VInt(b.getUInt16(pos));
+			pos < 0 || pos > b.length - 2 ? null : hxc.eval.EvalValue.EvalValueTools.vint(b.getUInt16(pos));
 		})));
 		reg(inst, "haxe.io.Bytes", "toString", vmethod(a -> {
 			var b = thisBytes(a);
@@ -5160,7 +5287,7 @@ class EvalStdLib {
 		// Two byte strings compare by the common prefix, then the length; -1, 0 or 1.
 		reg(inst, "haxe.io.Bytes", "compare", vmethod(a -> {
 			var b = thisBytes(a);
-			VInt(bytesCompare(b, decodeBytes(arg(a, 1))));
+			hxc.eval.EvalValue.EvalValueTools.vint(bytesCompare(b, decodeBytes(arg(a, 1))));
 		}));
 		// Each write is byte by byte, so one that runs off the end has written the bytes before it.
 		reg(inst, "haxe.io.Bytes", "setDouble", vmethod(a -> orOutsideBounds(ctx, () -> {
@@ -5203,7 +5330,7 @@ class EvalStdLib {
 			bits.set(1, v >> 8);
 			writeBytesOrFail(thisBytes(a), pos, bits) ? VNull : null;
 		})));
-		reg(inst, "haxe.io.BytesBuffer", "get_length", vmethod(a -> VInt(bytesBufferLength(thisMap(a)))));
+		reg(inst, "haxe.io.BytesBuffer", "get_length", vmethod(a -> hxc.eval.EvalValue.EvalValueTools.vint(bytesBufferLength(thisMap(a)))));
 		// BytesBuffer: a byte keeps the value's low bits, a word is decodeI32, a float num and a string
 		// decodeVString.
 		reg(inst, "haxe.io.BytesBuffer", "addByte", vmethod(a -> {
@@ -5274,14 +5401,14 @@ class EvalStdLib {
 		ctors.set(EvalNames.hHaxeZipCompress(), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalNames.hHaxeZipCompress());
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-			zipCompress.set(vi, new haxe.zip.Compress(decodeInt(ctx, arg(a, 0))));
+			zipCompress.set(vi, new hxc.eval.HostZip.HostCompress(decodeInt(ctx, arg(a, 0))));
 			return VInstance(vi);
 		});
 		ctors.set(EvalNames.hHaxeZipUncompress(), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalNames.hHaxeZipUncompress());
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 			// The window bits are defaultInt 15.
-			zipUncompress.set(vi, new haxe.zip.Uncompress(defaultInt(ctx, arg(a, 0), 15)));
+			zipUncompress.set(vi, new hxc.eval.HostZip.HostUncompress(defaultInt(ctx, arg(a, 0), 15)));
 			return VInstance(vi);
 		});
 		ctors.set(EvalNames.hEvalVmNativeSocket(), function(a) return mkNativeSocket(ctx, new sys.net.Socket()));
@@ -5380,18 +5507,18 @@ class EvalStdLib {
 			var buf = decodeBytes(arg(a, 1));
 			var pos = toInt(arg(a, 2));
 			var len = toInt(arg(a, 3));
-			gilBlocking(() -> try VInt(socket.input.readBytes(buf, pos, len)) catch (_:haxe.io.Eof) VInt(0));
+			gilBlocking(() -> try hxc.eval.EvalValue.EvalValueTools.vint(socket.input.readBytes(buf, pos, len)) catch (_:haxe.io.Eof) hxc.eval.EvalValue.EvalValueTools.vint(0));
 		}));
 		reg(inst, "eval.vm.NativeSocket", "receiveChar", vmethod(a -> {
 			var socket = thisSocket(a);
-			gilBlocking(() -> VInt(socket.input.readByte()));
+			gilBlocking(() -> hxc.eval.EvalValue.EvalValueTools.vint(socket.input.readByte()));
 		}));
 		reg(inst, "eval.vm.NativeSocket", "send", vmethod(a -> {
 			var socket = thisSocket(a);
 			var buf = decodeBytes(arg(a, 1));
 			var pos = toInt(arg(a, 2));
 			var len = toInt(arg(a, 3));
-			gilBlocking(() -> VInt(socket.output.writeBytes(buf, pos, len)));
+			gilBlocking(() -> hxc.eval.EvalValue.EvalValueTools.vint(socket.output.writeBytes(buf, pos, len)));
 		}));
 		reg(inst, "eval.vm.NativeSocket", "sendChar", vmethod(a -> {
 			var socket = thisSocket(a);
@@ -5412,3 +5539,40 @@ class EvalStdLib {
 		return EvalString.join(EvalString.emptyString(), [ascii("["), EvalString.join(ascii(","), l), ascii("]")]);
 	}
 }
+
+#if cs
+// Windows' text mode for writing: each LF goes to the file as CR LF. Unbuffered, so the file's own position
+// is where the next byte goes; a write counts the bytes it was given, as fwrite does.
+private class TextModeOutput extends haxe.io.Output {
+	final file:sys.io.FileOutput;
+
+	public function new(file:sys.io.FileOutput) {
+		this.file = file;
+	}
+
+	override public function writeByte(c:Int):Void {
+		if (c & 0xFF == 10) file.writeByte(13);
+		file.writeByte(c);
+	}
+
+	override public function writeBytes(s:haxe.io.Bytes, pos:Int, len:Int):Int {
+		if (pos < 0 || len < 0 || pos + len > s.length) throw haxe.io.Error.OutsideBounds;
+		var start = pos, end = pos + len;
+		for (i in pos...end) if (s.get(i) == 10) {
+			if (i > start) file.writeFullBytes(s, start, i - start);
+			file.writeByte(13);
+			start = i;
+		}
+		if (end > start) file.writeFullBytes(s, start, end - start);
+		return len;
+	}
+
+	override public function flush():Void {
+		file.flush();
+	}
+
+	override public function close():Void {
+		file.close();
+	}
+}
+#end

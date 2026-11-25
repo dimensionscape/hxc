@@ -8,6 +8,18 @@ class StringSort {
 		return x < y ? -1 : (x > y ? 1 : 0);
 	}
 
+	// OCaml's compare on two strings: the order of their bytes, the shorter first where one starts the other.
+	public static function compareBytes(a:String, b:String):Int {
+		if (a == b) return 0;
+		var x = haxe.io.Bytes.ofString(a), y = haxe.io.Bytes.ofString(b);
+		var n = x.length < y.length ? x.length : y.length;
+		for (i in 0...n) {
+			var d = x.get(i) - y.get(i);
+			if (d != 0) return d < 0 ? -1 : 1;
+		}
+		return x.length < y.length ? -1 : (x.length > y.length ? 1 : 0);
+	}
+
 	public static function sort(a:Array<String>):Void {
 		var n = a.length;
 		if (n < 2) return;

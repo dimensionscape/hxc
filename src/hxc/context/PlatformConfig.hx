@@ -27,6 +27,7 @@ class PlatformConfig {
 	public var wildcardCatch:String = "StdTypes.Dynamic"; // The native wildcard catch type
 	public var baseThrow:String = "StdTypes.Dynamic";     // Wrapped throws cast to this
 	public var avoidWrapping:Bool = true;           // Pass allowed values through as-is
+	public var specialThrow:Null<String> = null;    // An identifier thrown as it is (`throw untyped __rethrow__`)
 
 	public function new(isStatic:Bool, sys:Bool, supportsOverload:Bool, capturePolicy:CapturePolicy,
 			padNulls:Bool, addFinalReturn:Bool, canSkipNonNullableArgument:Bool,
@@ -113,6 +114,35 @@ class PlatformConfig {
 		return c;
 	}
 
+	// C#: like java (wrapped-ref captures, native overloads, `this` untouchable before super()), with
+	// cs.system.Exception as the native exception type.
+	public static function cs():PlatformConfig {
+		var c:PlatformConfig = {
+			isStatic: true, sys: true, supportsOverload: true, capturePolicy: CPWrapRef,
+			padNulls: true, addFinalReturn: false, canSkipNonNullableArgument: true,
+			supportsRestArgs: true, usesUtf16: true, supportsUnicode: true,
+			supportsThreads: true, supportsAtomics: true,
+		};
+		c.thisBeforeSuper = false;
+		c.nativeThrows = ["cs.system.Exception", "haxe.Exception"];
+		c.nativeCatches = ["cs.system.Exception", "haxe.Exception"];
+		c.wildcardCatch = "cs.system.Exception";
+		c.baseThrow = "cs.system.Exception";
+		c.specialThrow = "__rethrow__";
+		return c;
+	}
+
+	// HashLink (common.ml): the default config with wrapped-ref captures, padded nulls, threads and
+	// atomics.
+	public static function hl():PlatformConfig {
+		return {
+			isStatic: true, sys: true, supportsOverload: false, capturePolicy: CPWrapRef,
+			padNulls: true, addFinalReturn: false, canSkipNonNullableArgument: true,
+			supportsRestArgs: false, usesUtf16: true, supportsUnicode: true,
+			supportsThreads: true, supportsAtomics: true,
+		};
+	}
+
 	// Select the per-target config.
 	public static function get(p:Platform):PlatformConfig {
 		return switch (p) {
@@ -121,6 +151,8 @@ class PlatformConfig {
 			case Eval: eval();
 			case Neko: neko();
 			case Java: java();
+			case Cs: cs();
+			case Hl: hl();
 			// Cross + the not-yet-targeted platforms use the base config until their backend
 			case _: defaults();
 		}

@@ -141,6 +141,7 @@ class AllocTelemetry {
 
 	public static function afterRequest():Void {
 		if (reportFile == null) return;
+		#if cpp
 		if (!started) {
 			// The first request only starts the recording: what it allocates is the warm-up
 			started = true;
@@ -150,5 +151,6 @@ class AllocTelemetry {
 		untyped __cpp__("hxcTelCollect()");
 		var path = reportFile;
 		untyped __cpp__("hxcTelReport({0}.utf8_str())", path);
+		#end
 	}
 }

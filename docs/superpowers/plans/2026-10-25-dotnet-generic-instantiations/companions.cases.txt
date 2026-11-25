@@ -1,0 +1,461 @@
+# Milestone 3c plan: companion interfaces and X_cast members (types notes §3, §4).
+#
+
+# Types notes §8.7 (probe members), extended as §8.7 asks with .NET reflection over the companions G and
+# GS (the dumpType of type-argument-clr-shapes) to pin which members a companion declares.
+--- companion-members @gencs
+// Which members a companion interface declares: every kept non-static, non-dynamic method the class itself
+// declares whose Haxe signature mentions no type parameter (types notes §3), read through
+// Type.getInstanceFields and through .NET reflection over the companions G and GS.
+import cs.system.reflection.BindingFlags;
+class C { public function new() {} }
+class G<T> {
+	public var v:T;
+	public var n:Int = 1;
+	public function new(v:T) this.v = v;
+	public function a():Int return 1;
+	function priv():String return "p";
+	public function withC(c:G<C>):Array<C> return [];
+	public function withDyn(d:G<Dynamic>):Void {}
+	public function nullT(x:Null<T>):Void {}
+	public function arrT(x:Array<T>):Void {}
+	public function fnT(f:T->Void):Void {}
+	public function fnPlain(f:Int->Void):Void {}
+	public function gen<U>(u:U):Int return 0;
+	public function genNoU<U>():Int return 0;
+	public static function stat():Int return 0;
+	public dynamic function dyn():Int return 0;
+	public inline function inl():Int return 0;
+	public function ov(x:Int):Int return x;
+	public function toString():String return "G";
+	@:keep public function kept():Int return 2;
+	public var prop(get, never):Int;
+	function get_prop() return 3;
+	public function anon():{a:Int} return {a: 1};
+	public function optInt(?x:Int):Void {}
+	public function defInt(x:Int = 3):Void {}
+}
+class GS<U> extends G<U> {
+	public function new(u:U) super(u);
+	override public function a():Int return 2;
+	public function own():Int return 3;
+}
+class P {
+	static function typeName(t:cs.system.Type):String return t == null ? "null" : t.ToString();
+	static function dumpType(label:String, t:cs.system.Type) {
+		if (t == null) {
+			Sys.println(label + ": not found");
+			return;
+		}
+		var ifs = [for (i in t.GetInterfaces()) typeName(i)];
+		ifs.sort(Reflect.compare);
+		Sys.println(label + ": " + typeName(t) + (t.IsInterface ? " interface" : "") + " implements " + ifs.join(","));
+		var attrs = t.GetCustomAttributes(false);
+		for (i in 0...attrs.Length) {
+			var g = cs.Lib.as(attrs[i], cs.internal.HxObject.GenericInterface);
+			if (g != null) Sys.println("  [GenericInterface(" + typeName(g.generic) + ")]");
+		}
+		var flags = new cs.Flags(BindingFlags.Public) | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var ms = t.GetMethods(flags);
+		for (i in 0...ms.Length) {
+			var n = ms[i].Name;
+			if (StringTools.startsWith(n, "__hx_") && n != "__hx_cast") continue;
+			Sys.println("  " + Std.string(ms[i]) + (ms[i].IsStatic ? " static" : ""));
+		}
+	}
+	static function main() {
+		var g = new G<Int>(1);
+		g.a(); g.withC(null); g.withDyn(null); g.nullT(null); g.arrT(null); g.fnT(null); g.fnPlain(null); g.gen(1); g.genNoU(); G.stat(); g.dyn(); g.inl(); g.ov(1); g.toString(); g.prop; g.anon(); g.optInt(); g.defInt();
+		var s = new GS<Int>(1); s.own();
+		Sys.println(Type.getInstanceFields(G));
+		Sys.println(Type.getInstanceFields(GS));
+		dumpType("G companion", cs.system.Type._GetType("G"));
+		dumpType("GS companion", cs.system.Type._GetType("GS"));
+	}
+}
+===
+[run]
+[G_cast,a,priv,withC,withDyn,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
+[GS_cast,G_cast,a,own,priv,withC,withDyn,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
+G companion: G interface implements haxe.lang.IGenericObject,haxe.lang.IHxObject
+  [GenericInterface(G`1[System.Object])]
+  System.Object G_cast[T_c]()
+  Int32 a()
+  System.String priv()
+  Array`1[System.Object] withC(G`1[System.Object])
+  Void withDyn(G)
+  Void fnPlain(haxe.lang.Function)
+  Int32 genNoU[U]()
+  Int32 inl()
+  Int32 ov(Int32)
+  System.String toString()
+  Int32 kept()
+  Int32 get_prop()
+  System.Object anon()
+  Void optInt(haxe.lang.Null`1[System.Int32])
+  Void defInt(haxe.lang.Null`1[System.Int32])
+GS companion: GS interface implements G,haxe.lang.IGenericObject,haxe.lang.IHxObject
+  [GenericInterface(GS`1[System.Object])]
+  System.Object GS_cast[U_c]()
+  System.Object G_cast[T_c]()
+  Int32 own()
+
+# Types notes §8.2 (probe case-shape): field and method types by .NET reflection, and the companions
+# G, IG, IG__Statics_, GI and GS. The probe's Array companion dump is in m4.cases.txt: it lists get_Item and
+# set_Item, hxcs's @:classCode indexer, which is milestone 4.
+--- type-argument-clr-shapes @gencs
+// CLR shapes gencs gives generic classes, read with .NET reflection from Haxe: field and method types
+// (type-argument erasure), the companion interface, X_cast and __hx_cast members.
+import cs.system.reflection.BindingFlags;
+
+class C { public function new() {} }
+interface I {}
+enum E { A; }
+abstract AI(Int) from Int to Int {}
+class G<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+	public function plain():Int return 1;
+}
+interface IG<T> { function ig():T; function igPlain():Int; }
+class GI<T> implements IG<T> {
+	public function new() {}
+	public function ig():T return null;
+	public function igPlain():Int return 1;
+}
+class GS<U> extends G<U> { public function new(u:U) super(u); public function own():Int return 2; }
+class H<T> {
+	public var gInt:G<Int>;
+	public var gNInt:G<Null<Int>>;
+	public var gString:G<String>;
+	public var gDyn:G<Dynamic>;
+	public var gAny:G<Any>;
+	public var gC:G<C>;
+	public var gI:G<I>;
+	public var gE:G<E>;
+	public var gAI:G<AI>;
+	public var gAnon:G<{a:Int}>;
+	public var gFun:G<Int->Int>;
+	public var gT:G<T>;
+	public var gNT:G<Null<T>>;
+	public var gGS:G<G<String>>;
+	public var gSB:G<cs.system.text.StringBuilder>;
+	public var gDT:G<cs.system.DateTime>;
+	public var gDOW:G<cs.system.DayOfWeek>;
+	public var aAI:Array<Array<Int>>;
+	public var aND:Array<Null<Dynamic>>;
+	public var om:haxe.ds.ObjectMap<C, Dynamic>;
+	public var lC:cs.system.collections.generic.List_1<C>;
+	public var lNI:cs.system.collections.generic.List_1<Null<Int>>;
+	public var lGD:cs.system.collections.generic.List_1<G<Dynamic>>;
+	public function new() {}
+	public function meth<U>(pU:G<U>, pC:G<C>, pD:G<Dynamic>):G<U> return pU;
+}
+class P {
+	static function typeName(t:cs.system.Type):String return t == null ? "null" : t.ToString();
+	static function dumpType(label:String, t:cs.system.Type) {
+		if (t == null) {
+			Sys.println(label + ": not found");
+			return;
+		}
+		var ifs = [for (i in t.GetInterfaces()) typeName(i)];
+		ifs.sort(Reflect.compare);
+		Sys.println(label + ": " + typeName(t) + (t.IsInterface ? " interface" : "") + " implements " + ifs.join(","));
+		var attrs = t.GetCustomAttributes(false);
+		for (i in 0...attrs.Length) {
+			var g = cs.Lib.as(attrs[i], cs.internal.HxObject.GenericInterface);
+			if (g != null) Sys.println("  [GenericInterface(" + typeName(g.generic) + ")]");
+		}
+		var flags = new cs.Flags(BindingFlags.Public) | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var ms = t.GetMethods(flags);
+		var names = [];
+		for (i in 0...ms.Length) {
+			var n = ms[i].Name;
+			if (StringTools.startsWith(n, "__hx_") && n != "__hx_cast") continue;
+			names.push(Std.string(ms[i]) + (ms[i].IsStatic ? " static" : ""));
+		}
+		for (n in names) Sys.println("  " + n);
+	}
+	static function main() {
+		var h = new H<Int>();
+		var t = cs.Lib.toNativeType(H).GetGenericTypeDefinition();
+		for (f in ["gInt", "gNInt", "gString", "gDyn", "gAny", "gC", "gI", "gE", "gAI", "gAnon", "gFun", "gT", "gNT", "gGS", "gSB", "gDT", "gDOW", "aAI", "aND", "om", "lC", "lNI", "lGD"])
+			Sys.println(f + ": " + typeName(t.GetField(f).FieldType));
+		Sys.println("meth: " + Std.string(t.GetMethod("meth")));
+		dumpType("G companion", cs.system.Type._GetType("G"));
+		dumpType("G class", cs.Lib.toNativeType(G).GetGenericTypeDefinition());
+		dumpType("IG companion", cs.system.Type._GetType("IG"));
+		dumpType("IG statics", cs.system.Type._GetType("IG__Statics_"));
+		dumpType("GI companion", cs.system.Type._GetType("GI"));
+		dumpType("GS companion", cs.system.Type._GetType("GS"));
+		new GI<Int>().ig();
+		new GS<Int>(1).own();
+		h.meth(null, null, null);
+	}
+}
+===
+[run]
+gInt: G`1[System.Int32]
+gNInt: G`1[System.Object]
+gString: G`1[System.String]
+gDyn: G
+gAny: G`1[System.Object]
+gC: G`1[System.Object]
+gI: G`1[System.Object]
+gE: G`1[System.Object]
+gAI: G`1[System.Int32]
+gAnon: G`1[System.Object]
+gFun: G`1[System.Object]
+gT: G`1[T]
+gNT: G`1[System.Object]
+gGS: G`1[System.Object]
+gSB: G`1[System.Object]
+gDT: G`1[System.DateTime]
+gDOW: G`1[System.DayOfWeek]
+aAI: Array`1[System.Object]
+aND: Array
+om: haxe.ds.ObjectMap
+lC: System.Collections.Generic.List`1[C]
+lNI: System.Collections.Generic.List`1[System.Object]
+lGD: System.Collections.Generic.List`1[G]
+meth: G`1[U] meth[U](G`1[U], G`1[System.Object], G)
+G companion: G interface implements haxe.lang.IGenericObject,haxe.lang.IHxObject
+  [GenericInterface(G`1[System.Object])]
+  System.Object G_cast[T_c]()
+  Int32 plain()
+G class: G`1[T] implements G,haxe.lang.IGenericObject,haxe.lang.IHxObject
+  System.Object __hx_cast[T_c_c](G) static
+  System.Object G_cast[T_c]()
+  T get()
+  Int32 plain()
+IG companion: IG interface implements haxe.lang.IGenericObject,haxe.lang.IHxObject
+  [GenericInterface(IG`1[System.Object])]
+  System.Object IG_cast[T_c]()
+  Int32 igPlain()
+IG statics: IG__Statics_ implements
+  System.Object __hx_cast[T_c_c](IG) static
+GI companion: GI interface implements haxe.lang.IGenericObject,haxe.lang.IHxObject
+  [GenericInterface(GI`1[System.Object])]
+  System.Object GI_cast[T_c]()
+  System.Object IG_cast[T_c]()
+  Int32 igPlain()
+GS companion: GS interface implements G,haxe.lang.IGenericObject,haxe.lang.IHxObject
+  [GenericInterface(GS`1[System.Object])]
+  System.Object GS_cast[U_c]()
+  System.Object G_cast[T_c]()
+  Int32 own()
+
+# Types notes §8.8: probes castorder and ifacecast merged into one program (the same I1, I2 and Base).
+--- cast-member-order @gencs
+// Order of the X_cast members a generic class gets from its superclass and its generic interfaces (deep),
+// read with Type.getInstanceFields (types notes §3, probes castorder and ifacecast).
+interface I1<T> { function a():T; }
+interface I2<A, B> { function b(x:A):B; }
+interface I3<T> extends I1<T> { function c():T; }
+interface IExt<T> extends I1<T> { function c():T; }
+class Base<T> implements I1<T> { public function new() {} public function a():T return null; }
+class X<T> extends Base<T> implements I2<T, T> implements I3<T> {
+	public function new() super();
+	public function b(x:T):T return x;
+	public function c():T return null;
+}
+class Y<T> extends X<T> { public function new() super(); }
+final class Fin<T> implements I1<T> { public function new() {} public function a():T return null; }
+class Perm<X, Y> implements I2<Y, X> {
+	public function new() {}
+	public function b(x:Y):X return null;
+}
+class Fixed<T> implements I1<Int> {
+	public var t:T;
+	public function new() {}
+	public function a():Int return 1;
+}
+class Nested<T> implements I1<Array<T>> {
+	public function new() {}
+	public function a():Array<T> return [];
+}
+class Partial<T> implements I2<String, T> {
+	public function new() {}
+	public function b(x:String):T return null;
+}
+class Both<T> implements I1<T> implements I2<T, T> {
+	public function new() {}
+	public function a():T return null;
+	public function b(x:T):T return x;
+}
+class Derived<U> extends Base<U> {
+	public function new() super();
+}
+class DerivedFixed extends Base<String> {
+	public function new() super();
+}
+class Derived2<A, B> extends Base<B> {
+	public function new() super();
+}
+class ImplExt<T> implements IExt<T> {
+	public function new() {}
+	public function a():T return null;
+	public function c():T return null;
+}
+class P {
+	static function main() {
+		Sys.println(Type.getInstanceFields(X));
+		Sys.println(Type.getInstanceFields(Y));
+		Sys.println(Type.getInstanceFields(Fin));
+		var all:Array<Dynamic> = [new Perm<Int, String>(), new Fixed<String>(), new Nested<Int>(), new Partial<Int>(), new Both<Int>(), new Derived<Int>(), new DerivedFixed(), new Derived2<Int, String>(), new ImplExt<Int>()];
+		for (x in all) Sys.println(Type.getClassName(Type.getClass(x)) + ": " + Type.getInstanceFields(Type.getClass(x)));
+	}
+}
+===
+[run]
+[X_cast,I2_cast,I3_cast,I1_cast,Base_cast,b,c,a]
+[Y_cast,I2_cast,I3_cast,I1_cast,Base_cast,X_cast,b,c,a]
+[Fin_cast,I1_cast,a]
+Perm: [Perm_cast,I2_cast,b]
+Fixed: [Fixed_cast,I1_cast,a,t]
+Nested: [Nested_cast,I1_cast,a]
+Partial: [Partial_cast,I2_cast,b]
+Both: [Both_cast,I1_cast,I2_cast,a,b]
+Derived: [Derived_cast,I1_cast,Base_cast,a]
+DerivedFixed: [Base_cast,I1_cast,a]
+Derived2: [Derived2_cast,I1_cast,Base_cast,a]
+ImplExt: [ImplExt_cast,I1_cast,IExt_cast,a,c]
+
+# Recorded divergence (decision: hxc fixes gencs's parent-cast bug for every parent cast). Types notes
+# §8.14 (probe thenable), the three FP -> Th casts of casts' cast-interface, and the Perm, Partial, Both and Fixed
+# shapes of types §4's table. Expected [run]: gencs's C# for this program patched with the §4 rule (every
+# parent-cast body `return this.X_cast<b1..bn>()`, bk = Pj_c for the first j with aj == Tk), built and run as
+# run.sh does (the patcher is fixcasts.py, see verification.md); it rewrote FP.Th_cast, Perm.I2_cast,
+# Partial.I2_cast, Both.I1_cast, Both.I2_cast and the std's StringMap.haxe_IMap_cast. Unpatched
+# gencs throws InvalidCastException on every line but `same inst` and `Fixed -> I1<Int>`.
+--- interface-cast-fixed
+// Casts into another instantiation of a generic interface the class implements. gencs's parent cast
+// Th_cast<T_c>() calls FP_cast<T>() with the class's own T, so it returns `this` and the castclass after it
+// throws InvalidCastException (types notes §4). hxc emits the correct body: FP_cast<T_c>(), Perm_cast<B_c, A_c>(),
+// Partial_cast<B_c>(), Both_cast<A_c>(), and in the std StringMap<T> implements IMap<String,T>
+// haxe_ds_StringMap_cast<V_c>(); Fixed<T> implements I1<Int> keeps Fixed_cast<T>() as gencs does.
+interface Th<T> {
+	function then<R>(f:T->R):Th<R>;
+	function value():T;
+}
+class FP<T> implements Th<T> {
+	var v:Null<T>;
+	public function new(v:T) this.v = v;
+	public function then<R>(f:T->R):Th<R> {
+		// thenshim's shape: an Any-typed promise cast to Th<R>.
+		return cast impl(f);
+	}
+	function impl(f:Dynamic):FP<Any> return new FP<Any>(f(v));
+	public function value():T return v;
+}
+interface I1<T> { function a():T; }
+interface I2<A, B> { function b(x:A):B; }
+class Perm<X, Y> implements I2<Y, X> {
+	public var x:X;
+	public var y:Y;
+	public function new(x:X, y:Y) { this.x = x; this.y = y; }
+	public function b(v:Y):X return x;
+}
+class Partial<T> implements I2<String, T> {
+	public var t:T;
+	public function new(t:T) this.t = t;
+	public function b(s:String):T return t;
+}
+class Both<T> implements I1<T> implements I2<T, T> {
+	public var t:T;
+	public function new(t:T) this.t = t;
+	public function a():T return t;
+	public function b(x:T):T return x;
+}
+class Fixed<T> implements I1<Int> {
+	public var t:T;
+	public function new(t:T) this.t = t;
+	public function a():Int return 1;
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + ": " + f()) catch (e:Dynamic) Sys.println(n + " threw: " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var p = new FP<Int>(20);
+		t("then<Int>", () -> { var q:Th<Int> = p.then(x -> x + 1); q.value(); });
+		t("dyn->Th<Int>", () -> { var d:Dynamic = new FP<Dynamic>(5); var x:Th<Int> = d; x.value(); });
+		t("dyn->Th<String>", () -> { var d:Dynamic = new FP<Dynamic>("s"); var x:Th<String> = d; x.value(); });
+		t("same inst", () -> { var d:Dynamic = new FP<Int>(5); var x:Th<Int> = d; x.value(); });
+		t("cast FP<Dyn> -> Th<Int>", () -> { var x:Th<Int> = cast new FP<Dynamic>(1); Std.string(Type.getClass(x)) + " " + x.value(); });
+		t("Th<Int> -> Th<Float> cast", () -> { var a:Th<Int> = new FP<Int>(1); var x:Th<Float> = cast a; Std.string(Type.getClass(x)) + " " + x.value(); });
+		t("Perm -> I2<String,Int>", () -> { var d:Dynamic = new Perm<Dynamic, Dynamic>(1, "s"); var i:I2<String, Int> = d; Std.string(Type.getClass(i)) + " " + i.b("q"); });
+		t("Partial -> I2<String,Int>", () -> { var d:Dynamic = new Partial<Dynamic>(3); var i:I2<String, Int> = d; Std.string(Type.getClass(i)) + " " + i.b("q"); });
+		t("Both -> I1<Int>", () -> { var d:Dynamic = new Both<Dynamic>(4); var i:I1<Int> = d; Std.string(Type.getClass(i)) + " " + i.a(); });
+		t("Both -> I2<Int,Int>", () -> { var d:Dynamic = new Both<Dynamic>(4); var i:I2<Int, Int> = d; Std.string(Type.getClass(i)) + " " + i.b(5); });
+		t("Both -> I2<Int,String>", () -> { var d:Dynamic = new Both<Dynamic>(4); var i:I2<Int, String> = d; Std.string(Type.getClass(i)); });
+		t("IMap from Dynamic", () -> { var sm:Dynamic = new haxe.ds.StringMap<Dynamic>(); var im:haxe.Constraints.IMap<String, Int> = sm; im.set("a", 1); Std.string(Type.getClass(im)) + " " + im.get("a"); });
+		t("Fixed -> I1<Int>", () -> { var d:Dynamic = new Fixed<Dynamic>(2); var i:I1<Int> = d; Std.string(Type.getClass(i)) + " " + i.a(); });
+	}
+}
+===
+[run]
+then<Int>: 21
+dyn->Th<Int>: 5
+dyn->Th<String>: s
+same inst: 5
+cast FP<Dyn> -> Th<Int>: FP`1[System.Int32] 1
+Th<Int> -> Th<Float> cast: FP`1[System.Double] 1
+Perm -> I2<String,Int>: Perm`2[System.Int32,System.String] 1
+Partial -> I2<String,Int>: Partial`1[System.Int32] 3
+Both -> I1<Int>: Both`1[System.Int32] 4
+Both -> I2<Int,Int>: Both`1[System.Int32] 5
+Both -> I2<Int,String> threw: System.InvalidCastException
+IMap from Dynamic: haxe.ds.StringMap`1[System.Int32] 1
+Fixed -> I1<Int>: Fixed`1[System.Object] 1
+
+# Recorded divergence (same decision). Types notes §8.15 (probe supercast) plus the Derived2<A,B> extends
+# Base<B> shape of types §4's table. Expected [run]: gencs's C# patched with the §4 rule (GSub.G_cast,
+# Base.I1_cast, Derived2.I1_cast and Derived2.Base_cast rewritten), built and run as run.sh does. Unpatched gencs
+# throws InvalidCastException on dyn->G<Int>, dyn->Base<Int> and dyn->I1<Int>.
+--- superclass-cast-fixed
+// The same parent-cast bug on a generic superclass: gencs gives GSub<U> extends G<U> the override
+// G_cast<T_c>() { return GSub_cast<U>(); }, which returns `this`, so the cast throws InvalidCastException
+// (types notes §4). hxc emits GSub_cast<T_c>(), and for Derived2<A,B> extends Base<B> (whose Base<B> implements
+// I1<B>) Derived2_cast<A, T_c>() in both Base_cast<T_c> and I1_cast<T_c>.
+class G<T> { public var v:T; public function new(v:T) this.v = v; }
+class GSub<U> extends G<U> { public var w:U; public function new(v:U) { super(v); w = v; } }
+interface I1<T> { function a():T; }
+class Base<T> implements I1<T> {
+	public var bv:T;
+	public function new(v:T) bv = v;
+	public function a():T return bv;
+}
+class Derived2<A, B> extends Base<B> {
+	public var av:A;
+	public function new(a:A, b:B) { super(b); av = a; }
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + ": " + f()) catch (e:Dynamic) Sys.println(n + " threw " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var d:Dynamic = new GSub<Dynamic>(5);
+		t("dyn->G<Int>", () -> { var g:G<Int> = d; Type.getClass(g) + " v=" + g.v; });
+		t("dyn->GSub<Int>", () -> { var s:GSub<Int> = d; Type.getClass(s) + " v=" + s.v + " w=" + s.w; });
+		var gs = new GSub<Int>(7);
+		var dd:Dynamic = gs;
+		var g2:G<Int> = dd;
+		Sys.println("same inst: " + (g2 == gs));
+		var d2:Dynamic = new Derived2<Dynamic, Dynamic>("x", 5);
+		t("dyn->Base<Int>", () -> { var b:Base<Int> = d2; Type.getClass(b) + " " + b.a(); });
+		t("dyn->I1<Int>", () -> { var i:I1<Int> = d2; Type.getClass(i) + " " + i.a(); });
+		t("dyn->Derived2<String,Int>", () -> { var x:Derived2<String, Int> = d2; Type.getClass(x) + " " + x.av + x.a(); });
+		t("dyn->Base<String>", () -> { var b:Base<String> = d2; Type.getClass(b) + " " + b.a(); });
+	}
+}
+===
+[run]
+dyn->G<Int>: GSub`1[System.Int32] v=5
+dyn->GSub<Int>: GSub`1[System.Int32] v=5 w=5
+same inst: true
+dyn->Base<Int>: Derived2`2[System.Object,System.Int32] 5
+dyn->I1<Int>: Derived2`2[System.Object,System.Int32] 5
+dyn->Derived2<String,Int>: Derived2`2[System.String,System.Int32] x5
+dyn->Base<String> threw System.InvalidCastException

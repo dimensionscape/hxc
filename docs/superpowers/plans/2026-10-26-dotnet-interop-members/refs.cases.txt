@@ -1,0 +1,185 @@
+# Candidate tests/dotnet cases for milestone 4a's reference resolution (D:/_hxc4a/refs/NOTES.md).
+#
+# Harness: the values area's `@netlib` proposal (D:/_hxc4a/values/NOTES.md, "harness"), extended as
+# NOTES.md §6 says: `@netlib=<A.dll>[,<B.dll>]` names the fixture DLLs passed with --net-lib (to hxc's
+# two compiles and to gencs's haxe command, and as <Reference> items in gencs's csproj, the way hxcs's
+# build tool references exactly the --net-lib files); every fixture library is built into the same
+# directory ($HXC_TEST_TMP/netlib/), so LibB.dll sits beside LibA.dll without being passed, and every
+# DLL of that directory is copied beside a/P/*.dll (after the determinism cmp) and beside gencs's
+# g/bin/P.dll before either runs.
+# Fixture sources: D:/_hxc4a/refs/netlibs/LibA (LibA.cs, LibA.csproj, references LibB) and
+# D:/_hxc4a/refs/netlibs/LibB (LibB.cs, LibB.csproj, AssemblyVersion 2.3.0.0); both netstandard2.0.
+#
+# Every expectation below was produced by the probes in D:/_hxc4a/refs/probe/ (see NOTES.md §7):
+# [run] sections are gencs's real output where marked @gencs (hxc with the experiment patch printed
+# the same, "SAME" in probe-netlib.sh); hxc at 4b17dec9 refuses each of them as noted.
+
+# The server app's Shared.ConfigSettings/DataPoolDef, /AuthenticationDef and Shared.AITools.ToolPlugin/ToolFunction
+# are nested types of a --net-lib assembly: their @:native joins the enclosing types with dots, and
+# DotnetTypes.externPathOf split it into a namespace. hxc 4b17dec9: six "the .NET type LibA.Outer.Inner
+# (.Deep) outside the referenced assemblies" errors. TypeRefs must nest (LibA.Outer/Inner/Mode), as gencs's.
+--- netlib-nested-types @gencs @netlib=LibA
+import liba.Outer;
+
+class P {
+	static function main() {
+		var i = Outer.Make(3);
+		trace(i.X);
+		trace(Outer_Inner.Hello());
+		var j = new Outer_Inner(4);
+		trace(j.X + i.X);
+		trace(j.M == Outer_Inner_Mode.B);
+		var m:Outer_Inner_Mode = j.M;
+		trace(m);
+		var o = new Outer();
+		trace(o.Items.Count);
+		trace(new Outer_Inner_Deep().D);
+		var f:Outer_Inner->Int = function(x:Outer_Inner) return x.X * 10;
+		trace(f(j));
+	}
+}
+===
+[run]
+P.hx:6: 3
+P.hx:7: hello
+P.hx:9: 7
+P.hx:10: true
+P.hx:12: B
+P.hx:14: 2
+P.hx:15: deep
+P.hx:17: 40
+
+# A hand-written extern over a framework type that no --net-std/--net-lib assembly defines (the server app's
+# CSTools.hx JsonSerializerOptions, License.hx:448/462). No --net-lib, so it runs in today's harness.
+# gencs: compiles (dotnet build references the whole net10.0 framework). hxc 4b17dec9: "the .NET type
+# System.Text.Json.JsonSerializerOptions outside the referenced assemblies". hxc must find it in the
+# .NET 10 reference pack and write AssemblyRef System.Text.Json 10.0.0.0 cc7b13ffcd2ddd51, as gencs's build does;
+# IncludeFields/MaxDepth are properties (set_IncludeFields/get_MaxDepth), which only the metadata says.
+--- netlib-framework-extern @gencs
+// A hand-written extern over a framework type that no --net-std/--net-lib assembly defines, as the server app's
+// CSTools.hx (System.Text.Json.JsonSerializerOptions).
+@:native("System.Text.Json.JsonSerializerOptions") extern class JsonSerializerOptions {
+	public function new();
+	public var IncludeFields:Bool;
+	public var MaxDepth:Int;
+}
+
+class P {
+	static function main() {
+		var opts = new JsonSerializerOptions();
+		opts.IncludeFields = true;
+		trace(opts.IncludeFields);
+		trace(opts.MaxDepth);
+		var o:Dynamic = opts;
+		trace(Std.isOfType(o, JsonSerializerOptions));
+	}
+}
+===
+[run]
+P.hx:13: true
+P.hx:14: 0
+P.hx:16: true
+
+# A type reached through a type forwarder: hxcs's net-20 std has no System.Numerics.BigInteger; LibA
+# references netstandard, whose reference-pack facade forwards it to System.Runtime.Numerics. The
+# AssemblyRef must name System.Runtime.Numerics 10.0.0.0 b03f5f7f11d50a3a (gencs's build writes the same).
+# hxc 4b17dec9: "the .NET type System.Numerics.BigInteger outside the referenced assemblies".
+--- netlib-forwarded-extern @gencs @netlib=LibA
+// A hand-written extern over a type that no --net-std assembly (hxcs's net-20) defines, reached through
+// LibA's reference to netstandard, whose reference-pack facade forwards it to System.Runtime.Numerics.
+@:native("System.Numerics.BigInteger") @:struct extern class BigInteger {
+	function new(v:Int):Void;
+	static function Pow(value:BigInteger, exponent:Int):BigInteger;
+	var IsEven(default, never):Bool;
+}
+
+class P {
+	static function main() {
+		var b = BigInteger.Pow(new BigInteger(10), 30);
+		trace(b.IsEven);
+		trace(Std.string(b));
+		trace(liba.Outer.Make(2).X);
+	}
+}
+===
+[run]
+P.hx:12: true
+P.hx:13: 1000000000000000000000000000000
+P.hx:14: 2
+
+# haxeui-cs's shape (Native.hx: `@:native("HaxeUICs.UIPanel") extern class UIPanel extends Control`,
+# Control = Avalonia.Controls.Control): hand-written externs whose metadata supertype lives in an
+# assembly passed only beside the --net-lib one. ExternMembers.chain walks LibA.Panel's metadata
+# super, LibB.BaseCtl. hxc 4b17dec9: "the .NET type LibB.BaseCtl outside the referenced assemblies".
+# hxc must read LibB.dll from beside LibA.dll and write AssemblyRef LibB 2.3.0.0 (null token).
+# NOT @gencs: gencs's C# fails, since hxcs references only the --net-lib files:
+#   P.hx(16,61): error CS0012: The type 'BaseCtl' is defined in an assembly that is not referenced.
+#   You must add a reference to assembly 'LibB, Version=2.3.0.0, Culture=neutral, PublicKeyToken=null'.
+#   (also CS1061 'Panel' does not contain a definition for 'Kind'/'Visible', CS0400 'LibB' not found)
+# hxc doing better here is allowed (the spec's Intent); the expectation is hxc's run with the patch.
+--- netlib-dependency-beside @netlib=LibA
+// Hand-written externs over --net-lib types, as haxeui-cs's Native.hx (UIPanel extends Avalonia's Control).
+@:native("LibB.BaseCtl") extern class Ctl {
+	var Visible:Bool;
+	function Kind():String;
+	function Who():String;
+}
+
+@:native("LibA.Panel") extern class Panel extends Ctl {
+	function new():Void;
+	function Me():String;
+}
+
+class P {
+	static function main() {
+		var p = new Panel();
+		trace(p.Me());
+		trace(p.Who());
+		trace(p.Kind());
+		trace(p.Visible);
+		var c:Ctl = p;
+		trace(c.Who());
+	}
+}
+===
+[run]
+P.hx:16: panel
+P.hx:17: Panel
+P.hx:18: base
+P.hx:19: true
+P.hx:21: Panel
+
+# Typing is unchanged: a --net-lib signature naming a type of an assembly that is not passed is not
+# found, in Haxe 4.3.7 as in hxc (the beside assemblies are for lowering only, never for typing).
+# Haxe 4.3.7 prints a second line, `P.hx:4: characters 23-26 : Class<liba.Holder> has no field Get`,
+# which hxc does not (a milestone-1 diagnostic difference, out of 4a's scope; the expectation is hxc's).
+--- netlib-dependency-not-typed @netlib=LibA
+class P {
+	static function main() {
+		trace(liba.Holder.Plain());
+		var t = liba.Holder.Get();
+		trace(t.Name());
+	}
+}
+===
+[compile]
+Type not found : libb.Thing
+
+# Still a clean compile error when nothing defines the type (gencs's C# fails: CS0400 'Nope' could
+# not be found in the global namespace). The message is today's; NOTES.md §8 Q4 recommends a wording that
+# says it is not a missing feature.
+--- netlib-unknown-native-type
+// A hand-written extern whose .NET type no assembly defines: still a clean compile error.
+@:native("Nope.Missing") extern class Missing {
+	function new():Void;
+}
+
+class P {
+	static function main() {
+		var m = new Missing();
+		trace(m != null);
+	}
+}
+===
+[compile]
+P.hx:8: characters 11-24 : dotnet: the .NET type Nope.Missing outside the referenced assemblies is not supported yet

@@ -1,0 +1,156 @@
+--- config + --hl out.hl --no-output --macro Probe.print()
+class P { static function main() {} }
+
+--- config-hlc + --hl out/main.c --no-output --macro Probe.print()
+class P { static function main() {} }
+
+--- hl-ver-set + --hl out.hl --no-output --macro Probe.print() -D hl-ver=1.13.0
+class P { static function main() {} }
+
+--- hl-types + --hl out.hl --no-output
+class P {
+	static function main() {
+		var b = new hl.Bytes(4);
+		var a = new hl.NativeArray<Int>(2);
+		var r = hl.Ref.make(1);
+		var i:hl.I64 = 1;
+		var t = untyped $new(Int);
+		trace(b);
+		trace(a);
+		trace(r);
+		trace(i);
+		trace(t);
+	}
+}
+
+--- hl-only-package-error + --hl out.hl --no-output
+class P { static function main() { cpp.Lib.println(1); } }
+
+--- typed-dump + --hl out.hl -D hl_no_opt -D dump --macro Probe.after('dump/hl/P.dump')
+enum E {
+	A;
+	B(n:Int);
+}
+
+class C {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function get():Int return x;
+}
+
+class P {
+	static function f(e:E):Int {
+		return switch (e) {
+			case A: 0;
+			case B(n): n;
+		}
+	}
+	static function main() {
+		var c = new C(3);
+		var g = function(y:Int) return y + c.get();
+		var r = 0;
+		try {
+			r = g(f(B(2)));
+			if (r > 100) throw "big";
+		} catch (s:String) {
+			r = -1;
+		}
+		trace(r);
+	}
+}
+
+--- typed-dump-postfix-property + --hl out.hl -D hl_no_opt -D dump --macro Probe.after('dump/hl/P.dump')
+class Box {
+	public var prop(get, set):Int;
+	public static var sprop(default, set):Int = 3;
+
+	var store:Int = 2;
+
+	public function new() {}
+
+	function get_prop() {
+		return store;
+	}
+
+	function set_prop(x:Int) {
+		return store = x;
+	}
+
+	static function set_sprop(x:Int) {
+		return sprop = x;
+	}
+}
+
+class P {
+	static function main() {
+		var b = new Box();
+		Sys.println(b.prop++);
+		Sys.println(Box.sprop++);
+		b.prop++;
+	}
+}
+
+--- typed-dump-absolute-path + --hl out.hl -D hl_no_opt -D dump -D absolute-path --macro Probe.after('dump/hl/P.dump')
+class P {
+	static function main() {
+		trace("where");
+	}
+}
+
+--- typed-dump-return-untyped + --hl out.hl -D hl_no_opt -D dump --macro Probe.after('dump/hl/P.dump')
+class P {
+	static function store(b:hl.Bytes, v:Int):Void {
+		return untyped $bseti32(b, 0, v);
+	}
+
+	static function main() {
+		var b = new hl.Bytes(4);
+		store(b, 3);
+		Sys.println(b.getI32(0));
+	}
+}
+
+--- typed-dump-implicit-cast + --hl out.hl -D hl_no_opt -D dump --macro Probe.after('dump/hl/P.dump')
+abstract Meters(Int) {
+	public inline function new(v:Int) {
+		this = v;
+	}
+
+	@:from static function fromString(s:String):Meters {
+		return new Meters(s.length);
+	}
+
+	@:to function toFloat():Float {
+		return this / 2;
+	}
+}
+
+class P {
+	static function main() {
+		var m:Meters = "hello";
+		var f:Float = m;
+		Sys.println(f);
+	}
+}
+
+--- unresolved-extern + --hl out.hl
+extern class Ext {
+	static function nothing(x:Int):Int;
+}
+
+class P {
+	static function main() {
+		if (Sys.args().length > 5) trace(Ext.nothing(1));
+	}
+}
+
+--- unresolved-extern-hl-check + --hl out.hl -D hl-check
+extern class Ext {
+	static function nothing(x:Int):Int;
+}
+
+class P {
+	static function main() {
+		if (Sys.args().length > 5) trace(Ext.nothing(1));
+	}
+}

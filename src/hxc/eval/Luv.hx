@@ -343,7 +343,7 @@ class Luv {
 
 	// The handler for an exception escaping a callback; each eval context replaces it.
 	public static var exceptionHandler:Dynamic->Void = function(e:Dynamic) {
-		Sys.stderr().writeString(Std.string(e) + "\n");
+		hxc.core.HostStdio.err().writeString(Std.string(e) + "\n");
 		hxc.compiler.HostRuntime.exit(2);
 	};
 

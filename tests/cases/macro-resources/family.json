@@ -1,0 +1,8 @@
+{
+	"name": "macro-resources",
+	"oracle": "haxe",
+	"kind": "run",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "--main", "$module", "--interp"]
+}

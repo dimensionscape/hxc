@@ -1,0 +1,705 @@
+# Candidate tests/dotnet cases for milestone 4b: @:classCode, @:functionCode and the indexers gencs writes for
+# __get/__set (Array's companion indexer). Every @gencs case's [run] is Haxe 4.3.7 gencs's real output
+# (D:/_hxc4b/codeblocks/probe/<dir>/gencs.txt); a refusal case gives gencs's own result in a comment and hxc's
+# proposed text, at the position hxc reports today. The probe directory of each case is in brackets.
+# [probe caseA] hxc today: "@:classCode is not supported yet" twice, and "Quiet (left out: @:classCode)".
+--- classcode-pragma-only-ignored @gencs
+// A @:classCode holding only #pragma lines (the server app's FieldLookup override has one) is ignored: C#
+// warnings do not exist in IL. Blank lines and several pragmas are allowed; the class compiles as without it.
+@:classCode("#pragma warning disable 628\n")
+class Quiet {
+	public var n = 1;
+	public function new() {}
+}
+
+@:classCode("\n  #pragma warning disable 109, 114\n\t#pragma warning restore 114\n")
+class Quieter {
+	public static function twice(x:Int) return x * 2;
+}
+
+class P {
+	static function main() {
+		trace(new Quiet().n, Quieter.twice(4), Type.getInstanceFields(Quiet), Type.getClassFields(Quieter));
+	}
+}
+===
+[run]
+P.hx:16: 1, 8, [n], [twice]
+# [probe case2] gencs compiles and prints:
+#   P.hx:15: 1, [pubInst,k]
+# hxc today: "P.hx:7: lines 7-10 : dotnet: @:classCode is not supported yet" and "P.hx:14: characters 11-19 :
+# dotnet: CC (left out: @:classCode) is not supported yet". Proposed: one error, and the class is still compiled.
+--- classcode-members-are-an-error
+// @:classCode with C# members (the server app's nativepdf Zlib injects a static method with `using` statements)
+// is refused, naming the Haxe replacement; gencs pastes the text into the class body.
+@:classCode('
+	static int helper(int a) { using (var ms = new global::System.IO.MemoryStream()) { ms.WriteByte((byte)a); return (int) ms.Length + a; } }
+	public int pubInst() { return 41 + this.k; }
+')
+class CC {
+	public var k:Int = 1;
+	public function new() {}
+}
+
+class P {
+	static function main() {
+		var c = new CC();
+		trace(c.k, Type.getInstanceFields(CC));
+	}
+}
+===
+[compile]
+P.hx:7: lines 7-10 : dotnet: @:classCode is C# source, which hxc does not compile: declare the members in Haxe, calling .NET through extern classes (a @:classCode of #pragma lines only is ignored)
+# [probe case3] gencs compiles and prints (the functionCode runs for `new Area()` only, after C#'s implicit
+# base(), and replaces the field initializer and init(); the subclass runs the Haxe body, never the functionCode):
+#   P.hx:31: null, base, set
+#   P.hx:33: fromInit, base, null
+# hxc today: "@:functionCode is not supported yet" at the same position.
+--- functioncode-constructor-is-an-error
+// @:functionCode on a constructor (a library sets a GUID field this way) is refused. gencs puts the C# into the
+// C# constructor alone, after an implicit base(): `new Area()` skips super(...)'s arguments, the field
+// initializers and the Haxe body, while a subclass's super() and Type.createEmptyInstance never run it.
+class Base {
+	public var tag:String = "base";
+	public function new() {}
+}
+
+class Area extends Base {
+	public var text:String = "fieldinit";
+	var _guid:String;
+
+	@:functionCode("_guid = System.Guid.NewGuid().ToString();")
+	public function new() {
+		super();
+		init();
+	}
+
+	function init() text = "fromInit";
+
+	public function guid() return _guid == null ? "null" : "set";
+}
+
+class Sub extends Area {
+	public function new() super();
+}
+
+class P {
+	static function main() {
+		var a = new Area();
+		trace(a.text, a.tag, a.guid());
+		var s = new Sub();
+		trace(s.text, s.tag, s.guid());
+	}
+}
+===
+[compile]
+P.hx:14: lines 14-17 : dotnet: @:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet
+# [probe case4] gencs compiles and prints:
+#   P.hx:18: 103, 8, s, 3
+# hxc today: "@:functionCode is not supported yet" at the same three positions.
+--- functioncode-method-is-an-error
+// @:functionCode on a method is refused; gencs replaces that overload's body with the C# text, whose names are
+// gencs's (a parameter named like a C# keyword is @string).
+class M {
+	@:functionCode("return a + b + 100;")
+	public static function add(a:Int, b:Int):Int return a + b;
+
+	@:functionCode("return a * 2;")
+	@:overload public static function ov(a:Int):Int return a;
+
+	@:overload public static function ov(a:String):String return a;
+
+	@:functionCode("return @string.Length;")
+	public static function len(string:String):Int return 0;
+}
+
+class P {
+	static function main() {
+		trace(M.add(1, 2), M.ov(4), M.ov("s"), M.len("abc"));
+	}
+}
+===
+[compile]
+P.hx:5: characters 2-59 : dotnet: @:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet
+P.hx:8: characters 13-58 : dotnet: @:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet
+P.hx:13: characters 2-56 : dotnet: @:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet
+# [probe caseE] The replacement proposed for the server app's nativepdf Zlib.hx (no @:classCode, no __cs__).
+# hxc compiles it today, so the case passes now. The md5 is the one the original @:classCode helper gives under
+# gencs (probe zlib).
+--- serverapp-zlib-through-externs @gencs
+import haxe.io.Bytes;
+
+// The server app's nativepdf Zlib without @:classCode or __cs__: .NET's ZLibStream through hand-written externs,
+// which the reference assemblies the app passes predate. Same bytes as the @:classCode helper (md5 38c405ad...).
+class P {
+	static function main() {
+		var buf = new haxe.io.BytesBuffer();
+		for (i in 0...300) buf.addString("stream " + (i % 17) + " ");
+		var b = buf.getBytes();
+		var big = Bytes.alloc(b.length + 50);
+		big.blit(0, b, 0, b.length);
+		var whole = Zlib.compress(b).toHex();
+		var view = Zlib.compress(big.sub(0, b.length)).toHex();
+		var s = new ZlibStream();
+		s.write(b, 0, 100);
+		s.write(b, 100, b.length - 100);
+		var st = s.finish().toHex();
+		trace(b.length, whole.length, whole.substr(0, 40));
+		trace(whole == view, whole == st, Zlib.compress(Bytes.alloc(0)).toHex());
+		trace(haxe.crypto.Md5.encode(whole));
+	}
+}
+
+
+
+/**
+ * zlib (RFC 1950) compression for PDF FlateDecode streams. C# has no haxe.zip.Compress, so it uses
+ * .NET's ZLibStream through the externs at the end of this file.
+ */
+class Zlib {
+	public static function compress(b:Bytes):Bytes {
+		var s = new ZlibStream();
+		s.write(b, 0, b.length);
+		return s.finish();
+	}
+}
+
+/**
+ * zlib compression fed piece by piece: on C# through .NET's ZLibStream as it comes, so only the compressed bytes are
+ * held; elsewhere collected and compressed at the end.
+ */
+class ZlibStream {
+	var ms:cs.system.io.MemoryStream;
+	var z:NetZLibStream;
+
+	public function new() {
+		ms = new cs.system.io.MemoryStream();
+		z = new NetZLibStream(ms, NetCompressionLevel.Optimal, true);
+	}
+
+	public function write(b:Bytes, pos:Int, len:Int):Void {
+		z.Write(b.getData(), pos, len);
+	}
+
+	/** The compressed data; nothing more can be written. */
+	public function finish():Bytes {
+		z.Dispose();
+		return Bytes.ofData(ms.ToArray());
+	}
+}
+
+/** .NET 6's System.IO.Compression.ZLibStream, which the --net-std reference assemblies predate. */
+@:native("System.IO.Compression.ZLibStream")
+extern class NetZLibStream {
+	function new(stream:cs.system.io.Stream, level:NetCompressionLevel, leaveOpen:Bool);
+	function Write(buffer:cs.NativeArray<cs.types.UInt8>, offset:Int, count:Int):Void;
+	function Dispose():Void;
+}
+
+@:native("System.IO.Compression.CompressionLevel")
+extern enum NetCompressionLevel {
+	Optimal;
+	Fastest;
+	NoCompression;
+	SmallestSize;
+}
+===
+[run]
+P.hx:18: 2820, 190, 789ced96b91180400c035bb912103fe510109260
+P.hx:19: true, true, 
+P.hx:20: 38c405ad3226716daa033e158ba05733
+# [probe caseF] The replacement proposed for the library's BaseTextArea and BaseUiComponent: the constructor's
+# @:functionCode guarded by #if !dotnet. Passes today.
+--- serverapp-guid-functioncode-guarded @gencs
+// The library's BaseTextArea shape with its constructor @:functionCode guarded by #if !dotnet, as proposed. Every
+// path the apps take (a subclass's super(), Type.createEmptyInstance as the AMF reader does, serialization) is the
+// same under gencs (functionCode kept) and hxc (functionCode compiled out); only `new BaseTextArea()` would differ.
+abstract Guid(String) {
+	inline function new(s:String) this = s;
+	public static function newGuid():Guid return new Guid("haxe-guid");
+	@:to public function toString():String return this;
+}
+
+interface IExt {}
+
+class BaseTextArea implements IExt {
+	@:property public var guid(get, set):String;
+	var _guid:Guid;
+	public var text:String;
+	public var x:Float;
+	public var tag:String = "tag";
+
+	#if !dotnet
+	@:functionCode("_guid = System.Guid.NewGuid().ToString();")
+	#end
+	public function new() {
+		init();
+	}
+
+	function init() {
+		text = "";
+		x = 0;
+	}
+
+	public function get_guid():String {
+		if (_guid == null) _guid = Guid.newGuid();
+		return _guid;
+	}
+
+	public function set_guid(v:String) {
+		_guid = cast v;
+		return v;
+	}
+
+	public function rawGuid():String return _guid == null ? "null" : (_guid.toString().length == 36 ? "a System.Guid" : _guid.toString());
+}
+
+class ResizableTextArea extends BaseTextArea {
+	public var w:Float = 3;
+	public function new() {
+		super();
+		init();
+	}
+}
+
+class P {
+	static function show(name:String, b:BaseTextArea) {
+		Sys.println(name + ": raw=" + b.rawGuid() + " text=" + b.text + " tag=" + b.tag + " guid=" + (b.guid.length == 36 ? "a System.Guid" : b.guid));
+	}
+
+	static function main() {
+		show("new ResizableTextArea", new ResizableTextArea());
+		show("createEmptyInstance BaseTextArea", Type.createEmptyInstance(BaseTextArea));
+		Sys.println(haxe.Serializer.run(new ResizableTextArea()));
+	}
+}
+===
+[run]
+new ResizableTextArea: raw=null text= tag=tag guid=haxe-guid
+createEmptyInstance BaseTextArea: raw=null text=null tag=null guid=haxe-guid
+cy17:ResizableTextAreay1:wi3y3:tagR2y1:xzy4:texty0:y5:_guidny4:guidy9:haxe-guidg
+# [probe idx1] gencs writes `public T this[int index]` and the explicit `object global::Array.this[int key]` on
+# Array`1, `object this[int key]` on the companion interface, and `V this[I index]` on any class with __get/__set
+# (check_special_behaviors in gencs.ml, not hxcs @:classCode), each type with [DefaultMember("Item")]. hxc today
+# has none of them and refuses g[1] ("array access is not supported yet"); without that line its run lists no
+# property at all (probe idx1h).
+--- array-indexer-clr-surface @gencs
+import cs.system.reflection.BindingFlags;
+
+// gencs's indexers (check_special_behaviors): Array<T>'s `T this[int]` and the companion's `object this[int]`,
+// and those of a user class with __get/__set, seen through .NET reflection and Haxe reflection.
+class Grid implements ArrayAccess<Int> {
+	var cells = [10, 20, 30];
+	public function new() {}
+	@:keep public function __get(i:Int):Int return cells[i];
+	@:keep public function __set(i:Int, v:Int):Int return cells[i] = v;
+}
+
+class Named {
+	public function new() {}
+	@:keep public function __get(k:String):String return "got " + k;
+}
+
+class P {
+	static function props(t:cs.system.Type):String {
+		var flags = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+		var ps = t.GetProperties(flags);
+		var out = [];
+		for (i in 0...ps.Length) {
+			var p = ps[i];
+			var ix = p.GetIndexParameters();
+			var ixs = [for (j in 0...ix.Length) ix[j].ParameterType.Name + " " + ix[j].Name];
+			out.push(p.PropertyType.Name + " " + p.Name + "[" + ixs.join(",") + "] r=" + p.CanRead + " w=" + p.CanWrite
+				+ " get=" + (p.GetGetMethod(true) == null ? "-" : p.GetGetMethod(true).Name + (p.GetGetMethod(true).IsPublic ? " public" : " private") + (p.GetGetMethod(true).IsVirtual ? " virtual" : "") + (p.GetGetMethod(true).IsFinal ? " final" : "")));
+		}
+		var dm = t.GetDefaultMembers();
+		var dms = [for (i in 0...dm.Length) dm[i].Name];
+		var attrs = t.GetCustomAttributes(false);
+		var ats = [for (i in 0...attrs.Length) cs.Lib.getNativeType(attrs[i]).Name];
+		ats.sort(Reflect.compare);
+		return out.join("; ") + " | default=" + dms.join(",") + " | attrs=" + ats.join(",");
+	}
+
+	static function nonPublicMethods(t:cs.system.Type, filter:String):String {
+		var flags = new cs.Flags(BindingFlags.NonPublic) | BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+		var ms = t.GetMethods(flags);
+		var out = [];
+		for (i in 0...ms.Length) if (ms[i].Name.indexOf(filter) >= 0) {
+			var m = ms[i];
+			out.push(m.Name + (m.IsPublic ? " public" : m.IsPrivate ? " private" : " other") + (m.IsVirtual ? " virtual" : "") + (m.IsFinal ? " final" : "") + (m.IsHideBySig ? " hidebysig" : "") + (m.IsSpecialName ? " specialname" : "") + (Std.string(m.Attributes).indexOf("NewSlot") >= 0 ? " newslot" : ""));
+		}
+		return out.join("; ");
+	}
+
+	static function attempt(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e).split("\n")[0].split("\r")[0];
+			if (s.length > 110) s = s.substr(0, 110);
+			Sys.println(name + ": EXC " + s);
+		}
+	}
+
+	static function main() {
+		var a = [1, 2, 3];
+		var at = cs.Lib.getNativeType(a);
+		Sys.println("Array<Int>: " + props(at));
+		Sys.println("Array<Int> Item methods: " + nonPublicMethods(at, "Item"));
+		var comp = cs.system.Type._GetType("Array");
+		Sys.println("Array companion: " + props(comp));
+		Sys.println("companion Item methods: " + nonPublicMethods(comp, "Item"));
+		var g = new Grid();
+		Sys.println("Grid: " + props(cs.Lib.getNativeType(g)));
+		Sys.println("Grid Item methods: " + nonPublicMethods(cs.Lib.getNativeType(g), "Item"));
+		Sys.println("Named: " + props(cs.Lib.getNativeType(new Named())));
+		Sys.println("Grid fields: " + Type.getInstanceFields(Grid));
+		Sys.println("Grid g[1]: " + g[1] + " " + (g[1] = 5) + " " + g[1]);
+		attempt("Item via reflection", () -> at.GetProperty("Item").GetValue(a, cs.NativeArray.make((1 : Dynamic))));
+		attempt("companion Item set 2.5", () -> { comp.GetProperty("Item").SetValue(a, (2.5 : Dynamic), cs.NativeArray.make((0 : Dynamic))); Std.string(a); });
+		attempt("Reflect.field get_Item", () -> Reflect.field(a, "get_Item"));
+		attempt("Reflect.callMethod get_Item", () -> Reflect.callMethod(a, Reflect.field(a, "get_Item"), [2]));
+		var d:Dynamic = a;
+		attempt("dynamic d.get_Item(1)", () -> d.get_Item(1));
+		attempt("Reflect.hasField get_Item", () -> Reflect.hasField(a, "get_Item"));
+		attempt("Grid reflect get_Item", () -> Reflect.callMethod(g, Reflect.field(g, "get_Item"), [0]));
+	}
+}
+===
+[run]
+Array<Int>: Int32 Item[Int32 index] r=true w=true get=get_Item public; Object global::Array.Item[Int32 key] r=true w=true get=global::Array.get_Item private virtual final | default=Item | attrs=DefaultMemberAttribute
+Array<Int> Item methods: get_Item public hidebysig specialname; set_Item public hidebysig specialname; global::Array.get_Item private virtual final hidebysig specialname; global::Array.set_Item private virtual final hidebysig specialname
+Array companion: Object Item[Int32 key] r=true w=true get=get_Item public virtual | default=Item | attrs=DefaultMemberAttribute,GenericInterface
+companion Item methods: get_Item public virtual hidebysig specialname; set_Item public virtual hidebysig specialname
+Grid: Int32 Item[Int32 index] r=true w=true get=get_Item public | default=Item | attrs=DefaultMemberAttribute
+Grid Item methods: get_Item public hidebysig specialname; set_Item public hidebysig specialname
+Named: String Item[String index] r=true w=false get=get_Item public | default=Item | attrs=DefaultMemberAttribute
+Grid fields: [__get,__set,get_Item,set_Item,cells]
+Grid g[1]: 20 5 5
+Item via reflection: 2
+companion Item set 2.5: EXC System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+Reflect.field get_Item: null
+Reflect.callMethod get_Item: EXC System.NullReferenceException: Object reference not set to an instance of an object.
+dynamic d.get_Item(1): EXC System.MemberAccessException: Field not found.
+Reflect.hasField get_Item: false
+Grid reflect get_Item: EXC System.NullReferenceException: Object reference not set to an instance of an object.
+# [probe idx3] Element access through Array<Dynamic> (the companion): gencs reads, writes and ++/-- through the
+# companion indexer (its setter casts with (T)value: InvalidCastException, and NullReferenceException for null
+# into an Array<Int>), and op= through Runtime.callField "__get"/"__set" (converting). Replaces the recorded
+# divergence 4 (cast-array-view). hxc today differs on increment, pre-increment value, write float, write
+# string, write null, write past end, float write int and float compound (callField converts).
+--- array-companion-element-access @gencs
+// Element access through Array<Dynamic> (the companion interface): reads, writes, compound assignment,
+// increments, and the value of an assignment, on an Array<Dynamic> that is an Array<Int>, an Array<Float>,
+// an Array<String> and an Array<Dynamic> object.
+class P {
+	static function attempt(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e).split("\n")[0].split("\r")[0];
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s);
+		}
+	}
+
+	static function main() {
+		var ai = [1, 2, 3];
+		var a:Array<Dynamic> = ai;
+		attempt("read", () -> a[1]);
+		attempt("read typed", () -> { var i:Int = a[2]; i + 1; });
+		attempt("read past end", () -> a[10]);
+		attempt("write int", () -> { a[0] = 7; Std.string(ai); });
+		attempt("assign value", () -> (a[1] = 8));
+		attempt("compound", () -> { a[0] += 5; Std.string(ai); });
+		attempt("increment", () -> { a[2]++; Std.string(ai); });
+		attempt("pre-increment value", () -> ++a[2]);
+		attempt("write float", () -> { a[1] = 3.7; Std.string(ai); });
+		attempt("write string", () -> { a[1] = "q"; Std.string(ai); });
+		attempt("write null", () -> { a[1] = null; Std.string(ai); });
+		attempt("write past end", () -> { a[5] = 1; Std.string(ai); });
+		attempt("negative read", () -> a[-1]);
+		var af = [1.5, 2.5];
+		var b:Array<Dynamic> = af;
+		attempt("float write int", () -> { b[0] = 4; Std.string(af); });
+		attempt("float compound", () -> { b[1] += 1; Std.string(af); });
+		var as = ["x", "y"];
+		var c:Array<Dynamic> = as;
+		attempt("string write int", () -> { c[0] = 4; Std.string(as); });
+		attempt("string write null", () -> { c[0] = null; Std.string(as); });
+		var dd:Array<Dynamic> = [1, "two", 3.5];
+		attempt("dyn write any", () -> { dd[0] = "z"; dd[1] = 2; Std.string(dd); });
+		attempt("dyn compound", () -> { dd[2] += 1; Std.string(dd); });
+		var n:Array<Dynamic> = null;
+		attempt("null receiver", () -> n[0]);
+		var nested:Array<Array<Dynamic>> = [[1, 2], ["a"]];
+		attempt("nested", () -> nested[0][1]);
+		attempt("nested write", () -> { nested[1][0] = 5; Std.string(nested); });
+	}
+}
+===
+[run]
+read: 2
+read typed: 4
+read past end: 0
+write int: [7,2,3]
+assign value: 8
+compound: [12,8,3]
+increment: EXC System.InvalidCastException: Unable to cast object of type 'System.Double' to type 'System.Int32'.
+pre-increment value: EXC System.InvalidCastException: Unable to cast object of type 'System.Double' to type 'System.Int32'.
+write float: EXC System.InvalidCastException: Unable to cast object of type 'System.Double' to type 'System.Int32'.
+write string: EXC System.InvalidCastException: Unable to cast object of type 'System.String' to type 'System.Int32'.
+write null: EXC System.NullReferenceException: Object reference not set to an instance of an object.
+write past end: [12,8,3,0,0,1]
+negative read: 0
+float write int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.Double'.
+float compound: [1.5,3.5]
+string write int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+string write null: [null,y]
+dyn write any: [z,2,3.5]
+dyn compound: [z,2,4.5]
+null receiver: EXC System.NullReferenceException: Object reference not set to an instance of an object.
+nested: 2
+nested write: [[1,2],[5]]
+# [probe idx5] ++ through the companion indexer stores a double: harmless in an Array<Dynamic> object (Type.typeof
+# and the Serializer see an integral double as an Int), InvalidCastException in an Array<Int>. hxc today: the
+# last line is "int --: [-1,2]".
+--- array-companion-increment @gencs
+// ++ and += on an element of an Array<Dynamic> object, and on a Dynamic field: the stored value's type.
+class P {
+	static function main() {
+		var dd:Array<Dynamic> = [1, 1, 1, 1];
+		dd[0]++;
+		++dd[1];
+		dd[2] += 1;
+		var post = dd[3]++;
+		Sys.println([for (x in dd) Std.string(Type.typeof(x))].join(" ") + " post=" + Type.typeof(post));
+		Sys.println(haxe.Serializer.run(dd));
+		var o:Dynamic = {f: 1};
+		o.f++;
+		Sys.println(Type.typeof(o.f));
+		var ai:Array<Int> = [1, 2];
+		var a:Array<Dynamic> = ai;
+		try { a[0] -= 1; Sys.println("int -= " + ai); } catch (e:Dynamic) Sys.println("int -=: EXC");
+		try { a[0]--; Sys.println("int --: " + ai); } catch (e:Dynamic) Sys.println("int --: EXC " + Std.string(e).split("\n")[0].split("\r")[0]);
+	}
+}
+===
+[run]
+TInt TInt TInt TInt post=TInt
+ai2i2i2i2h
+TInt
+int -= [0,2]
+int --: EXC System.InvalidCastException: Unable to cast object of type 'System.Double' to type 'System.Int32'.
+# [probe idx4] a[i] on a Haxe ArrayAccess class is its indexer in gencs's C# (compound and ++ evaluate receiver
+# and index once; the value of an assignment is the value stored, not __set's result). A subclass overriding only
+# __get gets its own get-only Item. A generic class's companion gets `object this[int key]`, implemented
+# explicitly. hxc today: "array access is not supported yet" / "this kind of assignment is not supported yet".
+--- haxe-class-indexers @gencs
+import cs.system.reflection.BindingFlags;
+
+// User classes with __get/__set: gencs gives each an indexer (any class, ArrayAccess or not), and Haxe's
+// a[i] on an ArrayAccess class is that indexer in gencs's C#.
+class Grid implements ArrayAccess<Int> {
+	var cells = [10, 20, 30];
+	public function new() {}
+	public function __get(i:Int):Int { Sys.println("  __get " + i); return cells[i]; }
+	public function __set(i:Int, v:Int):Int { Sys.println("  __set " + i + " " + v); cells[i] = v; return -1; }
+}
+
+class Sub extends Grid {
+	public function new() super();
+	override public function __get(i:Int):Int return 100 + super.__get(i);
+}
+
+class Vec<T> implements ArrayAccess<T> {
+	var items:Array<T>;
+	public function new(items:Array<T>) this.items = items;
+	public function __get(i:Int):T return items[i];
+	public function __set(i:Int, v:T):T return items[i] = v;
+}
+
+class ReadOnly implements ArrayAccess<String> {
+	public function new() {}
+	public function __get(i:Int):String return "ro" + i;
+}
+
+class P {
+	static function props(t:cs.system.Type):String {
+		var flags = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+		var ps = t.GetProperties(flags);
+		var out = [];
+		for (i in 0...ps.Length) out.push(ps[i].PropertyType.Name + " " + ps[i].Name + " w=" + ps[i].CanWrite);
+		var dm = t.GetDefaultMembers();
+		return out.join("; ") + " | default=" + [for (i in 0...dm.Length) dm[i].Name].join(",");
+	}
+
+	static function main() {
+		var g = new Grid();
+		Sys.println("read " + g[1]);
+		Sys.println("assign value " + (g[1] = 5));
+		g[0] += 2;
+		Sys.println("after += " + g[0]);
+		g[2]++;
+		Sys.println("post++ value " + (g[2]++));
+		var s = new Sub();
+		Sys.println("sub read " + s[0]);
+		var v = new Vec(["a", "b"]);
+		v[1] = "c";
+		Sys.println("vec " + v[0] + v[1]);
+		var vd:Vec<Dynamic> = new Vec<Int>([1, 2]);
+		Sys.println("vec dyn " + vd[0]);
+		vd[1] = 7;
+		Sys.println("vec dyn write " + vd[1]);
+		var r = new ReadOnly();
+		Sys.println("ro " + r[3]);
+		Sys.println("Grid " + props(cs.Lib.toNativeType(Grid)));
+		Sys.println("Sub " + props(cs.Lib.toNativeType(Sub)));
+		Sys.println("Vec<String> " + props(cs.Lib.getNativeType(v)));
+		Sys.println("Vec companion " + props(cs.system.Type._GetType("Vec")));
+		Sys.println("ReadOnly " + props(cs.Lib.toNativeType(ReadOnly)));
+		Sys.println("fields Vec " + Type.getInstanceFields(Vec));
+	}
+}
+===
+[run]
+  __get 1
+read 20
+  __set 1 5
+assign value 5
+  __get 0
+  __set 0 12
+  __get 0
+after += 12
+  __get 2
+  __set 2 31
+  __get 2
+  __set 2 32
+post++ value 31
+  __get 0
+sub read 110
+vec ac
+vec dyn 1
+vec dyn write 7
+ro ro3
+Grid Int32 Item w=true | default=Item
+Sub Int32 Item w=false | default=Item
+Vec<String> String Item w=true; Object global::Vec.Item w=true | default=Item
+Vec companion Object Item w=true | default=Item
+ReadOnly String Item w=false | default=Item
+fields Vec [Vec_cast,__get,__set,get_Item,set_Item,items]
+# [probe idx6] The indexer exists when __get survives DCE: under the default -dce std a class keeps its fields.
+# hxc today: "false [__get]" on both lines.
+--- haxe-class-indexer-follows-dce @gencs
+// gencs writes an indexer for the __get/__set that survive DCE: a class whose __get nothing reads loses both.
+class Unused {
+	public function new() {}
+	public function __get(i:Int):Int return i;
+}
+
+class Used implements ArrayAccess<Int> {
+	public function new() {}
+	public function __get(i:Int):Int return i * 2;
+}
+
+class P {
+	static function main() {
+		var u = new Unused();
+		var v = new Used();
+		var t = cs.Lib.getNativeType(u);
+		Sys.println("Unused: " + (t.GetProperty("Item") != null) + " " + Type.getInstanceFields(Unused));
+		Sys.println("Used: " + (cs.Lib.getNativeType(v).GetProperty("Item") != null) + " " + Type.getInstanceFields(Used));
+	}
+}
+===
+[run]
+Unused: true [__get,get_Item]
+Used: true [__get,get_Item]
+# [probe idx9, with @:keep] Under -dce full, @:keep keeps __get and so the indexer. hxc today: "array access is not
+# supported yet".
+--- haxe-class-indexer-kept-get @gencs + -dce full
+// Under -dce full nothing keeps a Haxe class's __get for a[i] (the typer leaves TArray, not a call), so gencs
+// writes no indexer and its C# fails; hxc refuses, naming @:keep.
+class Used implements ArrayAccess<Int> {
+	public function new() {}
+	@:keep public function __get(i:Int):Int return i * 2;
+}
+
+class P {
+	static function main() {
+		var v = new Used();
+		trace(v[4]);
+	}
+}
+===
+[run]
+P.hx:11: 8
+# [probe idx9, without @:keep] gencs's C# fails:
+#   P.hx(11,53): error CS0021: Cannot apply indexing with [] to an expression of type 'Used'
+# hxc today: "P.hx:11: characters 9-13 : dotnet: array access is not supported yet".
+--- haxe-class-indexer-dce-full-is-an-error + -dce full
+// Under -dce full nothing keeps a Haxe class's __get for a[i] (the typer leaves TArray, not a call), so gencs
+// writes no indexer and its C# fails; hxc refuses, naming @:keep.
+class Used implements ArrayAccess<Int> {
+	public function new() {}
+	public function __get(i:Int):Int return i * 2;
+}
+
+class P {
+	static function main() {
+		var v = new Used();
+		trace(v[4]);
+	}
+}
+===
+[compile]
+P.hx:11: characters 9-13 : dotnet: a[i] on Used needs Used.__get, which dead code elimination removed: mark it @:keep
+# [probe idx8] gencs's C# fails:
+#   P.hx(10,4): error CS0200: Property or indexer 'ReadOnly.this[int]' cannot be assigned to -- it is read only
+# hxc today: "this kind of assignment is not supported yet" and "array access is not supported yet".
+--- haxe-class-indexer-readonly-store-is-an-error
+// A store through a Haxe class's indexer when the class has no __set: gencs's C# fails (get-only indexer).
+class ReadOnly implements ArrayAccess<String> {
+	public function new() {}
+	public function __get(i:Int):String return "ro" + i;
+}
+
+class P {
+	static function main() {
+		var r = new ReadOnly();
+		r[0] = "x";
+		trace(r[0]);
+	}
+}
+===
+[compile]
+P.hx:10: characters 3-13 : dotnet: ReadOnly has no __set: a[i] on it cannot be assigned
+# [probe idx7] Not @gencs: gencs's C# fails, since Sub's get-only indexer hides Grid's:
+#   P.hx(18,4): error CS0200: Property or indexer 'Sub.this[int]' cannot be assigned to -- it is read only
+# Proposed (hxc may do better): the store calls the nearest class's set_Item, Grid's; __set stores 1 and Sub's
+# __get returns 100 + 1. (Alternative: refuse, as the read-only case does.)
+--- haxe-class-indexer-hidden-setter
+// A subclass overriding only __get gets its own get-only indexer in gencs, which hides the base class's:
+// a store through a subclass-typed receiver fails in gencs's C#.
+class Grid implements ArrayAccess<Int> {
+	var cells = [10, 20, 30];
+	public function new() {}
+	public function __get(i:Int):Int return cells[i];
+	public function __set(i:Int, v:Int):Int return cells[i] = v;
+}
+
+class Sub extends Grid {
+	public function new() super();
+	override public function __get(i:Int):Int return 100 + super.__get(i);
+}
+
+class P {
+	static function main() {
+		var s = new Sub();
+		s[0] = 1;
+		trace(s[0]);
+	}
+}
+===
+[run]
+P.hx:19: 101

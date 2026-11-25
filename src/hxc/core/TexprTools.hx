@@ -11,6 +11,13 @@ class TexprTools {
 	static inline var DE_DEAD = 1;
 	static inline var DE_BREAK_CONTINUE = 2;
 
+	// What a typed object declaration's key name stands for, as Ast.objectFieldNameOrigin says for the
+	// syntax: the declaration's own name string (or what a macro's string stood for), else the key itself.
+	// Haxe's TObjectDecl keeps the AST string, and getTypedExpr and the macro API's TypedExpr encoding pass
+	// it on, so a name a typed declaration gives a structure is shared with the declaration's.
+	public static inline function objectKeyNameOrigin(key:TObjectFieldKey):{}
+		return key.nameOrigin != null ? key.nameOrigin : key;
+
 	public static inline function makeInt(basic:BasicTypes, i:Int, p:Position):TExpr {
 		return TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 	}
@@ -280,6 +287,22 @@ class TexprTools {
 		return body <= max;
 	}
 
+	// The value of a literal decimalFitsInt32 accepted. Plain digits are summed here, below zero so that
+	// -2147483648 fits: Std.parseInt on the C# target throws for it, as its digits alone overflow.
+	// Anything else it accepted (a hexadecimal body, no digits) is Std.parseInt's to read, as before.
+	static function decimalInt32(s:String):Null<Int> {
+		var neg = s.charAt(0) == "-";
+		var start = neg ? 1 : 0;
+		if (s.length == start) return Std.parseInt(s);
+		var v = 0;
+		for (i in start...s.length) {
+			var c = s.charCodeAt(i);
+			if (c < "0".code || c > "9".code) return Std.parseInt(s);
+			v = v * 10 - (c - "0".code);
+		}
+		return neg ? v : -v;
+	}
+
 	static function hexDigitValue(c:Int):Int {
 		if (c >= "0".code && c <= "9".code) return c - "0".code;
 		if (c >= "a".code && c <= "f".code) return c - "a".code + 10;
@@ -301,7 +324,7 @@ class TexprTools {
 			return v;
 		}
 		if (!decimalFitsInt32(s)) return null;
-		var i = Std.parseInt(s);
+		var i = decimalInt32(s);
 		if (i == null || i < -2147483648 || i > 2147483647) return null;
 		return i;
 	}
@@ -324,7 +347,7 @@ class TexprTools {
 					}
 					TypeFunctions.mk(TConst(TInt(v)), basic.tint, p);
 				} else {
-					var i = decimalFitsInt32(s) ? Std.parseInt(s) : null;
+					var i = decimalFitsInt32(s) ? decimalInt32(s) : null;
 					if (i == null || i < -2147483648 || i > 2147483647) TypeFunctions.mk(TConst(TFloat(s)), basic.tfloat, p);
 					else TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 				}
@@ -617,54 +640,75 @@ class TexprTools {
 	}
 
 	// Rebuild e with f applied to each direct sub-expression.
+	// A node none of whose children changed is returned as it is, not rebuilt: a pass over the whole tree
+	// (and there are dozens) otherwise allocates every node again to say nothing changed. A block, call,
+	// `new`, array literal or function is kept too, with its array, when f changed none of its children;
+	// the other kinds that hold an array (object literal, switch, try) are always rebuilt.
 	public static function mapExpr(f:TExpr->TExpr, e:TExpr):TExpr {
 		inline function mk2(ed:TExprExpr):TExpr return TypeFunctions.mk(ed, e.type, e.pos);
 		return switch (e.expr) {
 			case TConst(_) | TLocal(_) | TBreak | TContinue | TTypeExpr(_) | TIdent(_):
 				e;
 			case TArray(e1, e2):
-				var e1 = f(e1);
-				mk2(TArray(e1, f(e2)));
+				var n1 = f(e1);
+				var n2 = f(e2);
+				n1 == e1 && n2 == e2 ? e : mk2(TArray(n1, n2));
 			case TBinop(op, e1, e2):
-				var e1 = f(e1);
-				mk2(TBinop(op, e1, f(e2)));
+				var n1 = f(e1);
+				var n2 = f(e2);
+				n1 == e1 && n2 == e2 ? e : mk2(TBinop(op, n1, n2));
 			case TFor(v, e1, e2):
-				var e1 = f(e1);
-				mk2(TFor(v, e1, f(e2)));
+				var n1 = f(e1);
+				var n2 = f(e2);
+				n1 == e1 && n2 == e2 ? e : mk2(TFor(v, n1, n2));
 			case TWhile(e1, e2, flag):
-				var e1 = f(e1);
-				mk2(TWhile(e1, f(e2), flag));
+				var n1 = f(e1);
+				var n2 = f(e2);
+				n1 == e1 && n2 == e2 ? e : mk2(TWhile(n1, n2, flag));
 			case TThrow(e1):
-				mk2(TThrow(f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TThrow(n1));
 			case TEnumParameter(e1, ef, i):
-				mk2(TEnumParameter(f(e1), ef, i));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TEnumParameter(n1, ef, i));
 			case TEnumIndex(e1):
-				mk2(TEnumIndex(f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TEnumIndex(n1));
 			case TField(e1, v):
-				mk2(TField(f(e1), v));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TField(n1, v));
 			case TParenthesis(e1):
-				mk2(TParenthesis(f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TParenthesis(n1));
 			case TUnop(op, pre, e1):
-				mk2(TUnop(op, pre, f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TUnop(op, pre, n1));
 			case TArrayDecl(el):
-				mk2(TArrayDecl([for (x in el) f(x)]));
+				var nl = mapListKeep(f, el);
+				nl == el ? e : mk2(TArrayDecl(nl));
 			case TNew(t, pl, el):
-				mk2(TNew(t, pl, [for (x in el) f(x)]));
+				var nl = mapListKeep(f, el);
+				nl == el ? e : mk2(TNew(t, pl, nl));
 			case TBlock(el):
-				mk2(TBlock([for (x in el) f(x)]));
+				var nl = mapListKeep(f, el);
+				nl == el ? e : mk2(TBlock(nl));
 			case TObjectDecl(fl):
 				mk2(TObjectDecl([for (fd in fl) {key: fd.key, expr: f(fd.expr)}]));
 			case TCall(e1, el):
-				var e1 = f(e1);
-				mk2(TCall(e1, [for (x in el) f(x)]));
+				var n1 = f(e1);
+				var nl = mapListKeep(f, el);
+				n1 == e1 && nl == el ? e : mk2(TCall(n1, nl));
 			case TVarExpr(v, eo):
-				mk2(TVarExpr(v, eo == null ? null : f(eo)));
+				var no = eo == null ? null : f(eo);
+				no == eo ? e : mk2(TVarExpr(v, no));
 			case TFunction(fu):
-				mk2(TFunction(new TFunc(fu.args, fu.type, f(fu.expr))));
+				var nb = f(fu.expr);
+				nb == fu.expr ? e : mk2(TFunction(new TFunc(fu.args, fu.type, nb)));
 			case TIf(ec, e1, e2):
-				var ec = f(ec);
-				var e1 = f(e1);
-				mk2(TIf(ec, e1, e2 == null ? null : f(e2)));
+				var nc = f(ec);
+				var n1 = f(e1);
+				var n2 = e2 == null ? null : f(e2);
+				nc == ec && n1 == e1 && n2 == e2 ? e : mk2(TIf(nc, n1, n2));
 			case TSwitch(e1, cases, def):
 				var e1 = f(e1);
 				// The body maps before the values.
@@ -674,12 +718,31 @@ class TexprTools {
 				var e1 = f(e1);
 				mk2(TTry(e1, [for (c in catches) {v: c.v, expr: f(c.expr)}]));
 			case TReturn(eo):
-				mk2(TReturn(eo == null ? null : f(eo)));
+				var no = eo == null ? null : f(eo);
+				no == eo ? e : mk2(TReturn(no));
 			case TCast(e1, t):
-				mk2(TCast(f(e1), t));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TCast(n1, t));
 			case TMeta(m, e1):
-				mk2(TMeta(m, f(e1)));
+				var n1 = f(e1);
+				n1 == e1 ? e : mk2(TMeta(m, n1));
 		};
+	}
+
+	// f over each element, in order: `el` itself when f changed none of them, a new array otherwise.
+	static function mapListKeep(f:TExpr->TExpr, el:Array<TExpr>):Array<TExpr> {
+		var out:Null<Array<TExpr>> = null;
+		var i = -1;
+		while (++i < el.length) {
+			var x = el[i];
+			var y = f(x);
+			if (out == null) {
+				if (y == x) continue;
+				out = el.slice(0, i);
+			}
+			out.push(y);
+		}
+		return out == null ? el : out;
 	}
 
 	// Unwrap parens, meta, single-expr blocks and typeless casts.
@@ -832,7 +895,7 @@ class TexprTools {
 				typeConstantValue(basic, e1);
 			case EObjectDecl(el):
 				TypeFunctions.mk(TObjectDecl([for (f in el) {
-					key: {name: f.name, pos: f.pos, quotes: f.quotes},
+					key: {name: f.name, pos: f.pos, quotes: f.quotes, nameOrigin: Ast.objectFieldNameOrigin(f)},
 					expr: typeConstantValue(basic, f.expr)
 				}]), TypeFunctions.mkAnon(new Ref(Closed)), e.pos);
 			case EArrayDecl(el):

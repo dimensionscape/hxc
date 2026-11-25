@@ -243,7 +243,7 @@ class StrictMeta {
 		var ret:Array<MetadataEntry> = [];
 		for (m in metas) {
 			var target = switch (m.name) {
-				case ":assemblyStrict": ":assemblyMeta";
+				case ":cs.assemblyStrict": ":cs.assemblyMeta";
 				case ":strict": ":meta";
 				case _: null;
 			};

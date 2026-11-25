@@ -1,0 +1,8 @@
+{
+	"name": "cs-target",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "$module", "--cs", "$out", "--no-output"]
+}

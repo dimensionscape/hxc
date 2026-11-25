@@ -32,6 +32,18 @@ class Inline {
 	// The declared return type of the inline function whose body is currently being mapped;
 	// null outside a body map.
 	static var inlineFuncRetType:Null<T> = null;
+	// Haxe maps an inlined body BEFORE it substitutes the arguments, so a node that takes its type
+	// from a value it ends in (a terminal if/switch/try, a block, parentheses) sees an argument read
+	// typed as the parameter, not as the value passed: `if (c) return name; return other;` with
+	// `name:String` is a String if even when a Null<String> local is passed, and needs no cast. hxc
+	// substitutes while it maps, so each argument read records the type it had before; null outside
+	// a body map.
+	static var substReadTypes:Null<haxe.ds.ObjectMap<TExpr, T>> = null;
+
+	// A mapped value's type as Haxe's inliner sees it: an argument read's pre-substitution type.
+	static function mappedValueType(e:TExpr):T {
+		return substReadTypes != null && substReadTypes.exists(e) ? substReadTypes.get(e) : e.type;
+	}
 
 	static inline function isInlineVoid(t:T):Bool {
 		return switch (t) { case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void"; case _: false; };
@@ -51,7 +63,21 @@ class Inline {
 		return TypeFunctions.hasClassFieldFlag(cf, CfExtern) || TypeFunctions.hasMeta(":extern", cf.meta);
 	}
 
-	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false, useUnoptimized = true):Null<TExpr> {
+	// An Array<X> whose X, or Null<X>, is Dynamic, an unbound monomorph (which defaults to Dynamic later on) or a type
+	// parameter.
+	static function typeArgUnknown(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(_, [p]):
+				switch (TypeFunctions.follow(p)) {
+					case TDynamic(_) | TMono(_): true;
+					case TInst(c, _): c.kind.match(KTypeParameter(_));
+					case _: false;
+				}
+			case _: false;
+		}
+	}
+
+	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false, useUnoptimized = true, extensionCall = false):Null<TExpr> {
 		if (depth > 32) return null;
 		var cf:TClassField = null;
 		var c:Null<TClass> = null;
@@ -73,6 +99,13 @@ class Inline {
 			case _:
 				return null;
 		}
+		// hxc's runtime Array marks map and filter with this: an Array<Dynamic> as receiver or result, or one
+		// not yet known to be typed, is the non-generic companion, which reaches every member by name, so the
+		// call stays. So it does for an array of a type parameter: the lambda's boundary converts its Dynamic
+		// values as gencs's Runtime.genericCast does, and a body in the loop would go to the T as it is.
+		if (ethis != null && TypeFunctions.hasMeta(":inlineUnlessDynamic", cf.meta)
+			&& (typeArgUnknown(ethis.type) || typeArgUnknown(tret)))
+			return null;
 		switch (cf.kind) {
 			case Method(MethInline):
 				// -D no-inline suppresses regular inlining; an extern-inline (a member of an extern class,
@@ -137,10 +170,14 @@ class Inline {
 		// An omitted trailing optional argument binds to null and falls back to its default; the call
 		// already type-checked, so a missing trailing argument is optional.
 		if (params.length < tf.args.length) {
+			// A static-extension call's arguments arrive unpadded for this to fill, and what it fills in has
+			// no position (a default constant then keeps its declaration's). Any other call's missing
+			// arguments are nulls at the call, as are those of a static-extension call written `inline f()`.
+			var padPos = extensionCall && !forceInline ? Position.nullPos : p;
 			var padded = params.copy();
 			for (i in params.length...tf.args.length) {
 				if (tf.args[i].c == null && !isOptionalArg(tf.args[i].v)) return null;
-				padded.push(TypeFunctions.mk(TConst(TNull), tf.args[i].v.type, p));
+				padded.push(TypeFunctions.mk(TConst(TNull), tf.args[i].v.type, padPos));
 			}
 			params = padded;
 		}
@@ -602,7 +639,7 @@ class Inline {
 			if (tf.args[i].c != null) switch (param.expr) {
 				case TConst(TNull):
 					var c = tf.args[i].c;
-					param = TypeFunctions.mk(c.expr, c.type, param.pos);
+					param = TypeFunctions.mk(c.expr, c.type, param.pos.min < 0 ? c.pos : param.pos);
 					passedNull = true;
 				case _:
 			}
@@ -669,8 +706,10 @@ class Inline {
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
 				// A multiply-read function argument still inlines at its call sites (each a fresh tvar copy);
 				// non-call reads keep the bound local, which local-dce drops when every read was a call.
+				// One bound because it needs a temp or because a closure captures it does not: its
+				// calls stay calls through the local.
 				switch (param.expr) {
-					case TFunction(_) if (!use.writes): inlineIfCalled.set(nv.id, true);
+					case TFunction(_) if (!use.writes && !forceTemp && !(use.captured && !isConstantForCapture(param))): inlineIfCalled.set(nv.id, true);
 					case _:
 				}
 				// An optional argument with a non-null default falls back when the passed value is null
@@ -705,9 +744,16 @@ class Inline {
 		// The return-type rule consults the inlined function's declared return type; scope it to
 		// this body map (save/restore so a nested inline restores the outer value).
 		var savedRetType = inlineFuncRetType;
+		var savedReadTypes = substReadTypes;
 		inlineFuncRetType = tf.type;
-		var value = inlineParams(inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember));
+		substReadTypes = new haxe.ds.ObjectMap();
+		var value = try inlineParams(inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember)) catch (e:Dynamic) {
+			inlineFuncRetType = savedRetType;
+			substReadTypes = savedReadTypes;
+			throw e;
+		};
 		inlineFuncRetType = savedRetType;
+		substReadTypes = savedReadTypes;
 		if (absMember) checkAbstractWrite(value, p);
 		// A single-expression block unwraps to its expression only when the body returned a
 		// value; a void body keeps its block.
@@ -1051,7 +1097,8 @@ class Inline {
 					case TIf(condition, thenExpr, null) if (endsInReturn(thenExpr)):
 						var thenValue = mapTerminal(ctx, thenExpr, subst, vthis, ethis, inlinePos, keepPositions);
 						var elseValue = mapTerminal(ctx, stmts[1], subst, vthis, ethis, inlinePos, keepPositions);
-						var valueType = thenValue.type != ctx.com.basic.tvoid ? thenValue.type : elseValue.type;
+						var thenType = mappedValueType(thenValue);
+						var valueType = thenType != ctx.com.basic.tvoid ? thenType : mappedValueType(elseValue);
 						return TypeFunctions.mk(TIf(mapExpr(ctx, condition, subst, vthis, ethis, inlinePos, keepPositions), thenValue, elseValue), valueType,
 							keepPositions ? body.pos : inlinePos);
 					case _:
@@ -1066,7 +1113,7 @@ class Inline {
 					else out.push(mapExpr(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
 					i++;
 				}
-				return TypeFunctions.mk(TBlock(out), out[out.length - 1].type, keepPositions ? body.pos : inlinePos);
+				return TypeFunctions.mk(TBlock(out), mappedValueType(out[out.length - 1]), keepPositions ? body.pos : inlinePos);
 			case _:
 				return mapTerminal(ctx, body, subst, vthis, ethis, inlinePos, keepPositions);
 		}
@@ -1134,8 +1181,10 @@ class Inline {
 			case TIf(cond, e1, null) if (hasTermReturn(e1)):
 				var s = stmts[i];
 				var rest = stmts.slice(i + 1);
-				var restBlock = TypeFunctions.mk(TBlock(rest), s.type, rest[rest.length - 1].pos);
-				TypeFunctions.mk(TIf(cond, e1, restBlock), s.type, s.pos);
+				// The else block sits at the if's own position and the if spans to the last statement
+				// folded in; with kept positions (a self-calling closure) both reach the output.
+				var restBlock = TypeFunctions.mk(TBlock(rest), s.type, s.pos);
+				TypeFunctions.mk(TIf(cond, e1, restBlock), s.type, Position.union(s.pos, rest[rest.length - 1].pos));
 			case _: null;
 		};
 	}
@@ -1154,8 +1203,28 @@ class Inline {
 				if (ftt.match(TDynamic(_)) || isInlineVoid(ftt)) return inlineFuncRetType;
 			}
 			if (!isInlineVoid(TypeFunctions.follow(e.type))) return e.type;
-			for (value in values) if (value.type != ctx.com.basic.tvoid) return value.type;
-			return e.type;
+			// The common type is unify_min's, not the first branch's: `if (c) a else b` over a T and a
+			// Null<T> is Null<T>, which then differs from a T return and gets the result cast. unify_min
+			// sees each value as Haxe's inliner does, an argument read typed as its parameter; it looks
+			// for null through a block's last expression, parentheses and metadata, so those are
+			// retyped along the way too.
+			function asMapped(v:TExpr):TExpr {
+				var inner:Null<TExprExpr> = switch (v.expr) {
+					case TBlock(el) if (el.length > 0):
+						var last = asMapped(el[el.length - 1]);
+						last == el[el.length - 1] ? null : TBlock(el.slice(0, el.length - 1).concat([last]));
+					case TParenthesis(e1):
+						var m1 = asMapped(e1);
+						m1 == e1 ? null : TParenthesis(m1);
+					case TMeta(entry, e1):
+						var m1 = asMapped(e1);
+						m1 == e1 ? null : TMeta(entry, m1);
+					case _: null;
+				};
+				var t = mappedValueType(v);
+				return inner == null && t == v.type ? v : TypeFunctions.mk(inner == null ? v.expr : inner, t, v.pos);
+			}
+			return Typer.unifyMin(ctx, [for (value in values) asMapped(value)]);
 		}
 		switch (e.expr) {
 			case TReturn(eo):
@@ -1174,7 +1243,7 @@ class Inline {
 					out.push(i == stmts.length - 1 ? terminal(stmts[i]) : m(stmts[i]));
 					i++;
 				}
-				return TypeFunctions.mk(TBlock(out), out[out.length - 1].type, keepPositions ? e.pos : inlinePos);
+				return TypeFunctions.mk(TBlock(out), mappedValueType(out[out.length - 1]), keepPositions ? e.pos : inlinePos);
 			case TIf(c, a, b) if (b != null):
 				// Condition, then, else.
 				var cond = m(c);
@@ -1202,12 +1271,12 @@ class Inline {
 			case TParenthesis(e1):
 				// Parentheses forward the term flag.
 				var inner = terminal(e1);
-				return TypeFunctions.mk(TParenthesis(inner), inner.type, keepPositions ? e.pos : inlinePos);
+				return TypeFunctions.mk(TParenthesis(inner), mappedValueType(inner), keepPositions ? e.pos : inlinePos);
 			case TMeta(entry, e1):
 				// Metadata forwards the term flag and takes the
 				// mapped expression's type.
 				var inner = terminal(e1);
-				return TypeFunctions.mk(TMeta(entry, inner), inner.type, keepPositions ? e.pos : inlinePos);
+				return TypeFunctions.mk(TMeta(entry, inner), mappedValueType(inner), keepPositions ? e.pos : inlinePos);
 			case _:
 				return m(e);
 		}
@@ -1281,9 +1350,13 @@ class Inline {
 					// A local-shaped substitution (a body-local clone or an argument temp) reads like any mapped
 					// node: each READ takes the remapped position, not the declaration's. A non-local argument
 					// value keeps its own position verbatim.
+					// Such a read also keeps its own type (`{e with eexpr = TLocal l.i_subst}`), not the
+					// substitute's: a filter may have retyped it, as handle_abstract_casts types the
+					// receiver of a @:multiType call as the underlying type (a Map<K,V> local read as
+					// IMap<K,V>), and the type map and field re-resolution below must start from that.
 					var read = switch (se.expr) {
 						case TLocal(sv) if (inlinerLocals.exists(sv.id)):
-							TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
+							TypeFunctions.mk(se.expr, e.type, keepPositions ? e.pos : inlinePos);
 						// A function expression inlined at a read has its locals duplicated, so each read
 						// declares
 						// its own - in inlineParams, after the map.
@@ -1299,8 +1372,10 @@ class Inline {
 					// peels it again. The cast keeps expression equality from conflating the abstract this
 					// with
 					// its underlying value in later fusion.
-					return TypeFunctions.hasMeta(":this", v.meta)
-						? TypeFunctions.mk(TCast(read, null), v.type, keepPositions ? e.pos : inlinePos) : read;
+					if (TypeFunctions.hasMeta(":this", v.meta))
+						return TypeFunctions.mk(TCast(read, null), v.type, keepPositions ? e.pos : inlinePos);
+					if (substReadTypes != null) substReadTypes.set(read, e.type);
+					return read;
 				}
 				e.expr;
 			case TArray(e1, e2): TArray(m(e1), m(e2));

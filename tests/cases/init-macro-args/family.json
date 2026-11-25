@@ -1,0 +1,8 @@
+{
+	"name": "init-macro-args",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "--main", "$module", "--no-output"]
+}

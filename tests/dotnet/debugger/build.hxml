@@ -1,0 +1,9 @@
+# Run from this folder: hxc build.hxml (HAXE_STD_PATH set if hxc does not find the std). The sample sits
+# inside hxc's checkout, whose .haxelib would hide the global hxcs, so --haxelib-global (after --cs) is needed here.
+-cp src
+--main sample.Main
+--cs out
+--haxelib-global
+-D dotnet
+-debug
+-D dotnet-debug-jit

@@ -29,7 +29,7 @@ class EvalLuv {
 
 	static function encodeResult(code:Int, ok:Void->EvalValue):EvalValue {
 		return code >= 0 ? VEnumValue(new VEnumValue(0, [ok()], resultPath, null))
-			: VEnumValue(new VEnumValue(1, [VInt(Luv.errorIndex(code))], resultPath, null));
+			: VEnumValue(new VEnumValue(1, [hxc.eval.EvalValue.EvalValueTools.vint(Luv.errorIndex(code))], resultPath, null));
 	}
 
 	static function encodeUnitResult(code:Int):EvalValue return encodeResult(code, () -> VNull);
@@ -166,8 +166,8 @@ class EvalLuv {
 			if (Std.isOfType(e, EvalExceptions.EvalSysExit)) throw e;
 			var msg = Std.isOfType(e, hxc.core.TypingError) ? locatedText(ctx, e) : errorText(e);
 			EvalStdLib.flushStdout();
-			Sys.stderr().writeString(msg + "\n");
-			Sys.stderr().flush();
+			hxc.core.HostStdio.err().writeString(msg + "\n");
+			hxc.core.HostStdio.err().flush();
 			throw new EvalExceptions.EvalSysExit(2);
 		};
 	}
@@ -306,7 +306,7 @@ class EvalLuv {
 				size -> new LuvSys.LuvBuffer(haxe.io.Bytes.alloc(size), 0, size);
 			} else {
 				var cb = prepareCallback(ctx, arg(a, 2));
-				size -> decodeBuffer(ctx, cb([VInt(size)]));
+				size -> decodeBuffer(ctx, cb([hxc.eval.EvalValue.EvalValueTools.vint(size)]));
 			};
 			Luv.readStart(stream, allocate, callback);
 			VNull;
@@ -314,7 +314,7 @@ class EvalLuv {
 		reg(st, "readStop", vfn(a -> encodeUnitResult(Luv.readStop(decodeStream(ctx, arg(a, 0))))));
 		function writeCallback(v:EvalValue) {
 			var cb = prepareCallback(ctx, v);
-			return function(code:Int, written:Int) cb([encodeUnitResult(code), VInt(written)]);
+			return function(code:Int, written:Int) cb([encodeUnitResult(code), hxc.eval.EvalValue.EvalValueTools.vint(written)]);
 		}
 		reg(st, "write", vfn(a -> {
 			var stream = decodeStream(ctx, arg(a, 0));
@@ -340,7 +340,7 @@ class EvalLuv {
 			var stream = decodeStream(ctx, arg(a, 0));
 			var data = decodeBuffers(arg(a, 1));
 			var r = Luv.tryWrite(stream, data);
-			encodeResult(r, () -> VInt(r));
+			encodeResult(r, () -> hxc.eval.EvalValue.EvalValueTools.vint(r));
 		}));
 		reg(st, "isReadable", vfn(a -> EvalValueTools.vbool(Luv.isReadable(decodeStream(ctx, arg(a, 0))))));
 		reg(st, "isWritable", vfn(a -> EvalValueTools.vbool(Luv.isWritable(decodeStream(ctx, arg(a, 0))))));
@@ -400,7 +400,7 @@ class EvalLuv {
 		}));
 
 		for (n in ["SIGABRT", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGSEGV", "SIGTERM", "SIGWINCH"])
-			reg("eval.luv._Signal.SigNum_Impl_", n, VInt(Luv.signum(n)));
+			reg("eval.luv._Signal.SigNum_Impl_", n, hxc.eval.EvalValue.EvalValueTools.vint(Luv.signum(n)));
 		var sig = "eval.luv._Signal.Signal_Impl_";
 		inline function decodeSignal(v:EvalValue) return decodeKind(ctx, v, HSignal, "eval.luv.Signal");
 		reg(sig, "init", vfn(a -> {
@@ -418,7 +418,7 @@ class EvalLuv {
 			}));
 		}
 		reg(sig, "stop", vfn(a -> encodeUnitResult(Luv.signalStop(decodeSignal(arg(a, 0))))));
-		reg(sig, "signum", vfn(a -> VInt(Luv.signalSignum(decodeSignal(arg(a, 0))))));
+		reg(sig, "signum", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Luv.signalSignum(decodeSignal(arg(a, 0))))));
 	}
 
 	static function encodeOption(v:Null<EvalValue>):EvalValue {
@@ -532,21 +532,21 @@ class EvalLuv {
 				cb([encodeResult(code, () -> obj([
 					{name: "data", value: encodeBuffer(b)},
 					{name: "addr", value: encodeOption(addr == null ? null : encodeSockaddr(addr))},
-					{name: "flags", value: array([for (f in flags) VInt(f)])}
+					{name: "flags", value: array([for (f in flags) hxc.eval.EvalValue.EvalValueTools.vint(f)])}
 				]))]);
 			};
 			var allocate:Int->LuvSys.LuvBuffer = if (arg(a, 2) == VNull) {
 				size -> new LuvSys.LuvBuffer(haxe.io.Bytes.alloc(size), 0, size);
 			} else {
 				var cb = prepareCallback(ctx, arg(a, 2));
-				size -> decodeBuffer(ctx, cb([VInt(size)]));
+				size -> decodeBuffer(ctx, cb([hxc.eval.EvalValue.EvalValueTools.vint(size)]));
 			};
 			Luv.udpRecvStart(u, allocate, callback);
 			VNull;
 		}));
 		reg(udp, "recvStop", vfn(a -> encodeUnitResult(Luv.udpRecvStop(decodeUdp(arg(a, 0))))));
-		reg(udp, "getSendQueueSize", vfn(a -> VInt(Luv.udpSendQueueSize(decodeUdp(arg(a, 0))))));
-		reg(udp, "getSendQueueCount", vfn(a -> VInt(Luv.udpSendQueueCount(decodeUdp(arg(a, 0))))));
+		reg(udp, "getSendQueueSize", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Luv.udpSendQueueSize(decodeUdp(arg(a, 0))))));
+		reg(udp, "getSendQueueCount", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Luv.udpSendQueueCount(decodeUdp(arg(a, 0))))));
 
 		// "send" is registered twice and the prototype keeps the second, the try-send; there is no trySend.
 		var cudp = "eval.luv._ConnectedUdp.ConnectedUdp_Impl_";
@@ -641,7 +641,7 @@ class EvalLuv {
 				var cb = prepareCallback(ctx, v4);
 				cb([encodeResult(code, () -> obj([
 					{name: "file", value: file == null ? VNull : nativeString(file)},
-					{name: "events", value: array([for (x in events) VInt(x)])}
+					{name: "events", value: array([for (x in events) hxc.eval.EvalValue.EvalValueTools.vint(x)])}
 				]))]);
 			};
 			var flags = arg(a, 2) == VNull ? [] : [for (x in EvalStdLib.decodeArray(ctx, arg(a, 2))) EvalStdLib.decodeInt(ctx, x)];
@@ -753,7 +753,7 @@ class EvalLuv {
 	}
 
 	static function encodeDirent(d:FsDirent):EvalValue {
-		return obj([{name: "kind", value: VInt(d.kind)}, {name: "name", value: nativeString(d.name)}]);
+		return obj([{name: "kind", value: hxc.eval.EvalValue.EvalValueTools.vint(d.kind)}, {name: "name", value: nativeString(d.name)}]);
 	}
 
 	static function encodeScandir(req:LuvObject):EvalValue {
@@ -1052,7 +1052,7 @@ class EvalLuv {
 			Luv.fsAsync(x.request, Luv.FS_ERROR, r -> Luv.fsChown(x.loop, r, 1, null, fd, uid, gid), none, cb);
 			VNull;
 		}));
-		reg(file, "toInt", vfn(a -> VInt(decodeFile(ctx, arg(a, 0)))));
+		reg(file, "toInt", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(decodeFile(ctx, arg(a, 0)))));
 
 		var fsync = "eval.luv.FileSync";
 		function sync(kind:Int, run:LuvObject->Int, ok:Dynamic->EvalValue, ?cleanup:Void->Void):EvalValue
@@ -1278,7 +1278,7 @@ class EvalLuv {
 			var t = decodeKind(ctx, arg(a, 0), HTty, "eval.luv.Tty");
 			var out = [0, 0];
 			var r = Luv.ttyWinSize(t, out);
-			encodeResult(r, () -> obj([{name: "width", value: VInt(out[0])}, {name: "height", value: VInt(out[1])}]));
+			encodeResult(r, () -> obj([{name: "width", value: hxc.eval.EvalValue.EvalValueTools.vint(out[0])}, {name: "height", value: hxc.eval.EvalValue.EvalValueTools.vint(out[1])}]));
 		}));
 		reg(tty, "setVTermState", vfn(a -> {
 			var v = arg(a, 0);
@@ -1290,7 +1290,7 @@ class EvalLuv {
 		reg(tty, "getVTermState", vfn(_ -> {
 			var out = [0];
 			var r = Luv.ttyGetVtermState(out);
-			encodeResult(r, () -> VInt(out[0]));
+			encodeResult(r, () -> hxc.eval.EvalValue.EvalValueTools.vint(out[0]));
 		}));
 
 	}
@@ -1309,12 +1309,12 @@ class EvalLuv {
 
 	static function encodeAddressFamily(af:Int):EvalValue {
 		var i = Luv.addressFamilyFromC(af);
-		return VEnumValue(new VEnumValue(i, i == 3 ? [VInt(af)] : [], EvalNames.hEvalLuvAddressFamily(), null));
+		return VEnumValue(new VEnumValue(i, i == 3 ? [hxc.eval.EvalValue.EvalValueTools.vint(af)] : [], EvalNames.hEvalLuvAddressFamily(), null));
 	}
 
 	static function encodeSocketType(st:Int):EvalValue {
 		var i = Luv.socketTypeFromC(st);
-		return VEnumValue(new VEnumValue(i, i == 3 ? [VInt(st)] : [], EvalNames.hEvalLuvSocketType(), null));
+		return VEnumValue(new VEnumValue(i, i == 3 ? [hxc.eval.EvalValue.EvalValueTools.vint(st)] : [], EvalNames.hEvalLuvSocketType(), null));
 	}
 
 	// A missing field reads as null.
@@ -1368,7 +1368,7 @@ class EvalLuv {
 					var fields = [
 						{name: "family", value: encodeAddressFamily(info.family)},
 						{name: "sockType", value: encodeSocketType(info.socktype)},
-						{name: "protocol", value: VInt(info.protocol)},
+						{name: "protocol", value: hxc.eval.EvalValue.EvalValueTools.vint(info.protocol)},
 						{name: "addr", value: encodeSockaddr(info.addr)}
 					];
 					if (info.canonname != null) fields.unshift({name: "canonName", value: encodeString(info.canonname)});
@@ -1436,9 +1436,9 @@ class EvalLuv {
 		}));
 
 		var proc = "eval.luv._Process.Process_Impl_";
-		reg(proc, "stdin", VInt(0));
-		reg(proc, "stdout", VInt(1));
-		reg(proc, "stderr", VInt(2));
+		reg(proc, "stdin", hxc.eval.EvalValue.EvalValueTools.vint(0));
+		reg(proc, "stdout", hxc.eval.EvalValue.EvalValueTools.vint(1));
+		reg(proc, "stderr", hxc.eval.EvalValue.EvalValueTools.vint(2));
 		function encodeRedirection(r:Redirection):EvalValue return VHandle(new EvalHandle(HRedirection, r));
 		reg(proc, "toParentPipe", vfn(a -> {
 			var fd = EvalStdLib.decodeInt(ctx, arg(a, 0));
@@ -1481,7 +1481,7 @@ class EvalLuv {
 					case VNull:
 					case v:
 						var cb = prepareCallback(ctx, v);
-						onExit = (status, signal) -> { cb([handle(HProcess, p), i64(status), VInt(signal)]); };
+						onExit = (status, signal) -> { cb([handle(HProcess, p), i64(status), hxc.eval.EvalValue.EvalValueTools.vint(signal)]); };
 				}
 				// A StringMap's entries folded, each pair prepended.
 				switch (optionField(ctx, v4, "environment")) {
@@ -1526,7 +1526,7 @@ class EvalLuv {
 			var sig = EvalStdLib.decodeInt(ctx, arg(a, 1));
 			encodeUnitResult(Luv.killPid(pid, sig));
 		}));
-		reg(proc, "pid", vfn(a -> VInt(Luv.processPid(decodeKind(ctx, arg(a, 0), HProcess, "eval.luv.Process")))));
+		reg(proc, "pid", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Luv.processPid(decodeKind(ctx, arg(a, 0), HProcess, "eval.luv.Process")))));
 	}
 
 	// A thread the interpreter has no eval for gets one for the call, and loses it after; a Sys.exit ends
@@ -1616,7 +1616,7 @@ class EvalLuv {
 		reg(buf, "totalSize", vfn(a -> {
 			var total = 0;
 			for (b in decodeBuffers(arg(a, 0))) total += b.length;
-			VInt(total);
+			hxc.eval.EvalValue.EvalValueTools.vint(total);
 		}));
 		reg(buf, "drop", vfn(a -> {
 			var l = decodeBuffers(arg(a, 0));
@@ -1637,15 +1637,15 @@ class EvalLuv {
 			}
 			array([for (b in out) encodeBuffer(b)]);
 		}));
-		reg(buf, "size", vfn(a -> VInt(decodeBuffer(ctx, arg(a, 0)).length)));
+		reg(buf, "size", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(decodeBuffer(ctx, arg(a, 0)).length)));
 		// Get and set are bounds-checked.
 		function get(checked:Bool) return vfn(a -> {
 			var b = decodeBuffer(ctx, arg(a, 0));
 			var i = EvalStdLib.decodeInt(ctx, arg(a, 1));
 			if (i < 0 || i >= b.length) {
 				if (checked) invalidArgument("index out of bounds");
-				VInt(0);
-			} else VInt(b.bytes.get(b.offset + i));
+				hxc.eval.EvalValue.EvalValueTools.vint(0);
+			} else hxc.eval.EvalValue.EvalValueTools.vint(b.bytes.get(b.offset + i));
 		});
 		function set(checked:Bool) return vfn(a -> {
 			var b = decodeBuffer(ctx, arg(a, 0));
@@ -1716,7 +1716,7 @@ class EvalLuv {
 		var sa = "eval.luv._SockAddr.SockAddr_Impl_";
 		reg(sa, "get_port", vfn(a -> {
 			var p = LuvSys.sockaddrPort(decodeSockaddr(ctx, arg(a, 0)));
-			p == null ? VNull : VInt(p);
+			p == null ? VNull : hxc.eval.EvalValue.EvalValueTools.vint(p);
 		}));
 		reg(sa, "ipv4", vfn(a -> {
 			var host = bytesOf(arg(a, 0));
@@ -1761,7 +1761,7 @@ class EvalLuv {
 		reg(time, "getTimeOfDay", vfn(a -> {
 			var out:Array<Dynamic> = [];
 			var r = LuvSys.gettimeofday(out);
-			encodeResult(r, () -> obj([{name: "sec", value: i64(out[0])}, {name: "usec", value: VInt(out[1])}]));
+			encodeResult(r, () -> obj([{name: "sec", value: i64(out[0])}, {name: "usec", value: hxc.eval.EvalValue.EvalValueTools.vint(out[1])}]));
 		}));
 		reg(time, "hrTime", vfn(a -> u64(LuvSys.hrtime())));
 		reg(time, "sleep", vfn(a -> { LuvSys.sleep(EvalStdLib.decodeInt(ctx, arg(a, 0))); VNull; }));
@@ -1823,7 +1823,7 @@ class EvalLuv {
 		reg(res, "getPriority", vfn(a -> {
 			var out = [0];
 			var r = LuvSys.getpriority(EvalStdLib.decodeInt(ctx, arg(a, 0)), out);
-			encodeResult(r, () -> VInt(out[0]));
+			encodeResult(r, () -> hxc.eval.EvalValue.EvalValueTools.vint(out[0]));
 		}));
 		reg(res, "setPriority", vfn(a -> {
 			var pid = EvalStdLib.decodeInt(ctx, arg(a, 0));
@@ -1856,7 +1856,7 @@ class EvalLuv {
 			var r = LuvSys.cpuInfo(out);
 			encodeResult(r, () -> array([for (i in out) obj([
 				{name: "model", value: encodeString(i.model)},
-				{name: "speed", value: VInt(i.speed)},
+				{name: "speed", value: hxc.eval.EvalValue.EvalValueTools.vint(i.speed)},
 				{name: "times", value: obj([
 					{name: "user", value: u64(i.times[0])},
 					{name: "nice", value: u64(i.times[1])},
@@ -1877,15 +1877,15 @@ class EvalLuv {
 			]));
 		}));
 
-		reg("eval.luv.Pid", "getPid", vfn(a -> VInt(LuvSys.getpid())));
-		reg("eval.luv.Pid", "getPPid", vfn(a -> VInt(LuvSys.getppid())));
+		reg("eval.luv.Pid", "getPid", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(LuvSys.getpid())));
+		reg("eval.luv.Pid", "getPPid", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(LuvSys.getppid())));
 		reg("eval.luv.Passwd", "getPasswd", vfn(a -> {
 			var out:Array<Dynamic> = [];
 			var r = LuvSys.getPasswd(out);
 			encodeResult(r, () -> obj([
 				{name: "username", value: encodeString(out[0])},
-				{name: "uid", value: VInt(out[1])},
-				{name: "gid", value: VInt(out[2])},
+				{name: "uid", value: hxc.eval.EvalValue.EvalValueTools.vint(out[1])},
+				{name: "gid", value: hxc.eval.EvalValue.EvalValueTools.vint(out[2])},
 				{name: "shell", value: out[3] == null ? VNull : encodeString(out[3])},
 				{name: "homedir", value: nativeString(out[4])},
 			]));
@@ -1900,7 +1900,7 @@ class EvalLuv {
 		var uvError = "eval.luv._UVError.UVError_Impl_";
 		reg(uvError, "toString", vfn(a -> EvalString.createUnknown(ByteString.ofText(Luv.strerror(Luv.errorCode(decodeUvError(ctx, arg(a, 0))))))));
 		reg(uvError, "errName", vfn(a -> EvalString.createUnknown(ByteString.ofText(Luv.errName(Luv.errorCode(decodeUvError(ctx, arg(a, 0))))))));
-		reg(uvError, "translateSysError", vfn(a -> VInt(Luv.errorIndex(Luv.translateSysError(EvalStdLib.decodeInt(ctx, arg(a, 0)))))));
+		reg(uvError, "translateSysError", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Luv.errorIndex(Luv.translateSysError(EvalStdLib.decodeInt(ctx, arg(a, 0)))))));
 		reg(uvError, "setOnUnhandledException", vfn(a -> {
 			var cb = prepareCallback(ctx, arg(a, 0));
 			Luv.exceptionHandler = function(ex:Dynamic) {
@@ -1936,7 +1936,7 @@ class EvalLuv {
 		reg(loop, "libraryShutdown", vfn(a -> { Luv.libraryShutdown(); VNull; }));
 		reg(loop, "now", vfn(a -> VUInt64(new EvalInt64(Luv.loopNow(decodeKind(ctx, arg(a, 0), HLoop, "eval.luv.Loop"))))));
 		reg(loop, "updateTime", vfn(a -> { Luv.loopUpdateTime(decodeKind(ctx, arg(a, 0), HLoop, "eval.luv.Loop")); VNull; }));
-		reg("eval.luv._Loop.LoopOption_Impl_", "sigprof", VInt(Luv.sigprof()));
+		reg("eval.luv._Loop.LoopOption_Impl_", "sigprof", hxc.eval.EvalValue.EvalValueTools.vint(Luv.sigprof()));
 
 		var h = "eval.luv._Handle.Handle_Impl_";
 		reg(h, "close", vfn(a -> {
@@ -1954,7 +1954,7 @@ class EvalLuv {
 		reg(h, "sendBufferSize", vfn(a -> {
 			var out = [0];
 			var r = Luv.bufferSize(decodeSocketHandle(ctx, arg(a, 0)), true, out);
-			encodeResult(r, () -> VInt(out[0]));
+			encodeResult(r, () -> hxc.eval.EvalValue.EvalValueTools.vint(out[0]));
 		}));
 		reg(h, "setSendBufferSize", vfn(a -> {
 			var o = decodeSocketHandle(ctx, arg(a, 0));
@@ -1964,7 +1964,7 @@ class EvalLuv {
 		reg(h, "recvBufferSize", vfn(a -> {
 			var out = [0];
 			var r = Luv.bufferSize(decodeSocketHandle(ctx, arg(a, 0)), false, out);
-			encodeResult(r, () -> VInt(out[0]));
+			encodeResult(r, () -> hxc.eval.EvalValue.EvalValueTools.vint(out[0]));
 		}));
 		// Misspelt on purpose: the eval natives register it under this name.
 		reg(h, "setRendBufferSize", vfn(a -> {
@@ -2010,10 +2010,10 @@ class EvalLuv {
 			var t = decodeTimer(arg(a, 0));
 			var repeat = EvalStdLib.decodeInt(ctx, arg(a, 1));
 			Luv.timerSetRepeat(t, repeat);
-			VInt(repeat);
+			hxc.eval.EvalValue.EvalValueTools.vint(repeat);
 		}));
-		reg(timer, "get_repeat", vfn(a -> VInt(Luv.timerGetRepeat(decodeTimer(arg(a, 0))))));
-		reg(timer, "get_dueIn", vfn(a -> VInt(Luv.timerGetDueIn(decodeTimer(arg(a, 0))))));
+		reg(timer, "get_repeat", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Luv.timerGetRepeat(decodeTimer(arg(a, 0))))));
+		reg(timer, "get_dueIn", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(Luv.timerGetDueIn(decodeTimer(arg(a, 0))))));
 
 		var async = "eval.luv._Async.Async_Impl_";
 		reg(async, "init", vfn(a -> {
@@ -2108,12 +2108,12 @@ class EvalLuv {
 
 		var version = "eval.luv.Version";
 		reg(version, "string", vfn(a -> EvalString.createUnknown(ByteString.ofText(Luv.versionString()))));
-		reg(version, "major", VInt(Luv.versionMajor()));
-		reg(version, "minor", VInt(Luv.versionMinor()));
-		reg(version, "patch", VInt(Luv.versionPatch()));
+		reg(version, "major", hxc.eval.EvalValue.EvalValueTools.vint(Luv.versionMajor()));
+		reg(version, "minor", hxc.eval.EvalValue.EvalValueTools.vint(Luv.versionMinor()));
+		reg(version, "patch", hxc.eval.EvalValue.EvalValueTools.vint(Luv.versionPatch()));
 		reg(version, "isRelease", EvalValueTools.vbool(Luv.versionIsRelease()));
 		reg(version, "suffix", EvalString.createUnknown(ByteString.ofText(Luv.versionSuffix())));
-		reg(version, "hex", VInt(Luv.versionHex()));
+		reg(version, "hex", hxc.eval.EvalValue.EvalValueTools.vint(Luv.versionHex()));
 
 		initSystem(ctx, s);
 		initStreams(ctx, s);

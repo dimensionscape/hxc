@@ -55,14 +55,14 @@ class EvalField {
 		return switch (vresolve(v)) {
 			case VObject(o): objectFieldRaise(o, f);
 			case VPrototype(proto): protoFieldRaise(proto, f);
-			case VArray(va): f == EvalHash.keyLength ? VInt(va.alength) : sharedField(ctx.arrayPrototype, f);
-			case VVector(vv): f == EvalHash.keyLength ? VInt(vv.length) : sharedField(ctx.vectorPrototype, f);
-			case VString(s): f == EvalHash.keyLength ? VInt(s.slength) : sharedField(ctx.stringPrototype, f);
+			case VArray(va): f == EvalHash.keyLength ? hxc.eval.EvalValue.EvalValueTools.vint(va.alength) : sharedField(ctx.arrayPrototype, f);
+			case VVector(vv): f == EvalHash.keyLength ? hxc.eval.EvalValue.EvalValueTools.vint(vv.length) : sharedField(ctx.vectorPrototype, f);
+			case VString(s): f == EvalHash.keyLength ? hxc.eval.EvalValue.EvalValueTools.vint(s.slength) : sharedField(ctx.stringPrototype, f);
 			// A native string has no fields at all (eval.NativeString is a @:coreType abstract, so its
 			// members are impl statics).
 			case VInstance(vi):
 				switch (vi.ikind) {
-					case IBytes(b) if (f == EvalHash.keyLength): VInt(b.length);
+					case IBytes(b) if (f == EvalHash.keyLength): hxc.eval.EvalValue.EvalValueTools.vint(b.length);
 					// The instance's own slot, else the prototype's. The slot test stands in for catching a
 					// missing field; every method read off an instance comes here.
 					case _:

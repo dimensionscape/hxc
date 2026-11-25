@@ -22,14 +22,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - if: runner.os != 'macOS'
-      uses: krdlab/setup-haxe@v1
-      with:
-        haxe-version: ${{ inputs.haxe-version }}
-
-    # v2 on macOS: v1 leaves Neko where the macOS haxelib cannot load it.
-    - if: runner.os == 'macOS'
-      uses: krdlab/setup-haxe@v2
+    - uses: krdlab/setup-haxe@v2
       with:
         haxe-version: ${{ inputs.haxe-version }}
 
@@ -37,13 +30,17 @@ runs:
       shell: bash
       run: haxelib install hxjava 4.2.0 --always --quiet
 
-    - uses: actions/checkout@v4
+    - name: Install hxcs
+      shell: bash
+      run: haxelib install hxcs 4.2.0 --always --quiet
+
+    - uses: actions/checkout@v5
       with:
-        repository: dimensionscape/haxe-conformance
+        repository: hoseyjoe/haxe-conformance
         ref: ${{ inputs.conformance-commit }}
         path: .conformance
 
-    - uses: actions/download-artifact@v4
+    - uses: actions/download-artifact@v7
       with:
         name: ${{ inputs.artifact }}
         path: .hxc

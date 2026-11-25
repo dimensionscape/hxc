@@ -1,0 +1,860 @@
+# Milestone 4a, area "members": candidate tests/dotnet cases (D:/_hxc4a/members/members.cases.txt).
+#
+# Format: tests/dotnet/run.sh's (`--- name [tags] [+ extra args]`, source, `===`, expectation).
+# NEW TAG `@netlib=M4Lib` (an extension of the values area's `@netlib` proposal, D:/_hxc4a/values/NOTES.md
+# "Harness change needed for the cases"): build tests/dotnet/netlib/M4Lib/M4Lib.csproj once per run (copy
+# D:/_hxc4a/members/lib/M4Lib.cs and M4Lib.csproj there), pass `--net-lib <abs>/M4Lib.dll` to hxc's two
+# compiles and gencs's haxe command, add a <Reference> to the generated csproj, copy the DLL beside a/P/P.dll
+# after the determinism cmp, and add the library hash to the gencs cache key. A bare `@netlib` stays ValLib.
+# The full library source is at the end of this file. Each case says which M4Lib section it uses.
+#
+# Every [run] below is gencs's real output (Haxe 4.3.7 + hxcs 4.2.0, built for net10.0 from
+# gencs.csproj.in), from D:/_hxc4a/members/cases/<dir>/gencs.txt, without the probe's trailing "[exit 0]".
+# "hxc today" notes say what main 4b17dec9 does; they are not part of the case.
+
+# A Haxe class implementing a BCL interface property (IEnumerator.Current): no net-lib needed.
+# hxc today: "properties of .NET interfaces" (TclassToIl.hx:595) and Countdown left out.
+# Probe: D:/_hxc4a/members/cases/iprop-bcl/
+--- iface-property-bcl @gencs
+import cs.system.collections.IEnumerator;
+
+class Countdown implements IEnumerator {
+	public var Current(get, never):Dynamic;
+	var n:Int;
+	public function new(n) this.n = n + 1;
+	public function get_Current():Dynamic return n;
+	public function MoveNext():Bool return --n > 0;
+	public function Reset():Void {}
+}
+
+class P {
+	static function main() {
+		var e:IEnumerator = new Countdown(3);
+		var out = [];
+		while (e.MoveNext()) out.push(e.Current);
+		Sys.println(out);
+		var c = new Countdown(1);
+		c.MoveNext();
+		Sys.println(c.Current + " " + c.get_Current());
+		var t = cs.Lib.getNativeType(c);
+		Sys.println(t.GetProperty("Current") != null);
+		var m = t.GetMethod("get_Current");
+		Sys.println(m.IsSpecialName + " " + m.IsVirtual + " " + m.IsFinal);
+		var f = Reflect.fields(c); f.sort(Reflect.compare); Sys.println(f);
+		Sys.println(Reflect.field(c, "Current"));
+	}
+}
+===
+[run]
+[3,2,1]
+1 1
+True
+true true true
+[Current,n]
+1
+
+# M4Lib section 1 (IHandler = IChatHandler's shape, ICounter, UseProps). C# reads and writes the properties;
+# Haxe reads them directly, through the interface, by reflection and through Dynamic. Run line 13 ("5") is
+# Reflect.callMethod(set_Count)'s value: the argument, not set_Count's return (10); line 14 is `c.Count = 6`.
+# hxc today: "properties of .NET interfaces" for Handler and Counter.
+# Probe: D:/_hxc4a/members/cases/iprop/
+--- netlib-iface-properties @gencs @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.List_1;
+
+class Handler implements IHandler {
+	public var Guid(get, never):String;
+	public var Prompt(get, never):String;
+	var name:String;
+	public function new(n:String) name = n;
+	public function get_Guid():String return "g-" + name;
+	public function get_Prompt() return "p-" + name;
+	public function Plugins():List_1<String> {
+		var l = new List_1<String>();
+		l.Add("a");
+		return l;
+	}
+}
+
+
+class Counter implements ICounter {
+	public var Count(get, set):Int;
+	public var Label(get, never):String;
+	var n = 0;
+	public function new() {}
+	public function get_Count() return n;
+	public function set_Count(v:Int) { n = v * 2; return n; }
+	public function get_Label() return "ctr";
+}
+
+class P {
+	static function main() {
+		var h = new Handler("x");
+		Sys.println(UseProps.Read(h));
+		Sys.println(h.Guid + " " + h.get_Guid() + " " + h.Prompt);
+		var ih:IHandler = h;
+		Sys.println(ih.Guid + " " + ih.Prompt);
+		var c = new Counter();
+		Sys.println(UseProps.Bump(c));
+		c.Count = 5;
+		Sys.println(c.Count);
+		var ic:ICounter = c;
+		ic.Count = 7;
+		Sys.println(ic.Count + " " + ic.Label);
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(h)));
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(c)));
+		// reflection
+		Sys.println(Reflect.field(h, "Guid"));
+		Sys.println(Reflect.callMethod(h, Reflect.field(h, "get_Guid"), []));
+		var f = Type.getInstanceFields(Handler); f.sort(Reflect.compare); Sys.println(f);
+		var f = Type.getInstanceFields(Counter); f.sort(Reflect.compare); Sys.println(f);
+		Sys.println(Reflect.callMethod(c, Reflect.field(c, "set_Count"), [5]));
+		Sys.println(c.Count = 6);
+		var r = Reflect.fields(h); r.sort(Reflect.compare); Sys.println(r);
+		var r = Reflect.fields(c); r.sort(Reflect.compare); Sys.println(r);
+		Reflect.setProperty(c, "Count", 10);
+		Sys.println(Reflect.getProperty(c, "Count"));
+		var d:Dynamic = h;
+		Sys.println(d.Guid + " " + d.get_Prompt());
+	}
+}
+===
+[run]
+g-x/p-x/1
+g-x g-x p-x
+g-x p-x
+ctr=2
+10
+14 ctr
+prop Prompt get, prop Guid get
+prop Label get, prop Count get set
+g-x
+g-x
+[Plugins,get_Guid,get_Prompt,name]
+[get_Count,get_Label,n,set_Count]
+5
+6
+[Guid,Prompt,name]
+[Count,Label,n]
+20
+g-x p-x
+
+# M4Lib section 1. Overriding one accessor of a get/set (virtual) property: gencs writes
+# `public override int Count { get { return _get_Count(); } }` and `base.Count` for the super call.
+# hxc today: "properties of .NET interfaces".
+# Probe: D:/_hxc4a/members/cases/iprop2/
+--- netlib-iface-property-override @gencs @netlib=M4Lib
+import m4.*;
+
+class Counter implements ICounter {
+	public var Count(get, set):Int;
+	public var Label(get, never):String;
+	var n = 0;
+	public function new() {}
+	public function get_Count() return n;
+	public function set_Count(v:Int) { n = v; return n; }
+	public function get_Label() return "ctr";
+}
+
+class SubCounter extends Counter {
+	override public function get_Count() return super.get_Count() + 100;
+}
+
+class Plain extends Counter {}
+
+class P {
+	static function main() {
+		var c = new SubCounter();
+		Sys.println(UseProps.Bump(c));
+		Sys.println(UseProps.Bump(new Plain()));
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(c)));
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(new Plain())));
+		var x:Counter = c;
+		Sys.println(x.Count);
+	}
+}
+===
+[run]
+ctr=201
+ctr=1
+prop Count get
+
+201
+
+# M4Lib section 1. gencs FAILS: the get-only property is non-virtual, so the override is
+#   P.cs(171,25): error CS0506: 'SubHandler.Guid': cannot override inherited member 'Handler.Guid' because it is not marked virtual, abstract, or override
+# hxc should refuse cleanly (NOTES.md open question 1). The message and positions below are a PROPOSAL.
+# hxc today: "properties of .NET interfaces".
+# Probe: D:/_hxc4a/members/cases/iprop-getonly/
+--- netlib-iface-property-getonly-override @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.List_1;
+
+class Handler implements IHandler {
+	public var Guid(get, never):String;
+	public var Prompt(get, never):String;
+	public function new() {}
+	public function get_Guid():String return "g";
+	public function get_Prompt():String return "p";
+	public function Plugins():List_1<String> return new List_1<String>();
+}
+
+class SubHandler extends Handler {
+	override public function get_Guid():String return "sub";
+}
+
+class P {
+	static function main() {
+		Sys.println(UseProps.Read(new SubHandler()));
+	}
+}
+===
+[compile]
+P.hx:13: lines 13-15 : dotnet: overriding the accessor of a non-virtual .NET interface property is not supported yet
+P.hx:19: characters 29-45 : dotnet: SubHandler (left out: overriding the accessor of a non-virtual .NET interface property) is not supported yet
+
+# `@:property` on physical vars (the server app has 336 in its AI tools): gencs writes C# auto-properties.
+# hxc today compiles them as public fields, silently: it prints an empty line for GetProperties() and
+# "name,count" for GetFields() (run lines 2 and 3 swapped).
+# Probe: D:/_hxc4a/members/cases/uprop/
+--- property-meta-vars @gencs
+@:nativeGen
+class Model {
+	@:property public var name:String = "";
+	@:property public var count:Int = 3;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var m = new Model();
+		m.name = "bob";
+		m.count++;
+		Sys.println(m.name + " " + m.count);
+		var t = cs.Lib.toNativeType(Model);
+		Sys.println([for (p in t.GetProperties()) p.Name].join(","));
+		Sys.println([for (f in t.GetFields()) f.Name].join(","));
+		Sys.println(Reflect.field(m, "name"));
+	}
+}
+===
+[run]
+bob 4
+name,count
+
+bob
+
+# M4Lib section 2 (ISess/ICrit/IMulti copy NHibernate's overload orders; Gen). Non-generic overloads declared
+# after generic ones with the same parameter types (CreateCriteria(string), IMultiQuery.Add), generic
+# overloads Haxe picks over earlier non-generic ones (ICriteria.List<T>(), with and without an expected
+# type), and the type arguments hxc must write (no top-level erasure; 3c erasure inside Box<HxThing>).
+# hxc today: "generic .NET methods" at lines 12, 20, 21, 34 (ExternMembers.method ignores generic arity).
+# -D net-ver=40: M4Lib's Gen.Apply uses Func<T,R>, which hxcs only exposes from net 4.0.
+# Probe: D:/_hxc4a/members/cases/gmeth/
+--- netlib-generic-overloads @gencs @netlib=M4Lib + -D net-ver=40
+import m4.*;
+import cs.system.collections.generic.IList_1;
+
+class HxThing { public var v:Int; public function new(v) this.v = v; public function toString() return "HxThing" + v; }
+enum Color { Red; Green; }
+class Box<T> { public var x:T; public function new(x) this.x = x; }
+
+class P {
+	static function main() {
+		var s = new Sess();
+		var is:ISess = s;
+		Sys.println(is.Make("Blob"));
+		var t:cs.system.Type = cs.Lib.toNativeType(Rec);
+		Sys.println(is.Make(t));
+		var c = is.Crit("Rec");
+		var l1 = c.List();
+		Sys.println(l1.Count);
+		var l2:IList_1<Rec> = c.List();
+		Sys.println(l2.Count);
+		var u:Rec = c.Unique();
+		var u2 = c.Unique();
+		var r:Rec = is.Get(1);
+		var h:HxThing = is.Get(2);
+		var i:Int = is.Get(3);
+		var str:String = is.Get(4);
+		var a:Array<Int> = is.Get(5);
+		var ni:Null<Int> = is.Get(6);
+		var an:{x:Int} = is.Get(7);
+		var d:Dynamic = is.Get(8);
+		var col:Color = is.Get(9);
+		var bx:Box<HxThing> = is.Get(10);
+		var bi:Box<Int> = is.Get(11);
+		var m = is.Multi();
+		m.Add("q1").Add("q2");
+		Sys.println(s.Log);
+		Gen.Id(new HxThing(1));
+		Gen.Id(Red);
+		Gen.Id(3);
+		Gen.Id([1, 2]);
+		Gen.Id(new Box(1));
+		Gen.Id(new Rec("a"));
+		Gen.Id((null:Null<Int>));
+		Gen.Id({x: 1});
+		var lst = Gen.Of("a", "b");
+		Sys.println(lst.Count);
+		Sys.println(Gen.Type());
+		Sys.println(Gen.First(cs.Lib.nativeArray([new HxThing(5)], false)));
+	}
+}
+===
+[run]
+Make(Blob)
+Make(Type Rec)
+List<System.Object>()
+0
+List<M4.Rec>()
+0
+Unique()
+Unique()
+Get<M4.Rec>(1)
+Get<HxThing>(2)
+Get<System.Int32>(3)
+Get<System.String>(4)
+Get<Array`1[System.Int32]>(5)
+Get<System.Object>(6)
+Get<System.Object>(7)
+Get<System.Object>(8)
+Get<Color>(9)
+Get<Box`1[System.Object]>(10)
+Get<Box`1[System.Int32]>(11)
+Add(q1) Add(q2)
+Id<HxThing>
+Id<Color>
+Id<System.Int32>
+Id<Array`1[System.Int32]>
+Id<Box`1[System.Int32]>
+Id<M4.Rec>
+Id<System.Object>
+Id<System.Object>
+Of<System.String>
+2
+System.Object
+First<HxThing>=HxThing5
+
+# M4Lib section 2. The silent miscompile (NOTES.md 0.2): hxc today compiles this, calls the non-generic
+# ICrit::List() and prints "List()", then dies with InvalidCastException (ArrayList to IList`1[M4.Rec]).
+# The server app shape: PermissionsManager.hx:51 `var res:IList_1<Any> = session.CreateSQLQuery(sql).List();`.
+# Probe: D:/_hxc4a/members/cases/gmeth5/
+--- netlib-generic-overload-picks-generic @gencs @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.IList_1;
+class P {
+	static function main() {
+		var c:ICrit = new Sess();
+		var l2:IList_1<Rec> = c.List();
+		Sys.println(l2.Count);
+	}
+}
+===
+[run]
+List<M4.Rec>()
+0
+
+# M4Lib section 2. The same overloads in both metadata orders (ICrit: non-generic first; ICrit2: generic
+# first, so Haxe picks the non-generic List()). hxc today: "generic .NET methods" at line 11.
+# Probe: D:/_hxc4a/members/cases/gmeth3/
+--- netlib-generic-overload-order @gencs @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.IList_1;
+class P {
+	static function main() {
+		var c:ICrit = new Sess();
+		var l1 = c.List();
+		Sys.println(l1.Count);
+		var l2:IList_1<Rec> = c.List();
+		Sys.println(l2.Count);
+		var c2:ICrit2 = new Crit2();
+		var k1 = c2.List();
+		Sys.println(k1.Count);
+	}
+}
+===
+[run]
+List<System.Object>()
+0
+List<M4.Rec>()
+0
+List()
+2
+
+# M4Lib section 2 (Picks). Two generic overloads told apart by parameter type. Passes today; a regression
+# case for the arity fix.
+# Probe: D:/_hxc4a/members/cases/gmeth4/
+--- netlib-generic-two-generic-overloads @gencs @netlib=M4Lib
+import m4.*;
+class P {
+	static function main() {
+		Sys.println(Picks.Pick(1));
+		Sys.println(Picks.Pick("a"));
+		Sys.println(Picks.Make("x", 1));
+		Sys.println(Picks.Make(2.5, "s"));
+	}
+}
+===
+[run]
+Pick<System.Object>(int)
+Pick<System.Object>(string)
+x
+2.5
+
+# M4Lib section 2b. A Haxe class implementing a generic .NET interface method (TclassToIl.hx:611), overriding
+# a method of a generic .NET class (TclassToIl.hx:850) and an operator of a generic .NET type
+# (ExternMembers.hx:168). Neither the server app nor the desktop app uses them; recommended to stay refused in 4a, so the
+# expectation is hxc's current errors. gencs compiles it and prints:
+#   visit 1,visit s
+#   x!
+#   Derived.Show(v)|Derived
+#   True
+# If the plan implements them, make this a @gencs case with that output (SBox, a generic .NET interface
+# with non-generic methods, already works).
+# Probe: D:/_hxc4a/members/cases/ggen/
+--- netlib-generic-members-refused @netlib=M4Lib
+import m4.*;
+
+class Visitor implements IVisitor {
+	public function new() {}
+	public function Visit<T>(x:T):String return "visit " + Std.string(x);
+}
+class SBox implements IBox_1<String> {
+	var v = "";
+	public function new() {}
+	public function Get():String return v + "!";
+	public function Set(x:String):Void v = x;
+}
+class Derived extends Base_1<String> {
+	public function new() super();
+	@:overload override public function Show(x:String):String return "Derived.Show(" + x + ")";
+	@:overload override public function Name():String return "Derived";
+}
+class P {
+	static function main() {
+		Sys.println(UseGen.Visit(new Visitor()));
+		Sys.println(UseGen.RoundTrip(new SBox()));
+		Sys.println(UseGen.Call(new Derived()));
+		var a = new Vec_1<Int>(1), b = new Vec_1<Int>(1);
+		Sys.println(a == b);
+	}
+}
+===
+[compile]
+P.hx:3: lines 3-6 : dotnet: generic .NET interface methods are not supported yet
+P.hx:15: characters 13-92 : dotnet: overriding methods of generic .NET classes are not supported yet
+P.hx:20: characters 28-41 : dotnet: Visitor (left out: generic .NET interface methods) is not supported yet
+P.hx:22: characters 27-40 : dotnet: Derived (left out: overriding methods of generic .NET classes) is not supported yet
+P.hx:24: characters 15-21 : dotnet: operators of generic .NET types are not supported yet
+
+# M4Lib section 3 (Check, Note, Client, Lists, Gen.Apply). Lambdas without and with captures (the server app's
+# ServerCertificateCustomValidationCallback shape, CoachServer.hx:276), a static method, an instance closure
+# on a non-simple receiver, a local Function (conversion wrapper), List.Find with a lambda
+# (DataPoolManager.hx:258), a generic method taking Func<T,R>, a Predicate var, `new Note(...)`,
+# add_/remove_ of an event and .Invoke. hxc today: "untyped code" at the 11 conversion sites.
+# Probe: D:/_hxc4a/members/cases/deleg/
+--- netlib-delegates @gencs @netlib=M4Lib + -D net-ver=40
+import m4.*;
+import cs.system.Func_2;
+import cs.system.Predicate_1;
+
+class P {
+	var tag:String;
+	function new(t) tag = t;
+	function isMine(s:String):Bool return s == tag;
+	static function isLong(s:String):Bool return s.length > 1;
+	static function main() {
+		var c = new Client();
+		Sys.println(c.Run());
+		c.Validate = (sender, cert, errors) -> errors == 0;
+		Sys.println(c.Run());
+		var limit = 1;
+		c.Validate = (sender, cert, errors) -> errors < limit;
+		Sys.println(c.Run());
+		c.Filter = (s:String) -> s.length > 1;
+		Sys.println(c.RunFilter());
+		c.Filter = isLong;
+		Sys.println(c.RunFilter());
+		c.Filter = new P("a").isMine;
+		Sys.println(c.RunFilter());
+		var f = (s:String) -> s == "bb";
+		c.Filter = f;
+		Sys.println(c.RunFilter());
+		Sys.println(c.Filter.Invoke("bb"));
+		var names = Lists.Names();
+		Sys.println(names.Find((s) -> s.charAt(0) == "b"));
+		var want = "cy";
+		Sys.println(names.Find((s) -> s == want));
+		Sys.println(Gen.Apply((x:Int) -> x + 1, 3));
+		var p:Predicate_1<String> = (s) -> s.length == 3;
+		Sys.println(names.FindAll(p).Count);
+		c.Fire("before");
+		var n = new Note((s) -> Sys.println("noted " + s));
+		c.add_Noted(n);
+		c.Fire("x");
+		c.remove_Noted(n);
+		c.Fire("y");
+		var fn:Func_2<String, Bool> = c.Filter;
+		Sys.println(fn.Invoke("q"));
+	}
+}
+===
+[run]
+no validator
+valid=True,False
+valid=True,False
+filter=False,True
+filter=False,True
+filter=True,False
+filter=False,True
+True
+bob
+cy
+Apply<System.Int32,System.Int32>=4
+2
+nobody noted before
+noted x
+nobody noted y
+False
+
+# M4Lib section 3. Method groups on `this` and on a local, a lambda capturing `this`, `d1 + d2` (the
+# delegate abstract's op_Addition, which gencs prints as C# `+`, i.e. Delegate.Combine), and
+# `new Thread(() -> ...)`. hxc today: "untyped code" at all 6 sites.
+# Probe: D:/_hxc4a/members/cases/deleg2/
+--- netlib-delegates-methods-and-combine @gencs @netlib=M4Lib + -D net-ver=40
+import m4.*;
+class P {
+	var tag:String;
+	function new(t) tag = t;
+	function isMine(s:String):Bool return s == tag;
+	function run(c:Client) {
+		c.Filter = isMine;
+		Sys.println(c.RunFilter());
+		c.Filter = (s) -> s == tag;
+		Sys.println(c.RunFilter());
+	}
+	static function main() {
+		var c = new Client();
+		var me = new P("a");
+		c.Filter = me.isMine;
+		Sys.println(c.RunFilter());
+		me.run(c);
+		var d1 = new Note((s) -> Sys.println("one " + s));
+		var d2 = new Note((s) -> Sys.println("two " + s));
+		var both = d1 + d2;
+		both.Invoke("z");
+		var t = new cs.system.threading.Thread(() -> Sys.println("in thread"));
+		t.Start(); t.Join();
+	}
+}
+===
+[run]
+filter=True,False
+filter=True,False
+filter=True,False
+one z
+two z
+in thread
+
+# No net-lib. Haxe unifies Int->Bool with Func_2<Dynamic,Bool>; gencs FAILS:
+#   P.hx(6,43): error CS0030: Cannot convert type 'System.Func<int, bool>' to 'System.Func<object, bool>'
+# (it writes `(Func<object,bool>)((Func<int,bool>)P.isInt)`). hxc should refuse; the message and position
+# are a PROPOSAL (NOTES.md open question 5). hxc today: "untyped code" at characters 3-39.
+# Probe: D:/_hxc4a/members/cases/deleg-mismatch/
+--- delegate-type-mismatch + -D net-ver=40
+import cs.system.Func_2;
+
+class P {
+	static function isInt(x:Int):Bool return x > 0;
+	static function main() {
+		var f:Func_2<Dynamic, Bool> = isInt;
+		Sys.println(f.Invoke(1));
+	}
+}
+===
+[compile]
+P.hx:6: characters 33-38 : dotnet: functions converted to delegates with other types are not supported yet
+
+# No net-lib. hxcs's Thread.create does `new NativeThread(job)` (a local Function into ThreadStart: the
+# conversion wrapper). The desktop app calls it (src/Main.hx and 4 more files), the server app too. hxc today compiles
+# a stub that throws NotSupportedException ("...Thread_Impl_.create uses untyped code").
+# Probe: D:/_hxc4a/members/cases/thread/
+--- thread-create @gencs
+import sys.thread.Thread;
+import sys.thread.Lock;
+
+class P {
+	static function main() {
+		var lock = new Lock();
+		var got = 0;
+		Thread.create(() -> {
+			got = 42;
+			lock.release();
+		});
+		lock.wait();
+		Sys.println(got);
+	}
+}
+===
+[run]
+42
+
+# M4Lib section 4 (Lists, IFiles, Dialogs). NativeArray across native calls. Passes today (regression).
+# Probe: D:/_hxc4a/members/cases/narr/
+--- netlib-native-arrays @gencs @netlib=M4Lib
+import m4.*;
+import cs.NativeArray;
+
+class Files implements IFiles {
+	public var got:Array<String> = [];
+	public function new() {}
+	public function OnFiles(paths:NativeArray<String>):Void {
+		for (p in paths) got.push(p);
+	}
+}
+class P {
+	static function main() {
+		Sys.println(Lists.Sum(cs.Lib.nativeArray([1, 2, 3], false)));
+		var a = new NativeArray<Int>(3);
+		Lists.Fill(a);
+		Sys.println(a[1] + " " + a.Length);
+		var parts = Lists.Split("a,b,c");
+		Sys.println(parts.Length + " " + parts[2]);
+		for (s in parts) Sys.print(s + ";");
+		Sys.println("");
+		Sys.println(cs.Lib.array(parts));
+		var fl = Lists.Floats(3);
+		Sys.println(fl[2]);
+		var sum:Float = 0;
+		for (x in fl) sum += x;
+		Sys.println(sum);
+		Sys.println(Lists.Join(parts));
+		var objs = new NativeArray<Dynamic>(2);
+		objs[0] = 1; objs[1] = "x";
+		Sys.println(Lists.Len(objs));
+		var f = new Files();
+		Dialogs.Open(f);
+		Sys.println(f.got);
+		var made = NativeArray.make("p", "q");
+		Sys.println(Lists.Join(made));
+		var b = haxe.io.Bytes.ofString("hi");
+		var bd:haxe.io.BytesData = b.getData();
+		Sys.println(bd.Length);
+		var dyn:Dynamic = parts;
+		Sys.println(dyn.Length);
+		Sys.println(Std.isOfType(parts, NativeArray));
+		Sys.println(Type.getClassName(Type.getClass(parts)));
+	}
+}
+===
+[run]
+6
+10 3
+3 c
+a;b;c;
+[a,b,c]
+2.5
+4.5
+a|b|c
+2
+[a.txt,b.txt]
+p|q
+2
+3
+True
+System.String[]
+
+# M4Lib section 5 (IPing, IPingMore, IFiles). InterfaceImpl sets for Haxe classes implementing .NET interface
+# hierarchies and Haxe interfaces extending .NET ones. The names are sorted: hxc's row ORDER differs from
+# gencs's (NOTES.md section 5, open question 4) and only GetInterfaces() order can see it. Passes today.
+# Probe: D:/_hxc4a/members/cases/iimpl/
+--- netlib-interface-impls @gencs @netlib=M4Lib
+import m4.*;
+interface IHx { function hx():String; }
+interface IHxPing extends IPing { function hx2():String; }
+class A implements IFiles implements IHx implements IPingMore {
+	public function new() {}
+	public function OnFiles(p:cs.NativeArray<String>):Void {}
+	public function hx() return "hx";
+	public function Ping() return "ping";
+	public function More() return "more";
+}
+class B extends A implements IPing {
+	override public function Ping() return "pingB";
+}
+class C implements IHxPing {
+	public function new() {}
+	public function Ping() return "pingC";
+	public function hx2() return "hx2";
+}
+class P {
+	static function names(o:Dynamic) {
+		var l = [for (i in cs.Lib.getNativeType(o).GetInterfaces()) i.FullName]; l.sort(Reflect.compare);
+		return l.join(",");
+	}
+	static function main() {
+		Sys.println(names(new A()));
+		Sys.println(names(new B()));
+		Sys.println(names(new C()));
+		var p:IPing = new B();
+		Sys.println(p.Ping());
+	}
+}
+===
+[run]
+IHx,M4.IFiles,M4.IPing,M4.IPingMore,haxe.lang.IHxObject
+IHx,M4.IFiles,M4.IPing,M4.IPingMore,haxe.lang.IHxObject
+IHxPing,M4.IPing,haxe.lang.IHxObject
+pingB
+
+# ----------------------------------------------------------------------------------------------------
+# Net-lib source for @netlib=M4Lib: tests/dotnet/netlib/M4Lib/M4Lib.cs (copy of D:/_hxc4a/members/lib/M4Lib.cs)
+# and M4Lib.csproj (copy of D:/_hxc4a/members/lib/M4Lib.csproj). Shown here prefixed with "# | ".
+#
+# | // Shapes for milestone 4a's members area (D:/_hxc4a/members). netstandard2.0 so Haxe 4.3.7's net-lib reads it.
+# | using System;
+# | using System.Collections.Generic;
+# | namespace M4 {
+# | 	// 1. interface properties (IChatHandler's shape: get-only string properties, plus a method)
+# | 	public interface IHandler {
+# | 		string Guid { get; }
+# | 		string Prompt { get; }
+# | 		List<string> Plugins();
+# | 	}
+# | 	public interface ICounter {
+# | 		int Count { get; set; }
+# | 		string Label { get; }
+# | 	}
+# | 	public interface IWriteOnly { int Sink { set; } }
+# | 	public static class UseProps {
+# | 		public static string Read(IHandler h) => h.Guid + "/" + h.Prompt + "/" + h.Plugins().Count;
+# | 		public static string Bump(ICounter c) { c.Count = c.Count + 1; return c.Label + "=" + c.Count; }
+# | 		public static string Shape(Type t) {
+# | 			var s = new List<string>();
+# | 			foreach (var p in t.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly))
+# | 				s.Add("prop " + p.Name + (p.GetMethod != null ? " get" : "") + (p.SetMethod != null ? " set" : ""));
+# | 			return string.Join(", ", s);
+# | 		}
+# | 	}
+# | 	// 2. generic methods: overloads where a generic one precedes the non-generic one (NHibernate's ISession/IMultiQuery order)
+# | 	public interface ISess {
+# | 		string Make<T>() where T : class;
+# | 		string Make<T>(string alias) where T : class;
+# | 		string Make(Type t);
+# | 		string Make(string entityName);
+# | 		ICrit Crit(string entityName);
+# | 		T Get<T>(object id);
+# | 		IMulti Multi();
+# | 	}
+# | 	public interface ICrit {
+# | 		System.Collections.IList List();
+# | 		IList<T> List<T>();
+# | 		T Unique<T>();
+# | 		object Unique();
+# | 	}
+# | 	// two generic overloads
+# | 	public static class Picks {
+# | 		public static string Pick<T>(int id) => "Pick<" + Sess.Name(typeof(T)) + ">(int)";
+# | 		public static string Pick<T>(string s) => "Pick<" + Sess.Name(typeof(T)) + ">(string)";
+# | 		public static T Make<T>(T x, int n) => x;
+# | 		public static T Make<T>(T x, string s) => x;
+# | 	}
+# | 	// ICrit's overloads in the other metadata order
+# | 	public interface ICrit2 {
+# | 		IList<T> List<T>();
+# | 		System.Collections.IList List();
+# | 	}
+# | 	public class Crit2 : ICrit2 {
+# | 		public IList<T> List<T>() { Console.WriteLine("List<" + Sess.Name(typeof(T)) + ">()"); return new List<T>(); }
+# | 		public System.Collections.IList List() { Console.WriteLine("List()"); return new System.Collections.ArrayList { 1, 2 }; }
+# | 	}
+# | 	public interface IMulti {
+# | 		IMulti Add(Type t, string q);
+# | 		IMulti Add<T>(string q);
+# | 		IMulti Add<T>(string key, string q);
+# | 		IMulti Add(string q);
+# | 		int Count { get; }
+# | 	}
+# | 	public class Rec { public string Name; public Rec(string n) { Name = n; } public override string ToString() => "Rec(" + Name + ")"; }
+# | 	public class Sess : ISess, ICrit, IMulti {
+# | 		List<string> log = new List<string>();
+# | 		public string Make<T>() where T : class => "Make<" + typeof(T).Name + ">()";
+# | 		public string Make<T>(string alias) where T : class => "Make<" + typeof(T).Name + ">(" + alias + ")";
+# | 		public string Make(Type t) => "Make(Type " + t.Name + ")";
+# | 		public string Make(string entityName) => "Make(" + entityName + ")";
+# | 		public ICrit Crit(string entityName) => this;
+# | 		public T Get<T>(object id) { Console.WriteLine("Get<" + Name(typeof(T)) + ">(" + id + ")"); return default(T); }
+# | 		public IMulti Multi() => this;
+# | 		public System.Collections.IList List() { Console.WriteLine("List()"); return new System.Collections.ArrayList { 1, 2 }; }
+# | 		public IList<T> List<T>() { Console.WriteLine("List<" + Name(typeof(T)) + ">()"); return new List<T>(); }
+# | 		public T Unique<T>() { Console.WriteLine("Unique<" + Name(typeof(T)) + ">()"); return default(T); }
+# | 		public object Unique() { Console.WriteLine("Unique()"); return null; }
+# | 		public IMulti Add(Type t, string q) { log.Add("Add(Type,q)"); return this; }
+# | 		public IMulti Add<T>(string q) { log.Add("Add<" + Name(typeof(T)) + ">(" + q + ")"); return this; }
+# | 		public IMulti Add<T>(string key, string q) { log.Add("Add<" + Name(typeof(T)) + ">(key,q)"); return this; }
+# | 		public IMulti Add(string q) { log.Add("Add(" + q + ")"); return this; }
+# | 		public int Count => log.Count;
+# | 		public string Log => string.Join(" ", log);
+# | 		public static string Name(Type t) => t.IsGenericType ? t.Name + "[" + string.Join(",", Array.ConvertAll(t.GetGenericArguments(), Name)) + "]" : t.FullName ?? t.Name;
+# | 	}
+# | 	public static class Gen {
+# | 		public static T Id<T>(T x) { Console.WriteLine("Id<" + Sess.Name(typeof(T)) + ">"); return x; }
+# | 		public static List<T> Of<T>(T a, T b) { Console.WriteLine("Of<" + Sess.Name(typeof(T)) + ">"); return new List<T> { a, b }; }
+# | 		public static string Type<T>() => Sess.Name(typeof(T));
+# | 		public static T Make<T>() where T : new() => new T();
+# | 		public static string Apply<T, R>(Func<T, R> f, T x) => "Apply<" + Sess.Name(typeof(T)) + "," + Sess.Name(typeof(R)) + ">=" + f(x);
+# | 		public static int Count<T>(IEnumerable<T> e) { int n = 0; foreach (var _ in e) n++; Console.WriteLine("Count<" + Sess.Name(typeof(T)) + ">"); return n; }
+# | 		public static string First<T>(T[] a) => "First<" + Sess.Name(typeof(T)) + ">=" + a[0];
+# | 	}
+# | 	// 2b. generic interface methods implemented by Haxe; generic base class methods overridden by Haxe
+# | 	public interface IVisitor { string Visit<T>(T x); }
+# | 	public interface IBox<T> { T Get(); void Set(T v); }
+# | 	public static class UseGen {
+# | 		public static string Visit(IVisitor v) => v.Visit(1) + "," + v.Visit("s");
+# | 		public static string RoundTrip(IBox<string> b) { b.Set("x"); return b.Get(); }
+# | 		public static string Call(Base<string> b) => b.Show("v") + "|" + b.Name();
+# | 	}
+# | 	public class Base<T> {
+# | 		public virtual string Show(T x) => "Base.Show(" + x + ")";
+# | 		public virtual string Name() => "Base";
+# | 	}
+# | 	public class Vec<T> {
+# | 		public T X; public Vec(T x) { X = x; }
+# | 		public static Vec<T> operator +(Vec<T> a, Vec<T> b) => a;
+# | 		public static bool operator ==(Vec<T> a, Vec<T> b) => ReferenceEquals(a, b) || (!ReferenceEquals(a, null) && !ReferenceEquals(b, null) && Equals(a.X, b.X));
+# | 		public static bool operator !=(Vec<T> a, Vec<T> b) => !(a == b);
+# | 		public override bool Equals(object o) => o is Vec<T> v && Equals(v.X, X);
+# | 		public override int GetHashCode() => 0;
+# | 	}
+# | 	// 3. delegates and events
+# | 	public delegate bool Check(object sender, string cert, int errors);
+# | 	public delegate void Note(string s);
+# | 	public class Client {
+# | 		public Check Validate { get; set; }
+# | 		public Func<string, bool> Filter;
+# | 		public event Note Noted;
+# | 		public event EventHandler Changed;
+# | 		public string Run() => Validate == null ? "no validator" : "valid=" + Validate(this, "cert", 0) + "," + Validate(this, "bad", 2);
+# | 		public string RunFilter() => Filter == null ? "no filter" : "filter=" + Filter("a") + "," + Filter("bb");
+# | 		public void Fire(string s) { if (Noted != null) Noted(s); else Console.WriteLine("nobody noted " + s); Changed?.Invoke(this, EventArgs.Empty); }
+# | 	}
+# | 	public static class Lists {
+# | 		public static List<string> Names() => new List<string> { "ann", "bob", "cy" };
+# | 		public static int Sum(int[] a) { int s = 0; foreach (var x in a) s += x; return s; }
+# | 		public static string[] Split(string s) => s.Split(',');
+# | 		public static void Fill(int[] a) { for (int i = 0; i < a.Length; i++) a[i] = i * 10; }
+# | 		public static float[] Floats(int n) { var r = new float[n]; for (int i = 0; i < n; i++) r[i] = i + 0.5f; return r; }
+# | 		public static string Join(string[] a) => string.Join("|", a);
+# | 		public static int Len(object[] a) => a.Length;
+# | 	}
+# | 	public class Outer { public class Inner { public string Name = "inner"; } public System.Collections.Generic.List<Inner> Items = new System.Collections.Generic.List<Inner> { new Inner() }; }
+# | 	public interface IPing { string Ping(); }
+# | 	public interface IPingMore : IPing { string More(); }
+# | 	public interface IFiles { void OnFiles(string[] paths); }
+# | 	public static class Dialogs { public static void Open(IFiles l) { l.OnFiles(new[] { "a.txt", "b.txt" }); } }
+# | }
+#
+# | <Project Sdk="Microsoft.NET.Sdk">
+# |   <PropertyGroup><TargetFramework>netstandard2.0</TargetFramework><AssemblyName>M4Lib</AssemblyName><Nullable>disable</Nullable><LangVersion>latest</LangVersion><GenerateDocumentationFile>false</GenerateDocumentationFile></PropertyGroup>
+# | </Project>
+#

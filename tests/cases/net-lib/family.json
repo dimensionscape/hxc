@@ -1,0 +1,8 @@
+{
+	"name": "net-lib",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "$module", "--cs", "$out", "--no-output", "-D", "net-ver=40", "--net-lib", "Fixture.dll"]
+}

@@ -25,6 +25,7 @@ private class ExcContext {
 	public var valueExceptionType:T;
 	public var nativeThrows:Array<String>;
 	public var nativeCatches:Array<String>;
+	public var specialThrow:Null<String>;
 
 	public function new() {}
 }
@@ -210,6 +211,10 @@ class Exceptions {
 
 	static function requiresWrappedThrow(ctx:ExcContext, e:TExpr):Bool {
 		if (ctx.throwsAnything || isWrappedException(e)) return false;
+		switch (e.expr) {
+			case TIdent(s) if (s == ctx.specialThrow): return false;
+			case _:
+		}
 		// A value of haxe.Exception type itself (not new) delegates the decision to Exception.thrown,
 		// since it may wrap a wildcard catch
 		var isStoredHaxeException = isHaxeException(e.type, false) && !e.expr.match(TNew(_, _, _));
@@ -381,7 +386,7 @@ class Exceptions {
 		// Java, catch(e:Dynamic) keeps its Dynamic type and the JVM generator emits a catch on
 		// java.lang.Object, which the verifier rejects.
 		switch (com.platform) {
-			case Js | Eval | Cpp | Java:
+			case Js | Eval | Cpp | Java | Cs | Hl:
 			case _: return function(e) return e;
 		}
 		var cfg = com.platformConfig;
@@ -428,6 +433,7 @@ class Exceptions {
 		ctx.basic = com.basic;
 		ctx.nativeThrows = cfg.nativeThrows;
 		ctx.nativeCatches = cfg.nativeCatches;
+		ctx.specialThrow = cfg.specialThrow;
 		ctx.wildcardCatchType = loadType(cfg.wildcardCatch);
 		ctx.baseThrowType = loadType(cfg.baseThrow);
 		var isDynPath = function(dotted:String) return dotted == "Dynamic" || dotted == "StdTypes.Dynamic";

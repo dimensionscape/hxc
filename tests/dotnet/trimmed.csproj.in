@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Publishes a @trimmed case's hxc DLL through the IL trimmer, in full mode; run.sh fills in @NAME@, @DLL@ and @RID@. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Host</AssemblyName>
+    <RuntimeIdentifier>@RID@</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <DebugType>none</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="@NAME@"><HintPath>@DLL@</HintPath></Reference>
+  </ItemGroup>
+</Project>

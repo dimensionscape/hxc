@@ -383,7 +383,9 @@ class Typer {
 		var realCf = implC.statics.get(cf.name);
 		if (realCf != null) cf = realCf;
 		TypeFields.forceFieldBody(ctx.com, implC, cf);
-		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+		// calls.ml's make_static_call: the receiver is make_static_this, typed by the bare `{ Statics c }`
+		// anon, not the `Class<...>` type expression an access written in the source gets.
+		var implExpr = TexprTools.makeStaticThis(implC, p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
 		return Calls.makeCall(ctx, staticExpr, castArgs(ctx, cf, e, p), t, p);
 	}
@@ -396,9 +398,10 @@ class Typer {
 	}
 
 	static function callMacroCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
-		// The whole attempt is SPECULATIVE: a failing macro cast raises NotFound and leaves no diagnostics
-		// behind, so anything the macro run or its result's retype recorded rolls back.
-		var before = ctx.com.diagnostics.length;
+		// The whole attempt is SPECULATIVE: a failing macro cast raises NotFound and leaves no errors or
+		// queued property deprecations behind; the warnings the macro run or its result's retype recorded
+		// stay.
+		var before = ctx.com.speculationMark();
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var fa = FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p);
 		try {
@@ -408,12 +411,7 @@ class Typer {
 				throw new NotFound("Typer.hx:364");
 			};
 		} catch (err:haxe.Exception) {
-			if (ctx.com.diagnostics.length > before) {
-				// Warnings recorded during the trial survive; only trial ERRORS roll back.
-				var kept = [for (i in before...ctx.com.diagnostics.length) ctx.com.diagnostics[i]];
-				ctx.com.diagnostics.resize(before);
-				for (d in kept) if (!d.severity.match(Error)) ctx.com.diagnostics.push(d);
-			}
+			ctx.com.rollbackSpeculation(before, true);
 			throw err;
 		}
 	}
@@ -1534,8 +1532,11 @@ class Typer {
 						if (isValidIdentifier(f.name)) extraFields.unshift({name: f.name, pos: f.pos});
 						te = typeExpr(ctx, f.expr, WithTypeTools.value);
 					}
-					if (isValidIdentifier(f.name))
-						anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos));
+					if (isValidIdentifier(f.name)) {
+						var anonField = TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos);
+						anonField.nameOrigin = Ast.objectFieldNameOrigin(f);
+						anonFields.set(f.name, anonField);
+					}
 					byName.set(f.name, te);
 				}
 				if (!ctx.untypedMode) {
@@ -1644,7 +1645,7 @@ class Typer {
 						try TypeUnification.typeEqKind(EqStrict, te.type, ft)
 						catch (_:UnifyError) te = TypeFunctions.mk(TCast(te, null), ft, te.pos);
 					}
-					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
+					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes, nameOrigin: Ast.objectFieldNameOrigin(f)}, expr: te});
 					// Against an expected structure the field takes the expected type (the value was just
 					// coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not `{f:Int}`.
 					// A field whose name is not a valid identifier (a quoted key like "x-bar") is a
@@ -1656,6 +1657,8 @@ class Typer {
 						// and only namePos is the name; --json prints pos as the structure field's
 						// span.
 						var anonField = TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos);
+						// mk_field n: the declaration's own name string, which a macro may have given
+						anonField.nameOrigin = Ast.objectFieldNameOrigin(f);
 						if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
 						anonFields.set(f.name, anonField);
 					}
@@ -1722,6 +1725,8 @@ class Typer {
 			var args:Array<TFuncArg> = [];
 			for (fa in f.fArgs) {
 				var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
+				// A null default makes the argument nullable, as for a field's arguments.
+				if (!fa.opt && fa.value != null && fa.value.expr.match(EConst(CIdent("null")))) at = ctx.com.basic.tnull(at);
 				// Every function argument, local functions included, is allocated as VUser(TVOArgument).
 				// Tail-recursion elimination keys all three of its checks off that kind (captured
 				// arguments, the tail-recursion assign arm, the argument-local test), so treating a local
@@ -5205,7 +5210,8 @@ class Typer {
 				// is raw-bound to Null<?> (no constraint close) unless already nullable. The literal
 				// reusing the expected type instance keeps the equality unify a no-op, so a constrained
 				// mono is not closed by a null comparison.
-				var tnull:T = switch (withType) {
+				// On C# the literal is a plain monomorph, whatever is expected (Haxe's hack for #10787).
+				var tnull:T = if (ctx.com.platform == Cs) spawnMonomorph(ctx, p) else switch (withType) {
 					case WithType(wt, _):
 						switch (TypeFunctions.follow(wt)) {
 							case TMono(r) if (!TypeFunctions.isNullable(wt)):
@@ -5664,7 +5670,31 @@ class Typer {
 			function scanPath(path:hxc.core.Globals.Path):Null<ModuleType> {
 				var md = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, path, Position.nullPos) catch (_:Dynamic) null;
 				if (md != null) try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
-				return md == null ? null : scan(md.types);
+				if (md == null) return null;
+				var types = md.types;
+				if (types.length < 16) return scan(types);
+				if (md.hxcEnumLike != null && md.hxcEnumLikeOf == types && md.hxcEnumLikeLen == types.length)
+					return scan(md.hxcEnumLike);
+				var r = scan(types);
+				if (r != null) return r;
+				// The whole module was walked and every typedef followed: keep the types a later walk can
+				// find anything in. A typedef not yet known to be something else stays a candidate.
+				var cand = [];
+				for (mt in types) switch (mt) {
+					case TEnumDecl(_): cand.push(mt);
+					case TAbstractDecl(a) if (a.isEnum): cand.push(mt);
+					case TTypeDecl(td):
+						switch (TypeFunctions.follow(td.type)) {
+							case TEnum(_, _) | TMono(_) | TLazy(_): cand.push(mt);
+							case TAbstract(a, _) if (a.isEnum): cand.push(mt);
+							case _:
+						}
+					case _:
+				}
+				md.hxcEnumLike = cand;
+				md.hxcEnumLikeOf = types;
+				md.hxcEnumLikeLen = types.length;
+				return null;
 			}
 			// Reversed declaration order: imports are prepended, so a name exposed by several imports
 			// resolves to the last-declared one.
@@ -5949,12 +5979,147 @@ class Typer {
 		// constructor cannot take an expectation whose parameters are still open monomorphs.
 		var tea = typeExpr(ctx, init, mapped.isMap ? WithTypeTools.value : withType);
 		TypeUnification.unifyDefault(v.type, tea.type);
+		if (!mapped.isMap && ctx.com.defines.rawDefined("comprehension_presize")) {
+			var sized = typePresizedComprehension(ctx, v, tea, mapped.expr, p);
+			if (sized != null) return sized;
+		}
 		var efor = typeExpr(ctx, mapped.expr, WithTypeTools.noValue);
 		return TypeFunctions.mk(TBlock([
 			TypeFunctions.mk(TVarExpr(v, tea), ctx.com.basic.tvoid, p),
 			efor,
 			TypeFunctions.mk(TLocal(v), v.type, p),
 		]), v.type, p);
+	}
+
+	// -D comprehension-presize: `[for (i in a...b) x]` and `[for (x in array) y]` allocate the result
+	// once. The accumulator is resized to the loop's count before the loop, each push becomes a write
+	// at a running index, and the result is trimmed if the loop ended short (break, continue, a
+	// throw caught outside never sees the array). A write past the hint grows the array as any
+	// out-of-range write does, so a source array that grows while it is walked still gives every
+	// element. Only a loop whose body ends in a plain element qualifies: a filter (`if` without
+	// `else`) or a nested loop gives no usable count. Returns null, with nothing typed, when the
+	// syntax does not qualify; once the loop's source has been typed the result is never null, so
+	// the source is typed exactly once.
+	// Not Haxe's output: the default lowering stays byte-identical, this is opt-in.
+	static function typePresizedComprehension(ctx:TyperContext, v:TVar, tea:TExpr, loop:Expr, p:Position):Null<TExpr> {
+		var it:Expr, body:Expr;
+		switch (loop.expr) {
+			case EFor(i, b): it = i; body = b;
+			case _: return null;
+		}
+		var ident:Expr, src:Expr;
+		switch (it.expr) {
+			case EBinop(OpIn, a = {expr: EConst(CIdent(_))}, b): ident = a; src = b;
+			case _: return null;
+		}
+		// The tail must be the push itself: comprehensionPush left a call on the stored accumulator.
+		function plainTail(e:Expr):Bool
+			return switch (e.expr) {
+				case EParenthesis(e1): plainTail(e1);
+				case EBlock(l) if (l.length > 0): plainTail(l[l.length - 1]);
+				case ECall(_, [_]): true;
+				case _: false;
+			};
+		if (!plainTail(body)) return null;
+		var elemT = switch (TypeFunctions.follow(v.type)) {
+			case TInst({path: {pack: [], name: "Array"}}, [t]): t;
+			case _: return null;
+		};
+		var basic = ctx.com.basic;
+		var tint = basic.tint;
+		var tvoid = basic.tvoid;
+		inline function local(t:T):TVar return TypeFunctions.allocVar(VGenerated, "`", t, p);
+		inline function read(lv:TVar):TExpr return TypeFunctions.mk(TLocal(lv), lv.type, p);
+		inline function decl(lv:TVar, init:TExpr):TExpr return TypeFunctions.mk(TVarExpr(lv, init), tvoid, p);
+		function stored(te:TExpr, what:String):Expr {
+			var id = hxc.context.Context.allocStoredTypedExprId(what + " " + p.file + ":" + Position.getInfos(p).line);
+			ctx.com.storedTypedExprs.set(id, te);
+			return new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos},
+				new Expr(EConst(CInt(Std.string(id), null)), p)), p);
+		}
+		var head:Array<TExpr> = [];
+		var count:TExpr;
+		var tsrc = typeExpr(ctx, src, WithTypeTools.value);
+		switch [tsrc.expr, TypeFunctions.follow(tsrc.type)] {
+			case [TNew(c, [], [efrom, eto]), _] if (c.path.pack.length == 0 && c.path.name == "IntIterator"):
+				switch [efrom.expr, eto.expr] {
+					case [TConst(TInt(a)), TConst(TInt(b))]:
+						// Constant bounds stay in place, so the loop can still unroll.
+						count = TypeFunctions.mk(TConst(TInt(b - a)), tint, p);
+					case _:
+						var lo = local(tint), hi = local(tint);
+						head.push(decl(lo, efrom));
+						head.push(decl(hi, eto));
+						tsrc = TypeFunctions.mk(TNew(c, [], [read(lo), read(hi)]), tsrc.type, tsrc.pos);
+						count = TypeFunctions.mk(TBinop(OpSub, read(hi), read(lo)), tint, p);
+				}
+			case [TArrayDecl(el), TInst({path: {pack: [], name: "Array"}}, [_])]:
+				count = TypeFunctions.mk(TConst(TInt(el.length)), tint, p);
+			case [_, TInst({path: {pack: [], name: "Array"}}, [_])]:
+				switch (tsrc.expr) {
+					case TLocal(_):
+					case _:
+						var arr = local(tsrc.type);
+						head.push(decl(arr, tsrc));
+						tsrc = TypeFunctions.mk(TLocal(arr), tsrc.type, tsrc.pos);
+				}
+				count = TypeFunctions.mk(TField(tsrc, TypeFunctions.quickField(tsrc.type, "length")), tint, p);
+			case _:
+				// Not a counted source: type the loop as it stands, over the source typed above.
+				count = null;
+		}
+		var srcRef = stored(tsrc, "comprehension source");
+		var efor = typeExpr(ctx, new Expr(EFor(new Expr(EBinop(OpIn, ident, srcRef), it.pos), body), loop.pos), WithTypeTools.noValue);
+		function plain():TExpr
+			return TypeFunctions.mk(TBlock(([TypeFunctions.mk(TVarExpr(v, tea), tvoid, p)] : Array<TExpr>).concat(head).concat([
+				efor,
+				TypeFunctions.mk(TLocal(v), v.type, p),
+			])), v.type, p);
+		if (count == null) return plain();
+		// Every use of the accumulator must be a push this pass rewrites; anything else (a target
+		// whose push is inline, say) keeps the plain lowering.
+		var uses = 0, pushes = 0;
+		function scan(e:TExpr):Void {
+			switch (e.expr) {
+				case TCall({expr: TField({expr: TLocal(v2)}, FInstance(_, _, cf))}, [arg]) if (v2 == v && cf.name == "push"):
+					uses++;
+					pushes++;
+					scan(arg);
+				case TLocal(v2) if (v2 == v):
+					uses++;
+				case _:
+					TexprTools.iter(scan, e);
+			}
+		}
+		scan(efor);
+		if (pushes == 0 || uses != pushes) return plain();
+		var n = local(tint), k = local(tint);
+		function rewrite(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TCall({expr: TField(acc = {expr: TLocal(v2)}, FInstance(_, _, cf))}, [arg]) if (v2 == v && cf.name == "push"):
+					var index = TypeFunctions.mk(TUnop(Increment, Postfix, read(k)), tint, e.pos);
+					TypeFunctions.mk(TBinop(OpAssign, TypeFunctions.mk(TArray(acc, index), elemT, e.pos), rewrite(arg)), elemT, e.pos);
+				case _:
+					TexprTools.mapExpr(rewrite, e);
+			};
+		}
+		var accRef = stored(TypeFunctions.mk(TLocal(v), v.type, p), "comprehension");
+		var nRef = stored(read(n), "comprehension count");
+		var kRef = stored(read(k), "comprehension index");
+		inline function int(i:Int):Expr return new Expr(EConst(CInt(Std.string(i), null)), p);
+		inline function resizeIf(cond:Expr, to:Expr):TExpr
+			return typeExpr(ctx, new Expr(EIf(cond,
+				new Expr(ECall(synthesized(new Expr(EField(accRef, "resize", EFNormal), p)), [to]), p), null), p), WithTypeTools.noValue);
+		var grow = resizeIf(new Expr(EBinop(OpGt, nRef, int(0)), p), nRef);
+		var trim = resizeIf(new Expr(EBinop(OpLt, kRef, nRef), p), kRef);
+		return TypeFunctions.mk(TBlock(([TypeFunctions.mk(TVarExpr(v, tea), tvoid, p)] : Array<TExpr>).concat(head).concat([
+			decl(n, count),
+			grow,
+			decl(k, TypeFunctions.mk(TConst(TInt(0)), tint, p)),
+			rewrite(efor),
+			trim,
+			TypeFunctions.mk(TLocal(v), v.type, p),
+		])), v.type, p);
 	}
 
 	// Lowers a comprehension body so each tail expression updates the accumulator. Whether the
@@ -6035,6 +6200,7 @@ class Typer {
 		TypeFields.forceFieldBody(ctx.com, c, cf);
 		var body = cf.expr == null ? null : foldInlineStatics(ctx, cf.expr);
 		cf2 = new TClassField(cf.name, cf.type, cf.pos, cf.namePos, cf.doc, cf.meta.copy(), Method(MethNormal), cf.params.copy(), body, cf.exprUnoptimized, cf.overloads.copy(), cf.flags);
+		cf2.nameOrigin = TypeFunctions.nameOrigin(cf);
 		TypeFunctions.removeClassFieldFlag(cf2, CfExtern);
 		TypeFunctions.addClassFieldFlag(cf2, CfStatic);
 		c2.statics.set(cf2.name, cf2);
@@ -6895,7 +7061,10 @@ class Typer {
 				// unannotated arrow whose return mono that branch binds), so re-check here, not only up
 				// front. `return null` is exempt: it stays a type error ("Cannot return null from
 				// Void-function"), handled by the value path below.
-				if (isVoid(TypeFunctions.follow(ctx.ret)) && !isVoid(TypeFunctions.follow(teRaw.type)) && !teRaw.expr.match(TConst(TNull))) {
+				// An open monomorph (`return untyped $setref(...)` in an inline Void function) is unified with
+				// Void below, as typer.ml's cast_or_unify does.
+				if (isVoid(TypeFunctions.follow(ctx.ret)) && !isVoid(TypeFunctions.follow(teRaw.type)) && !teRaw.expr.match(TConst(TNull))
+					&& !TypeFunctions.follow(teRaw.type).match(TMono(_))) {
 					var vt = monoOrDynamic(ctx, withType, p);
 					return TypeFunctions.mk(TBlock([teRaw, TypeFunctions.mk(TReturn(null), vt, p)]), vt, teRaw.pos);
 				}
@@ -7050,15 +7219,21 @@ class Typer {
 			ctx.com.delay(hxc.context.Context.PForce, function() TypeloadCheck.checkFinalVars(ctx.com, cls, body));
 		}
 		// A constructor whose class inherits a constructor has to call super(). When the inherited one is
-		// @:compilerGenerated the call is SYNTHESIZED instead of complaining (Filters.insertMissingSuper
-		// does that), so only a user-written inherited constructor makes the omission an error - and it
-		// is recorded, leaving the constructor otherwise typed.
+		// @:compilerGenerated the call is SYNTHESIZED instead of complaining: super() is put in front of
+		// the body, at the body's position, as Haxe does here (so the field initializers added later go
+		// before it). Only a user-written inherited constructor makes the omission an error - and it is
+		// recorded, leaving the constructor otherwise typed. The walk does not descend into a nested
+		// TFunction, so a super call made from a closure does not satisfy the constructor.
 		if (fmode.match(FunConstructor) && ctx.curclass != null && ctx.curclass.superClass != null) {
-			var sup = try TypeFunctions.getConstructorClass(ctx.curclass.superClass.c, ctx.curclass.superClass.params)
-				catch (_:hxc.core.NotFound) null;
-			if (sup != null && !TypeFunctions.hasMeta(":compilerGenerated", sup.cf.meta)
-				&& !hxc.filters.Filters.bodyCallsSuper(te))
-				ctx.com.addDiagnostic("Missing super constructor call", p);
+			var csup = ctx.curclass.superClass;
+			var sup = try TypeFunctions.getConstructorClass(csup.c, csup.params) catch (_:hxc.core.NotFound) null;
+			if (sup != null && !bodyCallsSuper(te)) {
+				if (TypeFunctions.hasMeta(":compilerGenerated", sup.cf.meta)) {
+					var eSuper = TypeFunctions.mk(TConst(TSuper), TInst(csup.c, csup.params), te.pos);
+					te = TypeFunctions.concat(TypeFunctions.mk(TCall(eSuper, []), ctx.com.basic.tvoid, te.pos), te);
+				} else
+					ctx.com.addDiagnostic("Missing super constructor call", p);
+			}
 		}
 		// A member whose local functions captured `this` declares the `this local, inserted before its
 		// first use so a constructor's super() call stays first when possible.
@@ -7112,6 +7287,18 @@ class Typer {
 			case _:
 		}
 		return false;
+	}
+
+	// Whether a constructor body calls super(), not looking into nested functions.
+	static function bodyCallsSuper(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TCall({expr: TConst(TSuper)}, _): true;
+			case TFunction(_): false;
+			case _:
+				var found = false;
+				TexprTools.iter(function(x) if (!found && bodyCallsSuper(x)) found = true, e);
+				found;
+		}
 	}
 
 	// Runs where class initialization ends. A class with no constructor of its own forwards to the nearest
@@ -7445,7 +7632,20 @@ class Typer {
 		// typed.
 		var ctorTypes = findConstructorTypes(ctx, c, tl);
 		if (ctorTypes.length == 0) throw new TypingError(hxc.core.Globals.sTypePath(noConstructorPath(c)) + " does not have a constructor", p);
-		// Try each constructor signature, first success wins (overload retry).
+		// Several constructors resolve as the overloads of a field call do. An inherited constructor is the
+		// nearest one up the chain, hosted on the class being constructed, so the whole-chain map
+		// specializes its signatures.
+		if (ctorTypes.length > 1) {
+			var fa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(c), p), superConstructor(c), FHInstance(c, tl), false, p);
+			var res = Calls.resolveFieldCall(ctx, fa, el, p, null, false, null, null, true);
+			Fields.checkConstructorAccess(ctx, c, res.cf, p);
+			var args = switch (TypeFunctions.follow(res.tf)) {
+				case TFun(sig): sig.args;
+				case _: [];
+			};
+			return {r: {el: res.args, tfunc: res.tf}, chosenArgs: args};
+		}
+		// Otherwise the class has a single constructor signature.
 		var r:Dynamic = null;
 		var firstError:Null<Dynamic> = null;
 		var chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>> = null;
@@ -7478,15 +7678,7 @@ class Typer {
 				if (firstError == null) firstError = e;
 			} catch (e:TypingError) {
 				if (firstFailCf == null && hoverFound != outerHover) firstFailCf = candidate(chosenIdx);
-				// A constructor resolves like a field call, whose overload attempts raise a candidate's
-				// unknown identifier alone.
-				if (ctorTypes.length > 1 && Std.isOfType(e, hxc.core.TypingError.CallError)) {
-					var u = (cast e : hxc.core.TypingError.CallError).unknownIdent;
-					if (u != null) throw new TypingError(u.message, u.pos, u.depth);
-				}
-				var prevError:Null<TypingError> = firstError == null ? null : try cast(firstError, TypingError) catch (_:Dynamic) null;
-				var prevMsg = prevError == null ? "" : prevError.message;
-				if (firstError == null || StringTools.startsWith(prevMsg, "Too many arguments") || StringTools.startsWith(prevMsg, "Not enough arguments")) firstError = e;
+				if (firstError == null) firstError = e;
 			}
 		}
 		if (r == null) {

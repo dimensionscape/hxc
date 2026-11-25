@@ -102,6 +102,15 @@ class VString {
 	public var sstring:hxc.eval.EvalString.ByteString;
 	public var slength:Int;
 	public var soffsets:Null<Array<hxc.eval.EvalString.OffsetCursor>> = null;
+	// Whether every byte is below 0x80, worked out on first need (EvalString.isAscii): 0 not yet, 1 yes,
+	// 2 no. A string's bytes never change.
+	public var sascii:Int = 0;
+	// For a string Haxe's eval makes by wrapping a compiler string without copying it (a string literal's
+	// value, a field's or object field's name the macro API encodes), what that OCaml string stands for:
+	// the literal's TString, the field's TClassField.nameOrigin. Null for a string made from new bytes.
+	// EvalMacro.nameOriginOf reads it when a decoded name becomes a field's (hl2c's type digest marshals
+	// one OCaml string once). Left unset by the constructor: no cost to other strings.
+	public var origin:Null<{}>;
 
 	public function new(sstring:hxc.eval.EvalString.ByteString, slength:Int) {
 		this.sstring = sstring;
@@ -244,8 +253,18 @@ class EvalThreadRecord {
 
 // A native map entry keeps the original key alongside its value, so iteration over keys (and
 // key/value pairs) can recover keys that do not round-trip through the string storage key
-// (enum values, object identities).
-typedef MapEntry = {key:EvalValue, value:EvalValue};
+// (enum values, object identities). A class rather than an anonymous structure, so reading .value
+// is a slot load and not a dynamic field lookup.
+@:structInit
+class MapEntry {
+	public var key:EvalValue;
+	public var value:EvalValue;
+
+	public inline function new(key:EvalValue, value:EvalValue) {
+		this.key = key;
+		this.value = value;
+	}
+}
 
 @:structInit
 class VEnumValue {
@@ -267,7 +286,21 @@ class EvalValueTools {
 	public static final vfalse = VFalse;
 
 	public static inline function vbool(b:Bool):EvalValue return b ? VTrue : VFalse;
-	public static inline function vint(i:Int):EvalValue return VInt(i);
+	// An Int value. Each VInt is a heap object on hxcpp, so the small ones are made once and shared: values
+	// compare structurally (EvalValueTools.equals, hxcpp's enum ==) and nothing keys on a VInt's identity.
+	static inline var INT_CACHE_MIN = -1024;
+	static inline var INT_CACHE_SIZE = 33792;
+	static final intCache:haxe.ds.Vector<EvalValue> = {
+		var v = new haxe.ds.Vector<EvalValue>(INT_CACHE_SIZE);
+		for (i in 0...INT_CACHE_SIZE) v[i] = VInt(i + INT_CACHE_MIN);
+		v;
+	};
+
+	public static inline function vint(i:Int):EvalValue {
+		var k = i - INT_CACHE_MIN;
+		// A static initializer that runs before this class's has no cache yet.
+		return (k >= 0 && k < INT_CACHE_SIZE && intCache != null) ? intCache[k] : VInt(i);
+	}
 	public static inline function vfloat(f:Float):EvalValue return VFloat(f);
 	public static inline function vprototype(p:VPrototype):EvalValue return VPrototype(p);
 	public static inline function vinstance(i:VInstance):EvalValue return VInstance(i);

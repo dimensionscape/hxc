@@ -1,0 +1,542 @@
+# Milestone 3c plan: std stubs and data paths that 3c unblocks (std notes §1, §4, §5).
+#
+
+# Std notes A3. The timer and the event run in the exit loop, so the sleep only makes the timer due.
+--- timer-and-main-thread @gencs
+import sys.thread.Thread;
+
+class P {
+	static function main() {
+		var cur = Thread.current();
+		Sys.println(cur != null);
+		Sys.println(Thread.current() == cur);
+		var t0 = haxe.Timer.stamp();
+		Sys.println(t0 > 0);
+		Sys.println(haxe.Timer.stamp() >= t0);
+		var done = false;
+		haxe.Timer.delay(() -> { done = true; Sys.println("timer fired"); }, 20);
+		Sys.println(done);
+		Sys.sleep(0.1);
+		Sys.println(done);
+		cur.events.run(() -> Sys.println("event run"));
+		Sys.println("end of main");
+	}
+}
+===
+[run]
+True
+True
+True
+True
+False
+False
+end of main
+timer fired
+event run
+
+# Std notes A8. toString and both Printer lines use a one-attribute document: attribute order follows
+# String.GetHashCode, which .NET randomizes per process (the researcher's `<a c="2" b="1">` was one ordering).
+# The attribute names are sorted with a comparator that returns 0 for equal strings (see http-response-parsing).
+--- xml-attributes @gencs
+// Xml's attributeMap is a Map<String,String> field, so every attribute access is the Map abstract's identity
+// downcast (std notes §1.A8). Attribute order in toString/Printer follows String.GetHashCode, which .NET
+// randomizes per process, so those lines print a one-attribute document.
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function main() {
+		var x = Xml.parse("<a b='1' c='2'><d e='x'/>text</a>");
+		var a = x.firstElement();
+		var y = Xml.parse("<r k='v'><d e='x'/>text</r>");
+		t("nodeName", () -> a.nodeName);
+		t("get b", () -> a.get("b"));
+		t("get z", () -> a.get("z"));
+		t("exists c", () -> a.exists("c"));
+		t("exists z", () -> a.exists("z"));
+		t("attributes", () -> { var l = []; for (k in a.attributes()) l.push(k); l.sort((p, q) -> p < q ? -1 : p > q ? 1 : 0); l.join(","); });
+		t("set", () -> { a.set("z", "9"); a.get("z"); });
+		t("remove", () -> { a.remove("z"); a.exists("z"); });
+		t("toString", () -> y.toString());
+		t("elements", () -> [for (e in a.elements()) e.nodeName].join(","));
+		t("access", () -> { var ac = new haxe.xml.Access(a); ac.att.b + ac.node.d.att.e; });
+		t("printer", () -> haxe.xml.Printer.print(y));
+		t("printer pretty", () -> haxe.xml.Printer.print(y, true));
+	}
+}
+===
+[run]
+nodeName a
+get b 1
+get z null
+exists c true
+exists z false
+attributes b,c
+set 9
+remove false
+toString <r k="v"><d e="x"/>text</r>
+elements d
+access 1x
+printer <r k="v"><d e="x"/>text</r>
+printer pretty <r k="v">
+	<d e="x"/>
+	text
+</r>
+
+# Std notes A6 (a fake socket, no network). getResponseHeaderValues is called only where a header
+# repeats; gencs's NullReferenceException otherwise is kept as a gencs bug and not exercised. The header
+# names are sorted with a comparator that returns 0 for equal strings: with the researcher's `a < b ? -1 : 1`,
+# hxcs's quicksort gave an order that followed the StringMap's per-process key order (seen in repeated runs).
+--- http-response-parsing @gencs
+import haxe.io.Bytes;
+import haxe.io.BytesInput;
+import haxe.io.BytesOutput;
+
+class Fake extends sys.net.Socket {
+	public var sent:BytesOutput = new BytesOutput();
+	public function new(response:String) {
+		super();
+		@:privateAccess this.input = new BytesInput(Bytes.ofString(response));
+		@:privateAccess this.output = sent;
+	}
+	override public function connect(host:sys.net.Host, port:Int):Void {}
+	override public function setTimeout(t:Float):Void {}
+	override public function shutdown(r:Bool, w:Bool):Void {}
+	override public function close():Void {}
+}
+
+class P {
+	static function run(name:String, response:String, ?post:Bool = false) {
+		var h = new sys.Http("http://127.0.0.1:8080/path?x=1");
+		h.addHeader("X-A", "1");
+		var out = new BytesOutput();
+		var status = -1;
+		h.onStatus = s -> status = s;
+		h.onError = e -> Sys.println(name + " error: " + e);
+		h.onData = d -> Sys.println(name + " data: " + StringTools.replace(d, "\n", "\n"));
+		var f = new Fake(response);
+		h.customRequest(post, out, f);
+		Sys.println(name + " status " + status);
+		if (h.responseHeaders == null) { Sys.println(name + " no headers"); return; }
+		var keys = [for (k in h.responseHeaders.keys()) k];
+		keys.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		Sys.println(name + " headers " + keys.map(k -> k + "=" + h.responseHeaders.get(k)).join(";"));
+		if (name == "len") Sys.println(name + " multi " + h.getResponseHeaderValues("Set-Cookie"));
+		Sys.println(name + " body " + StringTools.replace(out.getBytes().toString(), "\n", "\n"));
+		Sys.println(name + " request " + StringTools.replace(StringTools.replace(f.sent.getBytes().toString(), "\r", "\r"), "\n", "\n"));
+	}
+	static function main() {
+		run("len", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-B: b\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n\r\nhello");
+		run("eof", "HTTP/1.1 200 OK\r\nX-C: c\r\n\r\nuntil end");
+		run("404", "HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\n\r\nno");
+		run("bad", "garbage\r\n\r\n");
+		run("post", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", true);
+	}
+}
+===
+[run]
+len status 200
+len headers Content-Length=5;Set-Cookie=b=2;X-B=b
+len multi [a=1,b=2]
+len body hello
+len request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+eof status 200
+eof headers X-C=c
+eof body until end
+eof request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+404 error: Http Error #404
+404 status 404
+404 headers Content-Length=2
+404 body no
+404 request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+bad error: Response status error
+bad status -1
+bad no headers
+post status 200
+post headers Content-Length=0
+post body
+post request POST /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+# Std notes A2.
+--- enum-value-map-arguments @gencs
+enum Plain { A; B; C; }
+enum Arg { X(i:Int); Y(s:String, a:Array<Int>); Z; }
+
+class P {
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var m = new haxe.ds.EnumValueMap<Plain, Int>();
+		m.set(A, 1); m.set(C, 3); m.set(B, 2);
+		t(() -> m.get(B));
+		t(() -> m.exists(C));
+		t(() -> [for (k in m.keys()) Std.string(k)].join(","));
+		t(() -> m.toString());
+		var n = new haxe.ds.EnumValueMap<Arg, String>();
+		n.set(Z, "z");
+		t(() -> n.get(Z));
+		n.set(X(1), "x1");
+		t(() -> n.get(X(1)));
+		t(() -> { n.set(X(2), "x2"); return null; });
+		t(() -> n.get(X(2)));
+		t(() -> { n.set(Y("a", [1]), "y"); return null; });
+		t(() -> n.get(Y("a", [1])));
+		t(() -> n.get(Y("a", [2])));
+		var mm:Map<Arg, Int> = new Map();
+		t(() -> { mm[Z] = 1; mm[X(5)] = 2; mm[X(5)]; });
+		t(() -> haxe.Serializer.run(m));
+	}
+}
+===
+[run]
+2
+True
+A,B,C
+[A => 1, B => 2, C => 3]
+z
+x1
+
+x2
+
+y
+
+2
+cy20:haxe.ds.EnumValueMapy4:rootcy16:haxe.ds.TreeNodey7:_heighti3y5:valuei1y3:keywy5:Plainy1:A:0y5:rightcR2R3i2R4i3R5wR6y1:C:0R8ny4:leftcR2R3i1R4i2R5wR6y1:B:0R8nR10nggR10ngg
+
+# Std notes A9, B4. `"Box_cast":null` and `"haxe_ds_List_cast":null` are gencs bugs the spec reproduces.
+--- json-generic-values @gencs
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class Sub extends Box<Int> {
+	public var z:Int = 3;
+	public function new() super(1);
+}
+class Pt {
+	public var x:Int = 0;
+	public function new() {}
+}
+class Pair<A, B> {
+	public var a:A; public var b:B;
+	public function new(a:A, b:B) { this.a = a; this.b = b; }
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function main() {
+		t("int[]", () -> haxe.Json.stringify([1, 2]));
+		t("str[]", () -> haxe.Json.stringify(["a"]));
+		t("float[]", () -> haxe.Json.stringify([1.5]));
+		t("dyn[]", () -> haxe.Json.stringify(([1, "a"] : Array<Dynamic>)));
+		t("null[]", () -> haxe.Json.stringify(([1, null] : Array<Null<Int>>)));
+		t("obj", () -> haxe.Json.stringify({a: [1], b: "x"}));
+		t("box", () -> haxe.Json.stringify(new Box<Int>(1)));
+		t("pt[]", () -> haxe.Json.stringify([new Pt()]));
+		t("map", () -> haxe.Json.stringify(["a" => 1]));
+		t("list", () -> haxe.Json.stringify(new List<Int>()));
+		t("pretty", () -> haxe.Json.stringify({a: [1, 2]}, null, "  "));
+		t("parse", () -> haxe.Json.parse('{"a":[1,2,{"b":null}]}').a);
+		t("parse type", () -> Std.string(Type.getClass(haxe.Json.parse('[1,2]'))));
+	}
+}
+===
+[run]
+int[] [1,2]
+str[] ["a"]
+float[] [1.5]
+dyn[] [1,"a"]
+null[] [1,null]
+obj {"a":[1],"b":"x"}
+box {"Box_cast":null,"v":1}
+pt[] [{"x":0}]
+map {"a":1}
+list {"haxe_ds_List_cast":null,"length":0}
+pretty {
+  "a": [
+    1,
+    2
+  ]
+}
+parse [1,2,[ b : null ]]
+parse type Array`1[System.Object]
+
+# Std notes §4. The Unserializer's ArgumentException on E.A/E.B/E.D constructor arguments is a gencs bug the
+# spec reproduces.
+--- serialize-generic-values @gencs
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class Sub extends Box<Int> {
+	public var z:Int = 3;
+	public function new() super(1);
+}
+class Pt {
+	public var x:Int = 0;
+	public function new() {}
+}
+class Pair<A, B> {
+	public var a:A; public var b:B;
+	public function new(a:A, b:B) { this.a = a; this.b = b; }
+}
+enum E { A(a:Array<Int>); B(m:Map<String, Int>); C(o:haxe.ds.Option<Int>); D(b:Box<Int>); N; }
+class Holder {
+	public var ai:Array<Int> = [1, 2];
+	public var af:Array<Float> = [1.5];
+	public var an:Array<Null<Int>> = [1, null];
+	public var sm:Map<String, Int> = ["k" => 4];
+	public var im:Map<Int, String> = [7 => "seven"];
+	public var li:List<String> = new List();
+	public var bx:Box<Int> = new Box(9);
+	public var bn:Box<Null<Int>> = new Box(null);
+	public var sa:Map<String, Array<Int>> = ["z" => [1]];
+	public var om:haxe.ds.ObjectMap<Pt, Int> = new haxe.ds.ObjectMap();
+	public function new() { li.add("x"); }
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function rt(n:String, v:Dynamic) {
+		var s:String = null;
+		t("ser " + n, () -> s = haxe.Serializer.run(v));
+		if (s == null) return;
+		t("unser " + n, () -> { var u:Dynamic = haxe.Unserializer.run(s); return Std.string(Type.getClass(u)) + " " + Std.string(u); });
+		t("reser " + n, () -> haxe.Serializer.run(haxe.Unserializer.run(s)));
+	}
+	static function main() {
+		rt("Box<Int>", new Box<Int>(1));
+		rt("Box<String>", new Box<String>("s"));
+		rt("Box<Null<Int>> null", new Box<Null<Int>>(null));
+		rt("Box<Null<Int>> 5", new Box<Null<Int>>(5));
+		rt("Box<Pt>", new Box<Pt>(new Pt()));
+		rt("Sub", new Sub());
+		rt("Pair", new Pair<Int, String>(1, "x"));
+		rt("Array class", Array);
+		rt("Box class", Box);
+		rt("StringMap class", haxe.ds.StringMap);
+		rt("List<Int>", { var l = new List<Int>(); l.add(1); l; });
+		rt("StringMap<Int>", ["a" => 1]);
+		rt("IntMap<String>", [1 => "a"]);
+		rt("Holder", new Holder());
+		rt("E.A", A([1, 2]));
+		rt("E.B", B(["k" => 1]));
+		rt("E.C", C(Some(3)));
+		rt("E.C none", C(None));
+		rt("E.D", D(new Box(4)));
+		rt("E.N", N);
+		rt("Option", haxe.ds.Option.Some(1));
+		var h:Dynamic = haxe.Unserializer.run(haxe.Serializer.run(new Holder()));
+		t("holder.ai", () -> Std.string(Type.getClass(h.ai)) + " " + h.ai);
+	}
+}
+===
+[run]
+ser Box<Int> cy3:Boxy1:vi1g
+unser Box<Int> Box`1[System.Object] Box`1[System.Object]
+reser Box<Int> cy3:Boxy1:vi1g
+ser Box<String> cy3:Boxy1:vy1:sg
+unser Box<String> Box`1[System.Object] Box`1[System.Object]
+reser Box<String> cy3:Boxy1:vy1:sg
+ser Box<Null<Int>> null cy3:Boxy1:vng
+unser Box<Null<Int>> null Box`1[System.Object] Box`1[System.Object]
+reser Box<Null<Int>> null cy3:Boxy1:vng
+ser Box<Null<Int>> 5 cy3:Boxy1:vi5g
+unser Box<Null<Int>> 5 Box`1[System.Object] Box`1[System.Object]
+reser Box<Null<Int>> 5 cy3:Boxy1:vi5g
+ser Box<Pt> cy3:Boxy1:vcy2:Pty1:xzgg
+unser Box<Pt> Box`1[System.Object] Box`1[System.Object]
+reser Box<Pt> cy3:Boxy1:vcy2:Pty1:xzgg
+ser Sub cy3:Suby1:zi3y1:vi1g
+unser Sub Sub Sub
+reser Sub cy3:Suby1:zi3y1:vi1g
+ser Pair cy4:Pairy1:by1:xy1:ai1g
+unser Pair Pair`2[System.Object,System.Object] Pair`2[System.Object,System.Object]
+reser Pair cy4:Pairy1:by1:xy1:ai1g
+ser Array class Ay5:Array
+unser Array class null Array`1[System.Object]
+reser Array class Ay5:Array
+ser Box class Ay3:Box
+unser Box class null Box`1[System.Object]
+reser Box class Ay3:Box
+ser StringMap class Ay17:haxe.ds.StringMap
+unser StringMap class null haxe.ds.StringMap`1[System.Object]
+reser StringMap class Ay17:haxe.ds.StringMap
+ser List<Int> li1h
+unser List<Int> haxe.ds.List`1[System.Object] haxe.ds.List`1[System.Object]
+reser List<Int> li1h
+ser StringMap<Int> by1:ai1h
+unser StringMap<Int> haxe.ds.StringMap`1[System.Object] haxe.ds.StringMap`1[System.Object]
+reser StringMap<Int> by1:ai1h
+ser IntMap<String> q:1y1:ah
+unser IntMap<String> haxe.ds.IntMap`1[System.Object] haxe.ds.IntMap`1[System.Object]
+reser IntMap<String> q:1y1:ah
+ser Holder cy6:Holdery2:omMhy2:saby1:zai1hhy2:bncy3:Boxy1:vngy2:bxcR5R6i9gy2:lily1:xhy2:imq:7y5:sevenhy2:smby1:ki4hy2:anai1nhy2:afad1.5hy2:aiai1i2hg
+unser Holder Holder Holder
+reser Holder cy6:Holdery2:omMhy2:saby1:zai1hhy2:bncy3:Boxy1:vngy2:bxcR5R6i9gy2:lily1:xhy2:imq:7y5:sevenhy2:smby1:ki4hy2:anai1nhy2:afad1.5hy2:aiai1i2hg
+ser E.A wy1:Ey1:A:1ai1i2h
+unser E.A EXC System.ArgumentException
+reser E.A EXC System.ArgumentException
+ser E.B wy1:Ey1:B:1by1:ki1h
+unser E.B EXC System.ArgumentException
+reser E.B EXC System.ArgumentException
+ser E.C wy1:Ey1:C:1wy14:haxe.ds.Optiony4:Some:1i3
+unser E.C E_C C(Some(3))
+reser E.C wy1:Ey1:C:1wy14:haxe.ds.Optiony4:Some:1i3
+ser E.C none wy1:Ey1:C:1wy14:haxe.ds.Optiony4:None:0
+unser E.C none E_C C(None)
+reser E.C none wy1:Ey1:C:1wy14:haxe.ds.Optiony4:None:0
+ser E.D wy1:Ey1:D:1cy3:Boxy1:vi4g
+unser E.D EXC System.ArgumentException
+reser E.D EXC System.ArgumentException
+ser E.N wy1:Ey1:N:0
+unser E.N E_N N
+reser E.N wy1:Ey1:N:0
+ser Option wy14:haxe.ds.Optiony4:Some:1i1
+unser Option haxe.ds.Option_Some Some(1)
+reser Option wy14:haxe.ds.Optiony4:Some:1i1
+holder.ai Array`1[System.Int32] [1,2]
+
+# Casts notes §6.8. The round trip sets the map's existing key instead of a second one ("c"), because a
+# two-key StringMap serializes in String.GetHashCode order, randomized per process.
+--- cast-unserialize-typed @gencs
+// Unserializing a class whose fields are typed instantiations: Unserializer builds X<object> and
+// __hx_setField casts into the field (copying, converting with genericCast). Type.createEmptyInstance of a
+// generic class, and Type.resolveClass of one. @gencs.
+// The round trip overwrites the map's one key (u.m.set("a", 3)): a second key would serialize in
+// String.GetHashCode order, which .NET randomizes per process.
+class Box<T> {
+	public var v:T;
+	public var arr:Array<T>;
+
+	public function new(v:T) {
+		this.v = v;
+		arr = [v];
+	}
+}
+
+class Typed {
+	public var a:Array<Int>;
+	public var f:Array<Float>;
+	public var m:Map<String, Int>;
+	public var l:List<String>;
+	public var b:Box<Int>;
+
+	public function new() {}
+}
+
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("round trip", () -> {
+			var h = new Typed();
+			h.a = [1, 2];
+			h.f = [1.5];
+			h.m = ["a" => 1];
+			h.l = new List();
+			h.l.add("x");
+			h.b = new Box(2);
+			var u:Typed = haxe.Unserializer.run(haxe.Serializer.run(h));
+			u.m.set("a", 3);
+			u.l.add("y");
+			u.a.push(3);
+			Std.string(Type.typeof(u.a)) + " " + Std.string(Type.typeof(u.m)) + " " + Std.string(Type.typeof(u.l)) + " " + Std.string(Type.typeof(u.b)) + " " + Std.string(Type.typeof(u.b.arr)) + " | " + haxe.Serializer.run(u);
+		});
+		run("int field from 1.5", () -> { var u:Typed = haxe.Unserializer.run("cy5:Typedy1:aai1d1.5nhg"); haxe.Serializer.run(u); });
+		run("float field from null", () -> { var u:Typed = haxe.Unserializer.run("cy5:Typedy1:fai1d1.5nhg"); haxe.Serializer.run(u); });
+		run("map field from 1.5", () -> { var u:Typed = haxe.Unserializer.run("cy5:Typedy1:mby1:ad1.5hg"); haxe.Serializer.run(u); });
+		run("list field from int", () -> { var u:Typed = haxe.Unserializer.run("cy5:Typedy1:lli1hg"); haxe.Serializer.run(u); });
+		run("box field", () -> { var u:Typed = haxe.Unserializer.run("cy5:Typedy1:bcy3:Boxy1:vd2.5y3:arrad2.5hgg"); Std.string(u.b.v) + " " + Std.string(u.b.arr) + " " + Std.string(Type.typeof(u.b)); });
+		run("createEmptyInstance", () -> { var b:Box<Int> = Type.createEmptyInstance(Box); b.v = 1; Std.string(Type.typeof(b)); });
+		run("createEmptyInstance Dynamic", () -> { var b:Dynamic = Type.createEmptyInstance(Type.resolveClass("Box")); Std.string(Type.typeof(b)); });
+		run("resolveClass", () -> Type.getClassName(Type.resolveClass("Box")) + " " + Type.getClassName(Type.resolveClass("haxe.ds.StringMap")));
+	}
+}
+===
+[run]
+round trip: TClass(Array`1[System.Int32]) TClass(haxe.ds.StringMap`1[System.Int32]) TClass(haxe.ds.List`1[System.String]) TClass(Box`1[System.Int32]) TClass(Array`1[System.Int32]) | cy5:Typedy1:bcy3:Boxy3:arrai2hy1:vi2gy1:lly1:xhy1:mby1:ai3hy1:fad1.5hR8ai1i2i3hg
+int field from 1.5: cy5:Typedy1:bny1:lny1:mny1:fny1:aai1i2zhg
+float field from null: cy5:Typedy1:bny1:lny1:mny1:fai1d1.5zhy1:ang
+map field from 1.5: cy5:Typedy1:bny1:lny1:mby1:ai2hy1:fnR4ng
+list field from int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+box field: 2 [2] TClass(Box`1[System.Int32])
+createEmptyInstance: TClass(Box`1[System.Int32])
+createEmptyInstance Dynamic: TClass(Box`1[System.Object])
+resolveClass: Box haxe.ds.StringMap
+
+# Types notes §8.12 (probe serial); one map key, so the output is stable.
+--- generic-class-serial @gencs
+// Serializer round trips through generic classes and typed generic fields (data-observable).
+class C { public var x = 1; public function new() {} }
+class G<T> { public var v:T; public function new(v:T) this.v = v; }
+class Holder {
+	public var ai:Array<Int>;
+	public var ac:Array<C>;
+	public var gc:G<C>;
+	public var gi:G<Int>;
+	public var ani:Array<Null<Int>>;
+	public var ms:Map<String, Int>;
+	public function new() {}
+}
+class P {
+	static function t(l:String, f:() -> Dynamic) {
+		try Sys.println(l + ": " + f()) catch (e:Dynamic) Sys.println(l + " threw " + Type.getClassName(Type.getClass(e)) + " " + e);
+	}
+	static function main() {
+		var g = new G<Int>(3);
+		var s = haxe.Serializer.run(g);
+		Sys.println(s);
+		t("unser G", () -> { var u:Dynamic = haxe.Unserializer.run(s); Std.string(Type.getClass(u)) + " v=" + u.v; });
+		var h = new Holder();
+		h.ai = [1, 2];
+		h.ac = [new C()];
+		h.gc = new G(new C());
+		h.gi = new G(5);
+		h.ani = [1, null];
+		h.ms = ["a" => 1];
+		var hs = haxe.Serializer.run(h);
+		Sys.println(hs);
+		t("unser Holder", () -> {
+			var u:Holder = haxe.Unserializer.run(hs);
+			Std.string(Type.getClass(u.ai)) + " " + Std.string(Type.getClass(u.ac)) + " " + Std.string(Type.getClass(u.gc)) + " " + Std.string(Type.getClass(u.gi)) + " " + Std.string(Type.getClass(u.ani)) + " " + Std.string(Type.getClass(u.ms)) + " | " + haxe.Serializer.run(u);
+		});
+	}
+}
+===
+[run]
+cy1:Gy1:vi3g
+unser G: G`1[System.Object] v=3
+cy6:Holdery2:msby1:ai1hy3:aniai1nhy2:gicy1:Gy1:vi5gy2:gccR5R6cy1:Cy1:xi1ggy2:acacR8R9i1ghy2:aiai1i2hg
+unser Holder: Array`1[System.Int32] Array`1[System.Object] G`1[System.Object] G`1[System.Int32] Array`1[System.Object] haxe.ds.StringMap`1[System.Int32] | cy6:Holdery2:msby1:ai1hy3:aniai1nhy2:gicy1:Gy1:vi5gy2:gccR5R6cy1:Cy1:xi1ggy2:acacR8R9i1ghy2:aiai1i2hg

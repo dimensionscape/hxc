@@ -177,11 +177,13 @@ class Filters {
 			vars.clear();
 			for (k => v in m) vars.set(k, v);
 		}
+		// The keys are taken first: a map written to while it is iterated loses entries on some targets,
+		// even when only values of keys it already has are set (the C# IntMap resizes before it looks up).
 		function intersectInto(v2:Map<Int, Bool>):Void {
-			for (k => v in vars) vars.set(k, v && (v2.exists(k) ? v2.get(k) : false));
+			for (k in [for (k in vars.keys()) k]) vars.set(k, vars.get(k) && (v2.exists(k) ? v2.get(k) : false));
 		}
 		function setAllVars():Void {
-			for (k in vars.keys()) if (!outsideVars.exists(k)) vars.set(k, true);
+			for (k in [for (k in vars.keys()) k]) if (!outsideVars.exists(k)) vars.set(k, true);
 		}
 		var loop:TExpr->Void = null;
 		loop = function(e:TExpr):Void {
@@ -678,7 +680,7 @@ class Filters {
 
 	// Cpp only: interfaces have no super, so the first extended interface becomes superClass for
 	// efficiency and the remaining ones stay implemented. interfaces is prepend-built, so index 0 is
-	// the list head. Downstream cpp passes depend on the mutation: CppFixOverrides walks superClass,
+	// the list head. Downstream cpp passes depend on the mutation: FixOverrides walks superClass,
 	// which is how a sub-interface's redeclared method gets dropped.
 	public static function promoteFirstInterfaceToSuper(t:ModuleType):Void {
 		switch (t) {
@@ -689,6 +691,44 @@ class Filters {
 				c.interfaces = c.interfaces.slice(1);
 			case _:
 		}
+	}
+
+	// Haxe's check_cs_events (filters.ml), for the C# target, on each class that is not extern: an @:event var
+	// with (default, default) access must be private (at the var), and its class must have the methods
+	// add_X and remove_X (same table, else "Missing event method" at the var), each of exactly the type
+	// (var type) -> Void (else the unification error at the method). The methods are marked @:pure(false),
+	// so the analyzer keeps a call of one whose body is empty. gencs also hides every @:event var, whatever
+	// its access, from reflection (@:skipReflection). Haxe marks the methods @:keep when the var is; hxc's DCE
+	// keeps the var and both methods together instead (Dce.eventSiblings).
+	public static function checkCsEvents(com:Context, t:ModuleType):Void {
+		var c = switch (t) {
+			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)): c;
+			case _: return;
+		}
+		function check(cf:TClassField, table:StringMap<TClassField>):Void {
+			if (!cf.kind.match(Var(_)) || !TypeFunctions.hasMeta(":event", cf.meta)) return;
+			if (!TypeFunctions.hasMeta(":skipReflection", cf.meta))
+				cf.meta = ([{name: ":skipReflection", params: [], pos: Position.nullPos}] : Metadata).concat(cf.meta);
+			if (!hxc.codegen.dotnet.EventToIl.isEventVar(cf)) return;
+			if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) com.addDiagnostic("@:event fields must be private", cf.pos);
+			var expected = TFun(new TSignature([new TSignatureArg("", false, cf.type)], com.basic.tvoid));
+			for (prefix in ["add_", "remove_"]) {
+				var m = table.get(prefix + cf.name);
+				if (m == null) {
+					com.addDiagnostic("Missing event method: " + prefix + cf.name, cf.pos);
+					continue;
+				}
+				try {
+					TypeUnification.typeEq(TypeUnification.defaultUnificationContext, m.type, expected);
+				} catch (e:UnifyError) {
+					for (line in hxc.core.TPrinting.unifyErrorLines(e.errors)) com.addDiagnostic(line, m.pos);
+				}
+				if (!hxc.context.PurityState.getPurityFromMeta(m.meta).match(Impure))
+					m.meta = ([{name: ":pure", params: [new Expr(EConst(CIdent("false")), Position.nullPos)], pos: Position.nullPos}] : Metadata).concat(m.meta);
+			}
+		}
+		for (cf in c.orderedFields) check(cf, c.fields);
+		for (cf in c.orderedStatics) check(cf, c.statics);
 	}
 
 	public static function checkVoidField(t:ModuleType):Void {
@@ -757,9 +797,16 @@ class Filters {
 					{a: a, pl: pl, e: e};
 				case [_, TCast(e1, null)]:
 					findAbstract(e1);
+				// A local reaches the abstract only through a stored expression that is itself typed as it: one
+				// cast to something else on the way in (an inline's `it:Iterable<T>` argument) keeps the call
+				// as written.
 				case [_, TLocal(v)] if (v.extra != null && v.extra.expr != null):
-					var found = findAbstract(v.extra.expr);
-					{a: found.a, pl: found.pl, e: TypeFunctions.mk(TCast(e, null), found.e.type, e.pos)};
+					switch (TypeFunctions.follow(v.extra.expr.type)) {
+						case TAbstract(a, pl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
+							{a: a, pl: pl, e: TypeFunctions.mk(TCast(e, null), v.extra.expr.type, e.pos)};
+						case _:
+							throw new hxc.core.NotFound();
+					}
 				case _:
 					throw new hxc.core.NotFound();
 			}
@@ -770,7 +817,11 @@ class Filters {
 			return switch [TypeFunctions.follow(e.type), e.expr] {
 				case [TAbstract(a, _), _] if (TypeFunctions.hasMeta(":multiType", a.meta)): true;
 				case [_, TCast(e1, null)]: hasAbstract(e1);
-				case [_, TLocal(v)] if (v.extra != null && v.extra.expr != null): hasAbstract(v.extra.expr);
+				case [_, TLocal(v)] if (v.extra != null && v.extra.expr != null):
+					switch (TypeFunctions.follow(v.extra.expr.type)) {
+						case TAbstract(a, _): TypeFunctions.hasMeta(":multiType", a.meta);
+						case _: false;
+					}
 				case _: false;
 			}
 		}
@@ -949,7 +1000,7 @@ class Filters {
 	}
 	public static function dumpStages():Void {
 		if (Sys.getEnv("HXC_DBG_STAGES") == null) return;
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		for (r in stageTimes) o.writeString("[stage] " + StringTools.lpad(Std.string(Std.int(r.t * 1000)), " ", 7) + "ms  " + r.n + "
 ");
 		o.flush();
@@ -960,7 +1011,7 @@ class Filters {
 		#if cpp
 		// Forced major collection first: separates LIVE heap from garbage-awaiting-collection.
 		cpp.vm.Gc.run(true);
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		// Immix accounts memory by ROWS IN USE, so a sparsely populated block counts whole.
 		// Comparing usage before and after a compaction separates real retention from
 		// fragmentation; they are very different bugs.
@@ -1024,6 +1075,8 @@ class Filters {
 				hxc.typing.Typer.ensureInheritedCtor(tctx, cls);
 			case _:
 		}
+		// Before the expression filters and DCE, whose purity and reachability decisions read the metadata it adds.
+		if (com.platform == Cs) for (t in newTypes) checkCsEvents(com, t);
 		{
 			var hc = Sys.getEnv("HXC_DBG_HEAPCENSUS");
 			if (hc != null) {
@@ -1077,7 +1130,7 @@ class Filters {
 		if (!com.platform.match(Cross)) hxc.optimization.Analyzer.Run.runOnTypes(com, newTypes);
 		stageMark("analyzer:done"); memProbe("analyzer:done");
 		var renameLocals = hxc.filters.RenameVars.init(com.types, com.platform.match(Cpp),
-			com.platform.match(Js) && com.getEsVersion() >= 6, com.platform.match(Java));
+			com.platform.match(Js) && com.getEsVersion() >= 6, com.platform.match(Java | Hl));
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
 			// add_final_return: adds a trailing default-valued return to a non-Void function that can fall
@@ -1310,8 +1363,9 @@ class Filters {
 			case "no": DceNo;
 			case other: throw new TypingError("Unknown DCE mode " + other, Position.nullPos);
 		};
-		hxc.optimization.Dce.stdPath = com.stdPath;
-		if (com.defines.rawDefined("dce_debug")) com.print = function(s) Sys.stderr().writeString(s);
+		// With -D dotnet, hxc's own copy of the hxcs runtime is std too: its Std and Type are swept as
+		// cs/_std's are.
+		hxc.optimization.Dce.stdPath = com.stdPath.concat([for (p in com.classPath) if (hxc.codegen.dotnet.RuntimeSources.isVirtual(p)) p]);
 		stageMark("preDce"); memProbe("preDce");
 		hxc.optimization.Dce.run(com, dceMode);
 		stageMark("dce:done"); memProbe("dce:done");
@@ -1340,7 +1394,7 @@ class Filters {
 				case Java | Cs:
 				case _: addFieldInits(com, tctx, renameLocals, t);
 			}
-			switch (addMetaField(com, t)) {
+			if (com.platform != Hl) switch (addMetaField(com, t)) {
 				case null:
 				case ncls: metaCompanions.push(ncls);
 			}
@@ -1350,53 +1404,6 @@ class Filters {
 			checkReservedTypePaths(tctx, t);
 		}
 		for (nc in metaCompanions) com.types.push(TClassDecl(nc));
-		// After field inits have materialized the compiler-generated super constructors, insert an
-		// auto super() into any explicit constructor that omits it.
-		for (t in com.types) switch (t) {
-			case TClassDecl(c): insertMissingSuper(com, c);
-			case _:
-		}
-	}
-
-	// A class with an explicit constructor whose body never calls super, when the superclass has a
-	// compiler-generated (no required argument) constructor, gets an auto super() prepended so the
-	// inherited field initializers run. The walk does not descend into a nested TFunction, so a super
-	// call made from a closure does not satisfy the constructor. Typer.typeFunction shares it for the
-	// missing-super report.
-	public static function bodyCallsSuper(e:TExpr):Bool {
-		return switch (e.expr) {
-			case TCall({expr: TConst(TSuper)}, _): true;
-			case TFunction(_): false;
-			case _:
-				var found = false;
-				TexprTools.iter(function(x) if (!found && bodyCallsSuper(x)) found = true, e);
-				found;
-		}
-	}
-
-	static function insertMissingSuper(com:Context, c:TClass):Void {
-		if (c.constructor == null || c.superClass == null) return;
-		var sup = try TypeFunctions.getConstructorClass(c.superClass.c, [for (x in c.superClass.params) x]) catch (_:hxc.core.NotFound) return;
-		if (!TypeFunctions.hasMeta(":compilerGenerated", sup.cf.meta)) return;
-		switch (TypeFunctions.follow(sup.cf.type)) {
-			case TFun(sig) if (Lambda.exists(sig.args, function(a) return !a.opt)): return;
-			case _:
-		}
-		var cf = c.constructor;
-		switch (cf.expr) {
-			case {expr: TFunction(f)} if (!bodyCallsSuper(f.expr)):
-				var tvoid = com.basic.tvoid;
-				// The injected super call sits at the constructor body position (e.pos), not the class
-				// declaration, so its stack frame line is the new line.
-				var superPos = f.expr.pos;
-				var superCall = TypeFunctions.mk(TCall(TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), superPos), []), tvoid, superPos);
-				var body = TypeFunctions.concat(superCall, f.expr);
-				// The TFunction node keeps the body position it was typed at; rebuilding it here must not
-				// move it
-				// onto the field declaration.
-				cf.expr = TypeFunctions.mk(TFunction(new TFunc(f.args, f.type, body)), cf.type, cf.expr.pos);
-			case _:
-		}
 	}
 
 	static function commitFeaturesOf(com:Context, t:ModuleType):Void {

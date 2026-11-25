@@ -58,6 +58,10 @@ class EvalEnv {
 	// sits at its evalSlot.
 	public var layout:Null<hxc.core.FrameLayout>;
 	public var layoutId:Int;
+	// Something outlives the call with a reference to this frame (a closure made in it or below it, a
+	// captured call stack), so it is not handed to a later call. Whatever marks a frame marks the frames
+	// it reaches too (markEscaped).
+	public var escaped:Bool = false;
 	public function new(info:EvalEnvInfo, locals:Array<EvalValue>, captures:Array<EvalValue>, parent:Null<EvalEnv>, stackDepth:Int, eval:Eval,
 			?layout:hxc.core.FrameLayout) {
 		this.info = info;
@@ -139,6 +143,9 @@ class EvalContext {
 	// reused for a new compilation.
 	public var staticInits:Map<Int, {proto:VPrototype, delays:Array<hxc.eval.EvalPrototype.ProtoDelay>}>;
 	public var constructors:Map<Int, VFunc>;
+	// Each interpreted method's function (EvalPrototype.makeFunction) with what it runs, so a call site
+	// that found the function can run its body without going through it (hxc.eval.EvalJit.JCall).
+	public var jitMethods:haxe.ds.ObjectMap<Dynamic, hxc.eval.EvalJit.JMethod> = new haxe.ds.ObjectMap();
 	// (class path, field) for every class method a subclass overrides, keyed by the path's hash and then
 	// the field's name.
 	public var overrides:Map<Int, Map<String, Bool>> = new Map();
@@ -147,7 +154,7 @@ class EvalContext {
 	public var vectorPrototype:Null<VPrototype>;
 	public var toplevel:EvalValue;
 	public var eval:Eval;
-	public var evalTls:sys.thread.Tls<Eval>;
+	public var evalTls:hxc.core.HostTls<Eval>;
 	// The OS thread that made this context (its thread serial), whose eval is `eval`.
 	public var creatorThread:Int;
 	public var maxStackDepth:Int;
@@ -175,7 +182,7 @@ class EvalContext {
 		// One eval per thread; the thread-local holds every thread's but the creating one, whose eval is
 		// `eval` (threadEval). The creating thread outlives the context, and its thread-local would keep
 		// the whole compilation reachable after it ends.
-		this.evalTls = new sys.thread.Tls();
+		this.evalTls = new hxc.core.HostTls();
 		this.creatorThread = hxc.compiler.HostRuntime.threadSerial();
 		this.defines = defines == null ? new Define() : defines;
 		// The interpreter's call depth limit, `-D eval-call-stack-depth` with a default of 1000; past it
@@ -235,24 +242,143 @@ class EvalContext {
 		};
 	}
 
+	static final noCaptures:Array<EvalValue> = [];
+
 	public static function pushEnvironment(ctx:EvalContext, info:EvalEnvInfo, ?layout:hxc.core.FrameLayout):EvalEnv {
 		// A function's entry is one of the polls where the tick's preemption is taken.
 		if (hxc.compiler.HostRuntime.preemptPending()) EvalStdLib.preemptPoll();
 		var eval = getEval(ctx);
 		var locals:Array<EvalValue>;
 		if (layout != null) {
-			locals = [];
-			for (_ in 0...layout.size) locals.push(VNull);
+			var template:Array<EvalValue> = cast layout.evalLocals;
+			if (template == null || template.length != layout.size) {
+				template = [for (_ in 0...layout.size) VNull];
+				layout.evalLocals = cast template;
+			}
+			locals = template.copy();
 		} else locals = info.numLocals == 0 ? [] : [for (_ in 0...info.numLocals) VNull];
-		var captures = info.numCaptures == 0 ? [] : [for (_ in 0...info.numCaptures) VNull];
+		// No frame reads or writes its captures (a closure keeps its own snapshot), so the empty ones are
+		// shared.
+		var captures = info.numCaptures == 0 ? noCaptures : [for (_ in 0...info.numCaptures) VNull];
 		var stackDepth = eval.env == null ? 1 : eval.env.stackDepth + 1;
 		var env = new EvalEnv(info, locals, captures, eval.env, stackDepth, eval, layout);
 		eval.env = env;
+		if (profOn) profPush(env);
 		return env;
 	}
 
+	// pushEnvironment for a function's own layout, taking the layout's returned frame when there is one:
+	// the same frame as a new one would be, every field set again and every local null. A frame is only
+	// taken by the thread (the Eval) that returned it.
+	public static function pushFrame(ctx:EvalContext, info:EvalEnvInfo, layout:hxc.core.FrameLayout):EvalEnv {
+		var free:Null<EvalEnv> = layout.evalFreeEnv;
+		if (free == null || profOn) return pushEnvironment(ctx, info, layout);
+		var eval = getEval(ctx);
+		var locals = free.locals;
+		if (free.eval != eval || locals.length != layout.size) return pushEnvironment(ctx, info, layout);
+		layout.evalFreeEnv = null;
+		if (hxc.compiler.HostRuntime.preemptPending()) EvalStdLib.preemptPoll();
+		for (i in 0...locals.length) locals[i] = VNull;
+		var parent = eval.env;
+		free.info = info;
+		free.captures = info.numCaptures == 0 ? noCaptures : [for (_ in 0...info.numCaptures) VNull];
+		free.parent = parent;
+		free.stackDepth = parent == null ? 1 : parent.stackDepth + 1;
+		free.leavePos = null;
+		free.vthis = null;
+		free.lexicalParent = null;
+		eval.env = free;
+		return free;
+	}
+
 	public static function popEnvironment(ctx:EvalContext, env:EvalEnv):Void {
+		if (profOn) profPop(env);
 		env.eval.env = env.parent;
+	}
+
+	// popEnvironment for a frame pushFrame made: a frame nothing kept is left for the layout's next call.
+	public static inline function popFrame(ctx:EvalContext, env:EvalEnv):Void {
+		if (profOn) profPop(env);
+		env.eval.env = env.parent;
+		if (!env.escaped) {
+			// The frame holds nothing once it has returned.
+			env.parent = null;
+			env.vthis = null;
+			env.lexicalParent = null;
+			env.layout.evalFreeEnv = env;
+		}
+	}
+
+	// A frame something keeps, with every frame reachable from it (its callers and its defining frames).
+	// A kept frame is never taken again, so its chains stay as they are and the walk stops at one already
+	// marked.
+	public static function markEscaped(env:Null<EvalEnv>):Void {
+		var e = env;
+		while (e != null && !e.escaped) {
+			e.escaped = true;
+			if (e.lexicalParent != null) markEscaped(e.lexicalParent);
+			e = e.parent;
+		}
+	}
+
+	// HXC_DBG_EVALPROF: calls, inclusive and self time per interpreted function, printed with
+	// HXC_DBG_TYPETIMES' report. A frame an exception unwinds is dropped when an outer frame pops.
+	public static var profOn:Bool = Sys.getEnv("HXC_DBG_EVALPROF") != null;
+	static var profEnvs:Array<EvalEnv> = [];
+	static var profStarts:Array<Float> = [];
+	static var profChild:Array<Float> = [];
+	static var profNames:haxe.ds.ObjectMap<EvalEnvInfo, String> = new haxe.ds.ObjectMap();
+	static var profStats:Map<String, Array<Float>> = new Map();
+
+	static function profPush(env:EvalEnv):Void {
+		profEnvs.push(env);
+		profChild.push(0.0);
+		profStarts.push(haxe.Timer.stamp());
+	}
+
+	static function profPop(env:EvalEnv):Void {
+		var now = haxe.Timer.stamp();
+		var i = profEnvs.lastIndexOf(env);
+		if (i < 0) return;
+		while (profEnvs.length > i + 1) { profEnvs.pop(); profStarts.pop(); profChild.pop(); }
+		profEnvs.pop();
+		var dt = now - profStarts.pop();
+		var child = profChild.pop();
+		if (profChild.length > 0) profChild[profChild.length - 1] += dt;
+		var info = env.info;
+		var name = profNames.get(info);
+		if (name == null) {
+			name = switch (info.kind) {
+				case EKMethod(t, f): EvalHash.revHash(t) + "." + EvalHash.revHash(f);
+				case EKLocalFunction(n): "local#" + n + " " + EvalHash.revHash(info.file) + ":" + info.min;
+				case EKEntrypoint: "entry " + EvalHash.revHash(info.file) + ":" + info.min;
+			};
+			profNames.set(info, name);
+		}
+		var st = profStats.get(name);
+		if (st == null) { st = [0.0, 0.0, 0.0]; profStats.set(name, st); }
+		st[0] += 1;
+		st[1] += dt;
+		st[2] += dt - child;
+	}
+
+	public static function dumpProf():Void {
+		if (!profOn) return;
+		var rows = [for (k in profStats.keys()) {name: k, s: profStats.get(k)}];
+		var o = hxc.core.HostStdio.err();
+		rows.sort(function(a, b) return a.s[2] < b.s[2] ? 1 : (a.s[2] > b.s[2] ? -1 : 0));
+		for (i in 0...(rows.length < 60 ? rows.length : 60)) { var r = rows[i];
+			o.writeString("[eprof self] " + StringTools.lpad(Std.string(Math.round(r.s[2] * 1000)), " ", 7) + "ms incl "
+			+ StringTools.lpad(Std.string(Math.round(r.s[1] * 1000)), " ", 7) + "ms "
+			+ StringTools.lpad(Std.string(Std.int(r.s[0])), " ", 9) + "x  " + r.name + "
+"); }
+		rows.sort(function(a, b) return a.s[1] < b.s[1] ? 1 : (a.s[1] > b.s[1] ? -1 : 0));
+		for (i in 0...(rows.length < 60 ? rows.length : 60)) { var r = rows[i];
+			o.writeString("[eprof incl] " + StringTools.lpad(Std.string(Math.round(r.s[1] * 1000)), " ", 7) + "ms self "
+			+ StringTools.lpad(Std.string(Math.round(r.s[2] * 1000)), " ", 7) + "ms "
+			+ StringTools.lpad(Std.string(Std.int(r.s[0])), " ", 9) + "x  " + r.name + "
+"); }
+		o.flush();
 	}
 
 	public static function getStaticPrototypeRaise(ctx:EvalContext, path:Int):VPrototype {

@@ -18,16 +18,14 @@ class EvalPrototype {
 	// it as this; a static method binds its arguments directly.
 	public static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool, info:EvalEnvInfo, abstractThis:Bool = false):VFunc {
 		EvalEmitter.numberClosures(tf.expr);
-		var cache:Null<hxc.eval.EvalJit.JCompiled> = null;
-		return function(args:Array<EvalValue>):EvalValue {
-			var c = cache;
-			if (c == null || !c.valid(ctx, tf)) {
-				c = EvalJit.compiled(ctx, tf);
-				cache = c;
-			}
+		var m = new hxc.eval.EvalJit.JMethod(ctx, tf, isInstance, abstractThis, info);
+		var f = function(args:Array<EvalValue>):EvalValue {
+			var c = m.compiled();
 			var vthis = (isInstance || abstractThis) ? (args.length > 0 ? args[0] : VNull) : null;
 			return EvalJit.invoke(ctx, c, args, isInstance ? 1 : 0, vthis, info);
 		};
+		if (info != null) ctx.jitMethods.set(f, m);
+		return f;
 	}
 
 	public static function makeConstructor(ctx:EvalContext, c:TClass):Null<VFunc> {
@@ -159,7 +157,7 @@ class EvalPrototype {
 			case CInt(s, _):
 				if (s.length > 10 && s.substr(0, 2) == "0x") throw new EvalMetaError();
 				var i = Std.parseInt(s);
-				(i == null || i < -2147483648 || i > 2147483647) ? VFloat(Std.parseFloat(s)) : VInt(i);
+				(i == null || i < -2147483648 || i > 2147483647) ? VFloat(Std.parseFloat(s)) : hxc.eval.EvalValue.EvalValueTools.vint(i);
 			case CFloat(f, _): VFloat(Std.parseFloat(f));
 			case CString(s, _): hxc.eval.EvalString.EvalString.vOfText(s);
 			case CIdent("true"): VTrue;
@@ -657,7 +655,7 @@ class EvalPrototype {
 		inline function fn(cf:TClassField):Null<TExpr>
 			return switch (cf.expr) { case null: null; case {expr: TFunction(tf)}: tf.expr; case _: null; };
 		inline function replaced(builtins:Null<Array<BuiltinField>>, cf:TClassField, skip:Null<Map<Int, Bool>>):Bool {
-			var h = EvalHash.hash(cf.name);
+			var h = EvalHash.fieldHash(cf);
 			var hit = false;
 			if (builtins != null) for (b in builtins) if (b.name == h) hit = true;
 			return hit && (skip == null || !skip.exists(h));
@@ -684,7 +682,7 @@ class EvalPrototype {
 				var skip:Null<Map<Int, Bool>> = null;
 				if (isMacroApiClass(ctx, c)) {
 					skip = new Map();
-					for (cf in c.orderedStatics) if (cf.kind.match(Method(_))) skip.set(EvalHash.hash(cf.name), true);
+					for (cf in c.orderedStatics) if (cf.kind.match(Method(_))) skip.set(EvalHash.fieldHash(cf), true);
 				}
 				for (cf in c.orderedStatics) if (!isRemovable(cf) && cf.kind.match(Method(_)) && !replaced(builtins, cf, skip)) {
 					var e = fn(cf);
@@ -710,7 +708,7 @@ class EvalPrototype {
 	// `@:op extern function add`.
 	static function inStaticPrototype(ctx:EvalContext, c:TClass, cf:TClassField):Bool {
 		var builtins = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
-		var name = EvalHash.hash(cf.name);
+		var name = EvalHash.fieldHash(cf);
 		if (builtins != null) for (b in builtins) if (b.name == name) return true;
 		if (TypeFunctions.hasClassFlag(c, CExtern)) return false;
 		function holds(f:TClassField):Bool {
@@ -729,7 +727,7 @@ class EvalPrototype {
 	// class's own but String's, no extern or generic field, every method, plus the builtins.
 	static function inInstancePrototype(ctx:EvalContext, c:TClass, cf:TClassField):Bool {
 		var builtins = ctx.builtins.instanceBuiltins.get(EvalHash.pathHash(c.path));
-		var name = EvalHash.hash(cf.name);
+		var name = EvalHash.fieldHash(cf);
 		if (builtins != null) for (b in builtins) if (b.name == name) return true;
 		if (TypeFunctions.hasClassFlag(c, CExtern) && !(c.path.pack.length == 0 && c.path.name == "String")) return false;
 		for (f in c.orderedFields)
@@ -769,22 +767,22 @@ class EvalPrototype {
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
 							var idx = pfields.length;
-							pnames.set(EvalHash.hash(cf.name), idx);
+							pnames.set(EvalHash.fieldHash(cf), idx);
 							addNameAlias(pnames, cf, idx);
-							var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
+							var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, EvalHash.fieldHash(cf)), 0, 0);
 							pfields.push(VFunction(makeFunction(ctx, tf, false, info, TypeFunctions.hasClassFieldFlag(cf, CfImpl)), true));
 						} else if (neverBound(c, cf)) {
 							// A method without an expression still has its slot, null, so a call to it
 							// fails as
 							// "Cannot call null".
 							var idx = pfields.length;
-							pnames.set(EvalHash.hash(cf.name), idx);
+							pnames.set(EvalHash.fieldHash(cf), idx);
 							addNameAlias(pnames, cf, idx);
 							pfields.push(VNull);
 						}
 					case Var(_) if (cf.expr != null):
 						var idx = pfields.length;
-						pnames.set(EvalHash.hash(cf.name), idx);
+						pnames.set(EvalHash.fieldHash(cf), idx);
 						addNameAlias(pnames, cf, idx);
 						pfields.push(VNull);
 						var init = cf.expr;
@@ -807,7 +805,7 @@ class EvalPrototype {
 					// A physical field without an initializer still occupies a slot.
 					case _ if (TypeFunctions.isPhysicalField(cf)):
 						var idx = pfields.length;
-						pnames.set(EvalHash.hash(cf.name), idx);
+						pnames.set(EvalHash.fieldHash(cf), idx);
 						addNameAlias(pnames, cf, idx);
 						pfields.push(VNull);
 					case _:
@@ -844,7 +842,7 @@ class EvalPrototype {
 		var skipNames:Null<Map<Int, Bool>> = null;
 		if (isMacroApiClass(ctx, c)) {
 			skipNames = new Map();
-			for (cf in c.orderedStatics) if (cf.kind.match(Method(_))) skipNames.set(EvalHash.hash(cf.name), true);
+			for (cf in c.orderedStatics) if (cf.kind.match(Method(_))) skipNames.set(EvalHash.fieldHash(cf), true);
 		}
 		addBuiltins(ctx.builtins.staticBuiltins.get(key), pfields, pnames, skipNames);
 		addRtti(c, pfields, pnames);
@@ -874,31 +872,31 @@ class EvalPrototype {
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
 						var idx = pfields.length;
-						pnames.set(EvalHash.hash(cf.name), idx);
+						pnames.set(EvalHash.fieldHash(cf), idx);
 						addNameAlias(pnames, cf, idx, c);
-						var info = EvalContext.createEnvInfo(false, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
+						var info = EvalContext.createEnvInfo(false, cf.namePos, EKMethod(key, EvalHash.fieldHash(cf)), 0, 0);
 						pfields.push(VFunction(makeFunction(ctx, tf, true, info), false));
 						// A dynamic method is reassignable per instance, so it also occupies an instance
 						// slot defaulting
 						// to the same function.
 						if (cf.kind.match(Method(MethDynamic))) {
 							var instIdx = pinstFields.length;
-							pinstNames.set(EvalHash.hash(cf.name), instIdx);
+							pinstNames.set(EvalHash.fieldHash(cf), instIdx);
 							addNameAlias(pinstNames, cf, instIdx, c);
 							pinstFields.push(VFunction(makeFunction(ctx, tf, true, info), false));
 						} else {
 							// A plain override of an inherited dynamic method must replace that inherited
 							// instance-slot's default so instances dispatch to this override, not the base.
-							var inherited = pinstNames.get(EvalHash.hash(cf.name));
+							var inherited = pinstNames.get(EvalHash.fieldHash(cf));
 							if (inherited != null) pinstFields[inherited] = VFunction(makeFunction(ctx, tf, true, info), false);
 						}
 					} else if (TypeFunctions.hasClassFieldFlag(cf, CfAbstract)) {
-						pnames.set(EvalHash.hash(cf.name), pfields.length);
+						pnames.set(EvalHash.fieldHash(cf), pfields.length);
 						pfields.push(VNull);
 					}
 				case Var(_) if (TypeFunctions.isPhysicalField(cf)):
 					var idx = pinstFields.length;
-					pinstNames.set(EvalHash.hash(cf.name), idx);
+					pinstNames.set(EvalHash.fieldHash(cf), idx);
 					addNameAlias(pinstNames, cf, idx, c);
 					pinstFields.push(VNull);
 				case _:

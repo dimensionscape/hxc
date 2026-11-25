@@ -22,6 +22,7 @@ class Position {
 	// Clear cached contents between server requests so a changed file is reread.
 	public static function resetFileCache():Void {
 		fileCache = new StringMap();
+		lcFile = null;
 	}
 
 	public static function registerFileContent(file:String, content:String, malformedAt:Int = -1):String {
@@ -33,7 +34,7 @@ class Position {
 		}
 		var pf = new PositionFile(content);
 		pf.malformedAt = malformedAt;
-		fileCache.set(file, pf);
+		fileCache.set(file, pf); lcFile = null;
 		return content;
 	}
 
@@ -89,14 +90,18 @@ class Position {
 
 	public static function restoreFileEntry(file:String, entry:Null<PositionFile>):Void {
 		// Restore an existing entry; retain a new virtual file's table for later diagnostics.
-		if (entry != null) fileCache.set(file, entry);
+		if (entry != null) { fileCache.set(file, entry); lcFile = null; }
 	}
 
 	public static function getFileContent(file:String):String {
 		var cached = fileCache.get(file);
 		if (cached != null) return cached.content;
+		// A file of the .NET runtime embedded in hxc, whose root is no directory.
+		var embedded = hxc.codegen.dotnet.RuntimeSources.content(file);
+		if (embedded != null) return registerFileContent(file, embedded);
 		// Read raw bytes so malformed UTF-8 can be detected before decoding.
-		var bytes = File.getBytes(file);
+		var bytes = hxc.core.ReadAhead.take(file);
+		if (bytes == null) bytes = File.getBytes(file);
 		return registerFileContent(file, bytes.toString(), utf8FirstInvalid(bytes));
 	}
 
@@ -107,6 +112,29 @@ class Position {
 	// Unreadable files resolve to line 1, column min; line 0 would produce a negative source-map line.
 	static inline function unresolved(p:Position):PositionInfos {
 		return {file: p.file, min: p.min, max: p.max, line: 1, column: p.min, endLine: 1, endColumn: p.max};
+	}
+
+	// startLineCol's answer, and the file it last looked in.
+	public static var lcLine:Int = 0;
+	public static var lcCol:Int = 0;
+	static var lcFileName:Null<String> = null;
+	static var lcFile:Null<PositionFile> = null;
+
+	/**
+	 * getInfos' `line` and `column` for `p`, left in lcLine and lcCol with nothing allocated. False when the
+	 * file is not in the cache yet: getInfos then answers. For the main thread only.
+	 */
+	public static function startLineCol(p:Position):Bool {
+		if (p.min < 0 || p.max < 0) return false;
+		var f = lcFile;
+		if (f == null || lcFileName != p.file) {
+			f = fileCache.get(p.file);
+			if (f == null) return false;
+			lcFile = f;
+			lcFileName = p.file;
+		}
+		f.startLineCol(p.min);
+		return true;
 	}
 
 	public static function getInfos(p:Position):PositionInfos {
@@ -190,6 +218,21 @@ private class PositionFile {
 			endLine: endIndex + 1,
 			endColumn: max - lineStarts[endIndex],
 		};
+	}
+
+	// The line found last: the next position asked for is usually on it or just after.
+	var lastLine:Int = 0;
+
+	public function startLineCol(pmin:Int):Void {
+		var min = clamp(pmin);
+		var i = lastLine;
+		var n = lineStarts.length;
+		if (i >= n || lineStarts[i] > min || (i + 1 < n && lineStarts[i + 1] <= min)) {
+			i = lineIndex(min);
+			lastLine = i;
+		}
+		Position.lcLine = i + 1;
+		Position.lcCol = min - lineStarts[i];
 	}
 
 	function clamp(v:Int):Int {

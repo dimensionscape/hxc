@@ -14,6 +14,7 @@ class Usage {
 		{cat: "Target", names: ["--cpp"], deps: ["-cpp"], hint: "<directory>", doc: "generate C++ code into target directory", basic: true},
 		{cat: "Target", names: ["--cppia"], deps: ["-cppia"], hint: "<file>", doc: "generate Cppia bytecode into target file", basic: true},
 		{cat: "Target", names: ["--cs"], deps: ["-cs"], hint: "<directory>", doc: "generate C# code into target directory", basic: true},
+		{cat: "Target", names: ["--dotnet"], deps: [], hint: "<directory>", doc: "generate a .NET assembly into target directory", basic: true},
 		{cat: "Target", names: ["--java"], deps: ["-java"], hint: "<directory>", doc: "generate Java code into target directory", basic: true},
 		{cat: "Target", names: ["--jvm"], deps: [], hint: "<file>", doc: "generate JVM bytecode into target file", basic: true},
 		{cat: "Target", names: ["--python"], deps: ["-python"], hint: "<file>", doc: "generate Python code into target file", basic: true},
@@ -33,6 +34,7 @@ class Usage {
 		{cat: "Miscellaneous", names: ["--help-user-defines"], deps: [], hint: "", doc: "print help for all user defines", basic: true},
 		{cat: "Miscellaneous", names: ["--help-metas"], deps: [], hint: "", doc: "print help for all compiler metadatas", basic: true},
 		{cat: "Miscellaneous", names: ["--help-user-metas"], deps: [], hint: "", doc: "print help for all user metadatas", basic: true},
+		{cat: "Miscellaneous", names: ["--help-hxc"], deps: [], hint: "", doc: "print help for hxc's own defines and environment variables", basic: true},
 		{cat: "Optimization", names: ["--dce"], deps: ["-dce"], hint: "[std|full|no]", doc: "set the dead code elimination mode (default std)", basic: false},
 		{cat: "Target-specific", names: ["--swf-version"], deps: ["-swf-version"], hint: "<version>", doc: "change the SWF version", basic: false},
 		{cat: "Target-specific", names: ["--swf-header"], deps: ["-swf-header"], hint: "<header>", doc: "define SWF header (width:height:fps:color)", basic: false},
@@ -73,6 +75,81 @@ class Usage {
 		"Target", "Compilation", "Optimization", "Debug", "Batch", "Services",
 		"Compilation Server", "Target-specific", "Miscellaneous"
 	];
+
+	/**
+	 * What hxc adds to Haxe 4.3.7's defines and environment: `--help-defines` prints Haxe's own list
+	 * unchanged, so these are listed apart, by `--help-hxc`. A define that hxc reads belongs here once
+	 * a user is meant to set it; debugging switches do not.
+	 */
+	static final HXC_DEFINES:Array<{cat:String, name:String, doc:String}> = [
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet", doc: "With --cs, write a .NET assembly as IL instead of C# sources."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-version=<N>", doc: "Build for .NET N (a whole number, 10 or more; default 10)."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dll-name=<name>", doc: "Name the assembly (default: the output directory's last segment)."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-exe=<launcher|self-contained>", doc: "Add an executable: a small launcher for the installed .NET, or one file that holds the runtime. Needs -main and the .NET SDK."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-winexe", doc: "Make the dotnet-exe or dotnet-aot executable a Windows GUI program (no console window)."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-aot", doc: "Also compile the program to a native executable with Native AOT. Needs the .NET SDK and a C++ linker."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-aot-descriptor=<file>", doc: "An ILLink descriptor that keeps .NET library members only dynamic access reaches, for dotnet-aot."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-r2r", doc: "Precompile the assembly with ReadyToRun: faster start, IL kept. Needs the .NET SDK."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-trim-root", doc: "Embed a descriptor that keeps every member when the assembly is published trimmed."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-nullable=<package>[,...]", doc: "Write C# nullable metadata for the types of exactly these packages."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-debug-jit", doc: "With --debug, turn the JIT's optimisations off so a debugger steps line by line."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-seal", doc: "Seal every class the program does not extend and make every method nothing overrides final, so the JIT calls them directly. Another assembly can then not extend those classes."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-no-exception-stack", doc: "Do not record the call stack when a Haxe exception is made: `stack` is empty, and throwing costs far less."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-pathmap=<from>=<to>[,...]", doc: "Rewrite source paths in the PDB."},
+		{cat: ".NET (--dotnet, or --cs with -D dotnet)", name: "dotnet-stub-report", doc: "Print the standard library methods that were stubbed."},
+		{cat: "HashLink (--hl)", name: "hl-no-opt", doc: "Skip the bytecode optimiser."},
+		{cat: "HashLink (--hl)", name: "hl-array-cast", doc: "Reading an array out of an array (`grid[y]`) compares its type before asking the runtime to convert it. Not Haxe's output: without it the generated code matches Haxe 4.3.7."},
+		{cat: "Any target", name: "comprehension-presize", doc: "Allocate the result of `[for (i in a...b) x]` and `[for (x in array) y]` once instead of growing it. Not Haxe's output: without it the generated code matches Haxe 4.3.7."},
+	];
+
+	static final HXC_ENV:Array<{name:String, doc:String}> = [
+		{name: "HAXE_STD_PATH", doc: "Where the standard library is, as for Haxe."},
+		{name: "HXC_THREADS", doc: "Threads the parallel compile phases use (default 8; 1 turns them off)."},
+		{name: "DOTNET_ROOT", doc: "Where .NET is installed (default: the `dotnet` found on PATH)."},
+	];
+
+	/**
+	 * The `--help-hxc` screen: hxc's own defines by target, then the environment variables it reads.
+	 */
+	public static function hxcHelp():String {
+		var width = 0;
+		for (d in HXC_DEFINES) if (d.name.length > width) width = d.name.length;
+		for (e in HXC_ENV) if (e.name.length > width) width = e.name.length;
+		var b = new StringBuf();
+		function line(name:String, doc:String):Void {
+			var indent = StringTools.rpad("", " ", width + 5);
+			var words = doc.split(" ");
+			var cur = "  " + StringTools.rpad(name, " ", width) + " : ";
+			var used = 0;
+			for (w in words) {
+				if (used > 0 && cur.length + 1 + w.length > 100) {
+					b.add(cur + "
+");
+					cur = indent + w;
+				} else cur += (used > 0 ? " " : "") + w;
+				used++;
+			}
+			b.add(cur + "
+");
+		}
+		b.add("hxc adds these to Haxe's own defines (--help-defines). Set one with -D <name>.
+");
+		var cat:Null<String> = null;
+		for (d in HXC_DEFINES) {
+			if (d.cat != cat) {
+				cat = d.cat;
+				b.add("
+" + cat + ":
+");
+			}
+			line(d.name, d.doc);
+		}
+		b.add("
+Environment variables:
+");
+		for (e in HXC_ENV) line(e.name, e.doc);
+		return b.toString();
+	}
 
 	/**
 	 * Usage screen containing basic arguments only.

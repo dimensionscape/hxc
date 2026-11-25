@@ -1,0 +1,343 @@
+# Candidate tests/dotnet cases for milestone 4b's small items (research area "misc", 2026-10-27, against
+# hxc 2fbdaac5 and Haxe 4.3.7 gencs + global hxcs). Each case's expectation is what hxc should give once 4b is
+# done; the "today" line in its comment is what hxc 2fbdaac5 gives. Every @gencs expectation is gencs's real run
+# output (probes under D:/_hxc4b/misc/cases/ and D:/_hxc4b/misc/probes/).
+#
+# Fixtures: the @netlib cases use ValLib with the additions in D:/_hxc4b/misc/netlib/ByNull.cs (classes NBase,
+# NDerived, NDerivedB, ByNull and NCtor in namespace ValLib), which go into tests/dotnet/netlib/ValLib/ValLib.cs
+# after ByVal. They were probed with a ValLib built from ValLib.cs plus ByNull.cs.
+#
+# ---------------------------------------------------------------------------------------------------------------
+# 1. IntPtr (the last std stub, Socket.select)
+# ---------------------------------------------------------------------------------------------------------------
+# System.IntPtr and UIntPtr are CLR primitives (native int, native unsigned int: ELEMENT_TYPE_I/U in signatures,
+# as Roslyn writes fields, locals, returns and type arguments), and their methods are called on the value's
+# address, as on any struct: a local's, a field's, or, for a call's result, a temporary's (Roslyn: `call native int
+# P::handle(int32); stloc.s t; ldloca.s t; call instance int64 [System.Runtime]System.IntPtr::ToInt64()`). `new
+# IntPtr(n)` is `newobj instance void System.IntPtr::.ctor(int32)` (int64 for an Int64), boxing is `box
+# System.IntPtr`, a Dynamic back is `unbox.any`. == compares the native ints (gencs calls Equals: the same).
+# Today: every `new IntPtr(..)` and every call on a call's result is refused ("conversions between value types
+# are not supported yet", P.hx:4, 5, 9, 11, 17, 25, 27): the .NET type hxc binds the member on is
+# valuetype System.IntPtr, the value's type native int.
+--- netlib-intptr-calls @gencs
+import cs.system.IntPtr;
+import cs.system.UIntPtr;
+class H {
+	public var p:IntPtr = new IntPtr(7);
+	public static var s:IntPtr = new IntPtr(8);
+	public function new() {}
+}
+class P {
+	static function handle(n:Int):IntPtr return new IntPtr(n);
+	static function main() {
+		var a = new IntPtr(5);
+		trace(a.ToInt32(), new IntPtr(6).ToInt32(), handle(42).ToInt64(), handle(43).ToString());
+		var h = new H();
+		trace(h.p.ToInt32(), H.s.ToInt32());
+		h.p = handle(9);
+		trace(h.p.ToInt32());
+		var l = new IntPtr(haxe.Int64.make(0, 10));
+		trace(l.ToInt64());
+		var d:Dynamic = handle(11);
+		trace(d, Std.string(handle(12)), Std.isOfType(d, IntPtr));
+		var back:IntPtr = d;
+		trace(back.ToInt32());
+		var arr = [handle(1), handle(2)];
+		trace(arr[1].ToInt32(), arr.length);
+		trace(handle(3) == new IntPtr(3), handle(3) != IntPtr.Zero, IntPtr.Size > 0);
+		var n:UInt = 13;
+		var u = new UIntPtr(n);
+		trace(u.ToUInt32(), new UIntPtr(n).ToUInt64());
+	}
+}
+===
+[run]
+P.hx:12: 5, 6, 42, 43
+P.hx:14: 7, 8
+P.hx:16: 9
+P.hx:18: 10
+P.hx:20: 11, 12, true
+P.hx:22: 11
+P.hx:24: 2, 2
+P.hx:25: true, true, true
+P.hx:28: 13, 13
+# hxcs's sys.net.Socket.select, the last stubbed std method: `s.sock.Handle.ToInt32()` calls a method on an IntPtr
+# property's value. With the receiver fixed, the rest of its body already lowers and matches gencs (probed with a
+# copy of select whose Handle goes through a local first: SAME, ILVerify clean). Loopback sockets only.
+# Today: the run throws System.NotSupportedException: hxc dotnet: sys.net.Socket.select uses conversions between
+# value types, which are not supported yet (and -D dotnet-stub-report lists "stubbed sys.net.Socket.select").
+--- socket-select @gencs
+import sys.net.Socket;
+import sys.net.Host;
+class P {
+	static function main() {
+		var server = new Socket();
+		server.bind(new Host("127.0.0.1"), 0);
+		server.listen(1);
+		var port = server.host().port;
+		var client = new Socket();
+		client.connect(new Host("127.0.0.1"), port);
+		var r = Socket.select([server], [client], null, 1.0);
+		trace(r.read.length, r.read[0] == server, r.write.length, r.write[0] == client, r.others.length);
+		var conn = server.accept();
+		client.write("hi");
+		var r2 = Socket.select([conn], null, null, 1.0);
+		trace(r2.read.length, r2.read[0] == conn);
+		var r3 = Socket.select([client], null, null, 0.01);
+		trace(r3.read.length);
+		conn.close();
+		client.close();
+		server.close();
+	}
+}
+===
+[run]
+P.hx:12: 1, true, 1, true, 0
+P.hx:16: 1, true
+P.hx:18: 0
+# A cast between IntPtr and a number: gencs writes C#'s cast through object, `(IntPtr)(object)5`,
+# `(long)(object)p` and `Runtime.toInt((object)p)`, which always throw at run time (InvalidCastException for the
+# unboxes; NullReferenceException in Runtime.toInt, whose IConvertible test fails), so hxc refuses each with a
+# lasting error instead. gencs's run of this program: "Unhandled exception. System.InvalidCastException: Unable to
+# cast object of type 'System.Int32' to type 'System.IntPtr'." at P.hx:4.
+# Today: the same three positions, as "conversions between value types are not supported yet" (proposed text below).
+--- netlib-intptr-number-cast-is-an-error
+import cs.system.IntPtr;
+class P {
+	static function main() {
+		var p:IntPtr = cast 5;
+		var i:Int = cast new IntPtr(6);
+		var l:haxe.Int64 = cast new IntPtr(7);
+		trace(p, i, l);
+	}
+}
+===
+[compile]
+P.hx:4: characters 23-24 : dotnet: a cast between Int and System.IntPtr throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
+P.hx:5: characters 20-33 : dotnet: a cast between System.IntPtr and Int throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
+P.hx:6: characters 27-40 : dotnet: a cast between System.IntPtr and haxe.Int64 throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
+# ---------------------------------------------------------------------------------------------------------------
+# 2. CompilerGeneratedAttribute on a @:property var's backing field and accessors
+# ---------------------------------------------------------------------------------------------------------------
+# Roslyn writes [CompilerGenerated] (ctor sig 20-00-01, blob 01-00-00-00, no DebuggerBrowsable, in Release and
+# Debug builds alike) on an auto-property's backing field and on both accessors, static or instance, in a
+# @:nativeGen, a hxgen and a generic class, and nowhere else (not on the Property row, not on gen_prop's
+# properties). Reflection sees them (IsDefined), and so does Newtonsoft.Json once non-public members are searched
+# (it then skips the backing field only when it carries the attribute); System.Text.Json does not.
+# Today: each of the three lines ends after the colon (no member carries the attribute).
+--- property-var-compiler-generated @gencs
+@:nativeGen
+class Model {
+	@:property public var name:String = "";
+	@:property public static var total:Int = 3;
+	public function new() {}
+}
+class Box<T> {
+	@:property public var item:T;
+	@:property public static var made:Int;
+	public function new(t:T) item = t;
+}
+class Plain {
+	@:property public var x:Float = 1.5;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var m = new Model();
+		var b = new Box<String>("s");
+		var p = new Plain();
+		var CG = cs.Lib.toNativeType(cs.system.runtime.compilerservices.CompilerGeneratedAttribute);
+		for (t in [cs.Lib.toNativeType(Model), cs.Lib.getNativeType(b).GetGenericTypeDefinition(), cs.Lib.toNativeType(Plain)]) {
+			var all:cs.system.reflection.BindingFlags = new cs.Flags(cs.system.reflection.BindingFlags.Public) | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.Instance | cs.system.reflection.BindingFlags.Static | cs.system.reflection.BindingFlags.DeclaredOnly;
+			var out = [];
+			for (f in t.GetFields(all)) if (f.IsDefined(CG, false)) out.push("field " + f.Name);
+			for (mm in t.GetMethods(all)) if (mm.IsDefined(CG, false)) out.push("method " + mm.Name);
+			for (pp in t.GetProperties(all)) if (pp.IsDefined(CG, false)) out.push("property " + pp.Name);
+			out.sort(Reflect.compare);
+			Sys.println(t.Name + ": " + out.join(", "));
+		}
+	}
+}
+===
+[run]
+Model: field <name>k__BackingField, field <total>k__BackingField, method get_name, method get_total, method set_name, method set_total
+Box`1: field <item>k__BackingField, field <made>k__BackingField, method get_item, method get_made, method set_item, method set_made
+Plain: field <x>k__BackingField, method get_x, method set_x
+# ---------------------------------------------------------------------------------------------------------------
+# 3. Ruling Z: a null argument, by C#'s betterness
+# ---------------------------------------------------------------------------------------------------------------
+# gencs writes a null into a reference-typed parameter as the literal `null`, so C# picks among the applicable
+# overloads by betterness: at a null position T1 is the better parameter type when T1 converts implicitly to T2
+# and T2 does not to T1; an overload better than every other one binds. S2(string)/S2(object): string
+# (declared String or Dynamic alike); H(NBase)/H(NDerived)/H(object): NDerived; I(IDisposable)/I(object):
+# IDisposable; T2(string,string)/T2(object,object) with two nulls: both strings; U(string,int)/U(object,int) with
+# (null, 5): the typed position is the same type in both; X(string,string)/X(Thing,object): string and Thing are
+# neither better at the first null, string is at the second, so X(string,string) is better; Q(string)/Q(object,
+# int x = 0): only the given argument counts; a constructor alike. ByVal's N(null), P(null) and a padded O(1)
+# (ruling X's three refused cases) bind as C# does: N(Thing), P(params object[]) with a null array, O(int,Thing).
+# Today: all 12 are refused ("more than one .NET overload of ValLib.ByNull.S2 accepts (string) (C# converts an
+# integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)", etc.).
+# This case replaces netlib-extern-null-to-class-or-object-refused, netlib-extern-null-to-params-or-object-refused
+# and netlib-extern-padded-optional-null-refused.
+--- netlib-extern-null-betterness @gencs @netlib
+@:native("ValLib.ByNull") extern class ByNull {
+	static function S2(s:String):String;
+	@:native("S2") static function S2D(x:Dynamic):String;
+	static function H(x:Dynamic):String;
+	static function I(x:Dynamic):String;
+	static function T2(a:String, b:String):String;
+	static function U(a:String, b:Int):String;
+	static function X(a:Dynamic, b:Dynamic):String;
+	static function Q(s:String):String;
+}
+@:native("ValLib.NCtor") extern class NCtor {
+	function new(s:String):Void;
+	var Which:String;
+}
+@:native("ValLib.ByVal") extern class ByVal {
+	static function N(x:Dynamic):String;
+	static function P(x:Dynamic):String;
+	static function O(a:Int, ?o:Dynamic):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.S2(null));
+		trace(ByNull.S2D(null));
+		trace(ByNull.H(null));
+		trace(ByNull.I(null));
+		trace(ByNull.T2(null, null));
+		trace(ByNull.U(null, 5));
+		trace(ByNull.X(null, null));
+		trace(ByNull.Q(null));
+		trace(new NCtor(null).Which);
+		trace(ByVal.N(null));
+		trace(ByVal.P(null));
+		trace(ByVal.O(1));
+	}
+}
+===
+[run]
+P.hx:22: S2(string)
+P.hx:23: S2(string)
+P.hx:24: H(NDerived)
+P.hx:25: I(IDisposable)
+P.hx:26: T2(string,string)
+P.hx:27: U(string,int 5)
+P.hx:28: X(string,string)
+P.hx:29: Q(string)
+P.hx:30: NCtor(string)
+P.hx:31: N(Thing)
+P.hx:32: P(params null)
+P.hx:33: O(int,Thing)
+# Ruling Z where the comparison needs conversions ExternMembers.converts calls unknown today: a reference type to
+# Nullable<T> (object to int? does not convert, so N2(int?) beats N2(object)), Nullable<A> to Nullable<B> (int? to
+# long? does, by the implicit nullable conversion), and array covariance (string[] to object[] does, so
+# P2(params string[]) beats P2(params object[]) in their normal forms); and a generic method a null gives no type
+# argument, which C# then leaves out (G<T>(T) with G(string)). With the core rule alone these stay refused (not
+# silently: "more than one .NET overload ... accepts (object)" / "may accept (string)"); with NOTES ยง4's
+# refinements they bind as below. Today: all four refused.
+--- netlib-extern-null-betterness-conversions @gencs @netlib
+@:native("ValLib.ByNull") extern class ByNull {
+	static function N2(x:Dynamic):String;
+	@:native("N3") static function N3D(x:Dynamic):String;
+	static function P2(a:cs.NativeArray<String>):String;
+	static function G(s:String):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.N2(null));
+		trace(ByNull.N3D(null));
+		trace(ByNull.P2(null));
+		trace(ByNull.G(null));
+	}
+}
+===
+[run]
+P.hx:9: N2(int?)
+P.hx:10: N3(int?)
+P.hx:11: P2(params string[] null)
+P.hx:12: G(string)
+# A null into a declared Nullable<T> is no null literal in gencs's C#: gencs writes a null into a value type as
+# default(T), here `N4(default(global::System.Nullable<int>))`, so C# binds by the type int?, exactly. Ruling X's
+# kinds treat it as a null literal, which applies to every reference type too.
+# Today: all three refused ("more than one .NET overload of ValLib.ByNull.N4 accepts (System.Nullable<int>) ...").
+--- netlib-extern-null-to-declared-nullable @gencs @netlib
+import cs.system.Nullable_1;
+@:native("ValLib.ByNull") extern class ByNull {
+	static function N4(x:Nullable_1<Int>):String;
+	static function N3(x:Nullable_1<Int>):String;
+	static function N2(x:Nullable_1<Int>):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.N4(null));
+		trace(ByNull.N3(null));
+		trace(ByNull.N2(null));
+	}
+}
+===
+[run]
+P.hx:9: N4(int?)
+P.hx:10: N3(int?)
+P.hx:11: N2(int?)
+# The same mistake the other way: R takes only a string, and the extern declares Nullable<Int>. gencs's C# fails
+# (CS1503: Argument 1: cannot convert from 'int?' to 'string'), as R(default(int?)) has no conversion; hxc should
+# refuse it as for any declared type no overload takes.
+# Today: it compiles, binds R(string) and prints "P.hx:7: R(null)".
+--- netlib-extern-null-to-declared-nullable-mismatch-is-an-error @netlib
+import cs.system.Nullable_1;
+@:native("ValLib.ByVal") extern class ByVal {
+	static function R(x:Nullable_1<Int>):String;
+}
+class P {
+	static function main() {
+		trace(ByVal.R(null));
+	}
+}
+===
+[compile]
+P.hx:7: characters 9-22 : dotnet: no .NET overload of ValLib.ByVal.R takes (System.Nullable<int>)
+# Where no overload is better than every other one for a null, C# reports CS0121 and gencs's C# does not compile:
+# two unrelated reference types S3(string)/S3(Thing), declared String or Dynamic; two siblings each better than
+# object H2(NDerived)/H2(NDerivedB)/H2(object); two nulls each better in one position T(string,object)/
+# T(object,string); a null better at one position and a typed argument exact at the other V(string,object)/
+# V(object,string) with (null, "s"); Nullable<int> and string N4; Nullable<int> and a params array NP.
+# gencs: "error CS0121: The call is ambiguous between the following methods or properties:
+# 'ValLib.ByNull.S3(string)' and 'ValLib.ByNull.S3(ValLib.Thing)'", and likewise for each line.
+# Today: refused with ruling X's note ("... accepts (string) (C# converts an integer constant or null argument by
+# its value; declare the parameter's exact type, or use @:overload)"), whose advice does not help a null: the
+# proposed text says what does (a typed variable, which gencs passes as itself, or @:overload, which casts).
+# Two texts: "C# finds none of them better" where every comparison is known (a lasting error, Unsupported.error),
+# and "hxc cannot tell" where one is not: V, whose typed position differs (hxc does not model C#'s betterness for
+# a typed argument), and N4 and NP too unless converts learns that a reference type does not convert to
+# Nullable<T> (NOTES ง4, refinement b).
+--- netlib-extern-null-ambiguous-is-an-error @netlib
+@:native("ValLib.ByNull") extern class ByNull {
+	static function S3(s:String):String;
+	@:native("S3") static function S3D(x:Dynamic):String;
+	static function H2(x:Dynamic):String;
+	static function T(a:Dynamic, b:Dynamic):String;
+	static function V(a:Dynamic, b:String):String;
+	static function N4(x:Dynamic):String;
+	static function NP(x:Dynamic):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.S3(null));
+		trace(ByNull.S3D(null));
+		trace(ByNull.H2(null));
+		trace(ByNull.T(null, null));
+		trace(ByNull.V(null, "s"));
+		trace(ByNull.N4(null));
+		trace(ByNull.NP(null));
+	}
+}
+===
+[compile]
+P.hx:12: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.S3 accepts (string), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:13: characters 9-25 : dotnet: more than one .NET overload of ValLib.ByNull.S3 accepts (object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:14: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.H2 accepts (object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:15: characters 9-29 : dotnet: more than one .NET overload of ValLib.ByNull.T accepts (object, object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:16: characters 9-28 : dotnet: more than one .NET overload of ValLib.ByNull.V accepts (object, string), and hxc cannot tell which one C# picks for a null argument; pass a variable of the parameter's type, or use @:overload
+P.hx:17: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.N4 accepts (object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:18: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.NP accepts (object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload

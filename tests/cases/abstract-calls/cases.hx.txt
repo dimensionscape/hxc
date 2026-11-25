@@ -1,0 +1,30 @@
+--- generic-method-on-own-abstract-with-other-params
+abstract K<A, R>(A->R) from A->R to A->R {
+	public function map<R0>(f:R->R0):K<A, R0> return null;
+	public function ap<R0>(e:K<A, R->R0>, r:R):K<A, R0> {
+		var x = e.map(function(f:R->R0) return f(r));
+		$type(x);
+		return x;
+	}
+}
+class P { static function main() {} }
+
+--- generic-method-on-own-class-with-other-params
+class C<T> {
+	public function new() {}
+	public function map<U>(f:T->U):C<U> return null;
+	public function ap<U>(e:C<T->U>, t:T):C<U> {
+		var x = e.map(function(f:T->U) return f(t));
+		$type(x);
+		return x;
+	}
+}
+class P { static function main() {} }
+
+--- generic-method-host-param-is-callers-own-param
+class C<T> {
+	public function new() {}
+	public function id<U>(x:U):U return x;
+	public function f<U>(c:C<U>, u:U) { $type(c.id); $type(c.id(u)); }
+}
+class P { static function main() {} }

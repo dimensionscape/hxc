@@ -1,0 +1,496 @@
+--- closure-captures @gencs
+class P {
+	var name:String;
+	var greet:Void->String;
+	function new(n:String) {
+		name = n;
+		greet = () -> "hello " + name;
+	}
+	function suffixer():String->String {
+		return function(s) return s + " from " + name;
+	}
+	static function main() {
+		var k = 10;
+		function add(x:Int):Int return x + k;
+		Sys.println(add(5));
+		var count = 0;
+		var inc = function() count++;
+		inc();
+		inc();
+		Sys.println(count);
+		var s = "a";
+		var get = () -> s;
+		s = "b";
+		Sys.println(get());
+		function fact(n:Int):Int return n <= 1 ? 1 : n * fact(n - 1);
+		Sys.println(fact(5));
+		var outer = 1;
+		function mk(y:Int) {
+			return function(z:Int) return outer + y + z;
+		}
+		Sys.println(mk(2)(3));
+		var f = 1.5;
+		var addf = function(d:Float) f += d;
+		addf(2.0);
+		Sys.println(f);
+		var p = new P("bob");
+		Sys.println(p.suffixer()("hi"));
+		Sys.println(p.greet());
+		p.name = "ann";
+		Sys.println(p.greet());
+		var total = 0;
+		var bump = () -> total += 2;
+		var read = () -> total;
+		bump();
+		bump();
+		Sys.println(read());
+		function counter(start:Int) {
+			return () -> start++;
+		}
+		var c = counter(10);
+		c();
+		Sys.println(c());
+		var ni:Null<Int> = null;
+		var setNi = (v:Int) -> ni = v;
+		Sys.println(ni);
+		setNi(5);
+		Sys.println(ni);
+		try throw "boom" catch (e:String) {
+			var fe = () -> e + "!";
+			Sys.println(fe());
+		}
+		var six = function(a:Int, b:Int, c:Int, d:Int, e:Int, f:Int) return a + f;
+		Sys.println(six(1, 2, 3, 4, 5, 6));
+		var seven = function(a:Int, b:Int, c:Int, d:Int, e:Int, f:Int, g:String) return a + e + g;
+		Sys.println(seven(1, 2, 3, 4, 5, 6, "z"));
+		var opt = function(a:Int, ?b:Int, c:String = "dflt") return a + "/" + b + "/" + c;
+		Sys.println(opt(1));
+		Sys.println(opt(1, 2, "x"));
+		var v = function() Sys.println("void");
+		v();
+	}
+}
+===
+[run]
+15
+2
+b
+120
+6
+3.5
+hi from bob
+hello bob
+hello ann
+4
+11
+
+5
+boom!
+7
+6z
+1/null/dflt
+1/2/x
+void
+--- for-loop-closures @gencs
+class P {
+	static function main() {
+		var n = 3;
+		var fs = [];
+		for (i in 0...n) fs.push(() -> i * 10);
+		for (f in fs) Sys.println(f());
+		var words = ["a", "b"];
+		var gs = [];
+		for (w in words) gs.push(() -> w + w);
+		for (g in gs) Sys.println(g());
+		var m = new Map<String, Int>();
+		m.set("k", 7);
+		var hs = [];
+		for (k => v in m) hs.push(() -> k + "=" + v);
+		Sys.println(hs[0]());
+		var sum = 0;
+		for (x in [1, 2, 3]) {
+			var add = () -> sum += x;
+			add();
+		}
+		Sys.println(sum);
+		var l = new haxe.ds.List<Int>();
+		l.add(4);
+		l.add(5);
+		var acc = [];
+		for (x in l) acc.push(() -> x);
+		Sys.println([for (a in acc) a()]);
+	}
+}
+===
+[run]
+0
+10
+20
+aa
+bb
+k=7
+6
+[4,5]
+--- closure-identity @gencs
+class G<T> {
+	var v:T;
+	public function new(v:T) this.v = v;
+	public function getter():Void->T return () -> v;
+}
+class P {
+	static var sf:Int->Int = function(x) return x + 1;
+	var cb:Void->Int;
+	function new() {
+		cb = () -> 1;
+	}
+	function inst():Void->P return () -> this;
+	static function mk():Void->Int return () -> 42;
+	static function mkCap(n:Int):Void->Int return () -> n;
+	static function show(f:Dynamic) {
+		Sys.println(Std.string(f) + " | " + Type.getClassName(Type.getClass(f)) + " | " + Type.typeof(f) + " | " + Reflect.isFunction(f));
+	}
+	static function main() {
+		show(() -> 1);
+		show(new P().inst());
+		show(sf);
+		show(new P().cb);
+		show(new G("s").getter());
+		var a = () -> 1; var b = () -> 2;
+		show(a);
+		show(b);
+		Sys.println(mk() == mk());
+		Sys.println(mkCap(1) == mkCap(1));
+		Sys.println(sf(1));
+		Sys.println(Reflect.isFunction(1));
+		try haxe.Serializer.run(a) catch (e:String) Sys.println(e);
+	}
+}
+===
+[run]
+P_main_19__Fun | P_main_19__Fun | TFunction | true
+P_inst_12__Fun | P_inst_12__Fun | TFunction | true
+P_Anon_7__Fun | P_Anon_7__Fun | TFunction | true
+P___hx_ctor__P_10__Fun | P___hx_ctor__P_10__Fun | TFunction | true
+G_getter_4__Fun`1[System.String] | G_getter_4__Fun | TFunction | true
+P_main_24__Fun_0 | P_main_24__Fun_0 | TFunction | true
+P_main_24__Fun | P_main_24__Fun | TFunction | true
+True
+False
+2
+False
+Cannot serialize function
+--- closure-generic @gencs
+class G<T> {
+	var v:T;
+	public function new(v:T) this.v = v;
+	public function getter():Void->T return () -> v;
+	public static function konst<U>(u:U):Void->U return () -> u;
+	public function map<R>(f:T->R):Void->R return () -> f(v);
+}
+class P {
+	static function main() {
+		function id<T>(x:T):T return x;
+		Sys.println(id(3));
+		Sys.println(id("s"));
+		Sys.println(new G("gv").getter()());
+		Sys.println(new G(4).getter()() + 1);
+		Sys.println(G.konst(3.5)());
+		Sys.println(G.konst(true)());
+		Sys.println(new G(20).map(x -> x / 8)());
+		Sys.println(new G("ab").map(s -> s.length)());
+	}
+}
+===
+[run]
+3
+s
+gv
+5
+3.5
+True
+2.5
+2
+--- function-value-calls @gencs
+enum abstract Color(Int) { var Red = 1; var Blue = 2; }
+class Holder {
+	public var f:Int->Int;
+	public static var sf:String->String = s -> s + "?";
+	public function new() f = x -> x * 3;
+}
+class P {
+	static function main() {
+		var isPos = (n:Int) -> n > 0;
+		Sys.println(isPos(3));
+		var neg = (b:Bool) -> !b;
+		Sys.println(neg(false));
+		var col = function(c:Color):Color return c == Red ? Blue : Red;
+		Sys.println(col(Red));
+		var u = function(x:UInt):UInt return x + 1;
+		Sys.println(u(4));
+		var sg = function(x:Single):Single return x * 2;
+		Sys.println(sg(1.5));
+		var i64 = function(x:haxe.Int64):haxe.Int64 return x + 1;
+		Sys.println(i64(haxe.Int64.make(0, 5)));
+		var ni = function(x:Null<Int>):Null<Int> return x == null ? -1 : x + 1;
+		Sys.println(ni(null));
+		Sys.println(ni(2));
+		var nf = function(x:Null<Float>):Float return x == null ? 0.5 : x;
+		Sys.println(nf(null));
+		Sys.println(nf(4.25));
+		var dy = function(x:Dynamic):Dynamic return x;
+		Sys.println(dy(3));
+		Sys.println(dy("str"));
+		var vo:Int->Void = function(x:Int) {};
+		var r:Dynamic = (cast vo : Dynamic)(1);
+		Sys.println(r);
+		var h = new Holder();
+		Sys.println(h.f(5));
+		Sys.println(Holder.sf("q"));
+		var two:Dynamic = (a:Int, b:Int) -> a + b;
+		Sys.println(two(1, 2));
+		try two(1) catch (e:cs.system.ArgumentException) Sys.println("arity: " + e.Message);
+		var notf:Dynamic = 5;
+		try notf(1) catch (e:cs.system.InvalidCastException) Sys.println("not a function");
+		var len = function(s:String) return s.length;
+		Sys.println(Reflect.callMethod(null, len, ["four"]));
+		var fl = function(a:Float, b:Float) return a / b;
+		Sys.println(Reflect.callMethod(null, fl, [1, 4]));
+		var va:Dynamic = Reflect.makeVarArgs(function(args:Array<Dynamic>) return args.length + ":" + args.join("|"));
+		Sys.println(va(1, "x", 2.5));
+		Sys.println(va());
+		var arr = [3, 1, 2];
+		arr.sort((a, b) -> a - b);
+		Sys.println(arr);
+		Sys.println(arr.map(i -> i * 10));
+		Sys.println(arr.filter(i -> i != 2));
+		Sys.println(Lambda.fold(arr, (i, acc) -> i + acc, 0));
+		Sys.println(Lambda.exists(arr, i -> i == 3));
+	}
+}
+===
+[run]
+True
+True
+2
+5
+3
+6
+-1
+3
+0.5
+4.25
+3
+str
+
+15
+q?
+3
+arity: Wrong number of arguments
+not a function
+4
+0.25
+3:1|x|2.5
+0:
+[1,2,3]
+[10,20,30]
+[1,3]
+6
+True
+--- method-closures @gencs
+interface I {
+	function hello(n:Int):String;
+}
+class Base implements I {
+	public var tag:String;
+	public function new(t) tag = t;
+	public function hello(n:Int):String return tag + n;
+	public function area(w:Float, h:Float):Float return w * h;
+}
+class Sub extends Base {
+	override public function hello(n:Int):String return "sub" + n;
+	function baseHello(n:Int) return super.hello(n);
+	public function superHello():Int->String return baseHello;
+}
+class P {
+	static function twice(x:Int):Int return x * 2;
+	static function opt(a:Int, ?b:Int, c = 5):String return a + "," + b + "," + c;
+	static function main() {
+		var b = new Base("b");
+		var f = b.hello;
+		Sys.println(f(1));
+		b.tag = "B";
+		Sys.println(f(1));
+		var g = twice;
+		Sys.println(g(21));
+		var i:I = new Sub("s");
+		var h = i.hello;
+		Sys.println(h(2));
+		var bs:Base = new Sub("t");
+		var hb = bs.hello;
+		Sys.println(hb(3));
+		Sys.println((cast bs : Sub).superHello()(4));
+		var ar = b.area;
+		Sys.println(ar(2, 3.5));
+		var o = opt;
+		Sys.println(o(1));
+		Sys.println(o(1, 2));
+		Sys.println(o(1, 2, 3));
+		var dd:Dynamic = twice;
+		Sys.println(dd(4));
+		var d1:Dynamic = Reflect.field(b, "hello");
+		Sys.println(d1(5));
+		Sys.println(Reflect.callMethod(b, Reflect.field(b, "hello"), [7]));
+		Sys.println(Reflect.callMethod(null, twice, [8]));
+		var mx = Math.max;
+		Sys.println(mx(1, 2));
+		var pi = Std.parseInt;
+		Sys.println(pi("42"));
+		var up = "abc".toUpperCase;
+		Sys.println(up());
+		var sb = new StringBuf();
+		var add = sb.add;
+		add("z");
+		Sys.println(sb.toString());
+		Sys.println(Std.string(f) + " " + Std.string(g));
+	}
+}
+===
+[run]
+b1
+B1
+42
+sub2
+sub3
+t4
+7
+1,null,5
+1,2,5
+1,2,3
+8
+B5
+B7
+16
+2
+42
+ABC
+z
+haxe.lang.Closure haxe.lang.Closure
+--- closure-equality @gencs
+class C {
+	public function new() {}
+	public function m():String return "m";
+	public static function s():String return "s";
+}
+class P {
+	static function main() {
+		var c = new C();
+		var f1 = c.m;
+		var f2 = c.m;
+		Sys.println(f1 == f2);
+		Sys.println(f1 == f1);
+		Sys.println(Reflect.compareMethods(f1, f2));
+		Sys.println(Reflect.compareMethods(f1, new C().m));
+		Sys.println(Reflect.compareMethods(C.s, C.s));
+		var d1:Dynamic = c.m;
+		var d2:Dynamic = c.m;
+		Sys.println(d1 == d2);
+		var arr = [c.m];
+		Sys.println(arr.indexOf(c.m));
+		Sys.println(arr.contains(c.m));
+		Sys.println(arr.remove(c.m));
+		Sys.println(arr.length);
+		var anon = () -> "x";
+		var list:Array<Void->String> = [anon];
+		Sys.println(list.indexOf(anon));
+		Sys.println(list.remove(anon));
+		Sys.println(list.length);
+		var fd:Dynamic = c.m;
+		Sys.println(Reflect.compareMethods(fd, Reflect.field(c, "m")));
+	}
+}
+===
+[run]
+False
+True
+True
+False
+True
+False
+0
+False
+False
+1
+0
+True
+0
+True
+--- dynamic-int-results @gencs
+class P {
+	static function t(d:Dynamic):String return (cast d : cs.system.Object).GetType().Name;
+	static function main() {
+		var c = () -> 7;
+		var typed:Dynamic = c();
+		Sys.println(t(typed));
+		var fd:Dynamic = c;
+		var r:Dynamic = fd();
+		Sys.println(t(r));
+		Sys.println(t(Reflect.callMethod(null, c, [])));
+		var m = new Map<String, Dynamic>();
+		m.set("k", c());
+		Sys.println(t(m.get("k")));
+		Sys.println(haxe.Serializer.run(r) + " " + haxe.Serializer.run(m));
+		var f = (x:Int) -> x * 2;
+		var fdyn:Dynamic = f;
+		Sys.println(t(fdyn(3)) + " " + t(f(3)));
+	}
+}
+===
+[run]
+Int32
+Double
+Double
+Double
+i7 by1:ki7h
+Double Int32
+--- dynamic-methods @gencs
+class A {
+	public var n = 1;
+	public function new() {}
+	public dynamic function fmt(x:Int):String return "A" + (x + n);
+	public static dynamic function sfmt(x:Int):String return "S" + x;
+}
+class B extends A {
+	override public dynamic function fmt(x:Int):String return "B" + x;
+}
+class P {
+	static function main() {
+		var a = new A();
+		Sys.println(a.fmt(1));
+		a.fmt = x -> "new" + x;
+		Sys.println(a.fmt(2));
+		Sys.println(A.sfmt(3));
+		A.sfmt = x -> "news" + x;
+		Sys.println(A.sfmt(4));
+		var b = new B();
+		Sys.println(b.fmt(5));
+		var f = b.fmt;
+		Sys.println(f(6));
+		Sys.println(Reflect.field(a, "fmt")(7));
+		Sys.println(Reflect.fields(new A()));
+		Reflect.setField(a, "fmt", (x:Int) -> "set" + x);
+		Sys.println(a.fmt(8));
+		Sys.println(Type.getInstanceFields(A));
+	}
+}
+===
+[run]
+A2
+new2
+S3
+news4
+B5
+B6
+new7
+[fmt,n]
+set8
+[n,fmt]

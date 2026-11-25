@@ -1,0 +1,245 @@
+# Milestone 3c plan: access through companion-typed values (types notes §5; casts notes fact 1).
+#
+
+# Types notes §8.9 (probe access): G<Dynamic>, Array<Dynamic> and Map<String,Dynamic> members, typed ->
+# companion -> typed. Its commented-out takeAny(ai) is companion-access-array-any.
+--- companion-access @gencs
+// Member access through a companion-interface-typed value (G<Dynamic>, Array<Dynamic>, StringMap<Dynamic>).
+class G<T> {
+	public var v:T;
+	public var n:Int = 7;
+	public var s:String = "s";
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+	public function set(x:T):Void v = x;
+	public function plain():Int return n;
+	public function str(a:String):String return a + s;
+	public function gen<U>(u:U):U return u;
+	public var prop(get, set):Int;
+	function get_prop() return n * 2;
+	function set_prop(x:Int) return n = x;
+	public static function stat():Int return 1;
+}
+class P {
+	static function takeInt(g:G<Int>):Int return g.v;
+	static function takeDyn(g:G<Dynamic>):Dynamic return g.v;
+	static function takeAI(a:Array<Int>):Int return a.length;
+	static function takeAD(a:Array<Dynamic>):Int return a.length;
+	static function takeAny(a:Array<Any>):Int return a.length;
+	static function retD():Array<Dynamic> return [1, 2];
+	static function main() {
+		var g:G<Dynamic> = new G<Dynamic>(1);
+		Sys.println(g.v);
+		g.v = 2;
+		Sys.println(g.n);
+		g.n = 8;
+		g.n += 1;
+		Sys.println(g.get());
+		g.set(3);
+		Sys.println(g.plain());
+		Sys.println(g.str("a"));
+		Sys.println(g.gen(4));
+		Sys.println(g.prop);
+		g.prop = 5;
+		var gi:G<Int> = new G<Int>(10);
+		var gd:G<Dynamic> = gi; // typed -> companion
+		Sys.println(gd.v);
+		var back:G<Int> = cast gd; // companion -> typed
+		Sys.println(back.v);
+		Sys.println(takeInt(cast g));
+		Sys.println(takeDyn(gi));
+		var a:Array<Dynamic> = [1, "x", 3];
+		Sys.println(a.length);
+		a.push(4);
+		Sys.println(a[0]);
+		a[1] = "y";
+		for (x in a) Sys.print(x + ",");
+		Sys.println("");
+		var it = a.iterator();
+		Sys.println(it.hasNext());
+		Sys.println(a.join("-"));
+		Sys.println(a.indexOf(3));
+		Sys.println(a.pop());
+		var m = a.map(x -> Std.string(x));
+		Sys.println(m);
+		var f = a.filter(x -> x != null);
+		Sys.println(f.length);
+		var c = a.concat([9]);
+		Sys.println(c.length);
+		a.reverse();
+		Sys.println(a.copy());
+		var ai:Array<Int> = [1, 2, 3];
+		Sys.println(takeAD(ai));
+		var ad:Array<Dynamic> = ai;
+		Sys.println(ad.length);
+		var ai2:Array<Int> = cast ad;
+		Sys.println(ai2.length);
+		var a2:Array<Dynamic> = [5, 6];
+		Sys.println(takeAI(cast a2));
+		// takeAny(ai) is in companion-access-array-any: gencs writes C# that does not compile (CS0030).
+		var r = retD();
+		Sys.println(r.length);
+		var sm:Map<String, Dynamic> = new Map();
+		sm.set("a", 1);
+		Sys.println(sm.get("a"));
+		Sys.println(sm.exists("a"));
+		for (k in sm.keys()) Sys.println(k);
+		Sys.println(sm["a"]);
+		var nested:Array<Array<Dynamic>> = [[1], [2]];
+		Sys.println(nested[0].length);
+		var anon:{arr:Array<Dynamic>} = {arr: [1]};
+		Sys.println(anon.arr.length);
+		var dyn:Dynamic = g;
+		var g2:G<Dynamic> = dyn;
+		Sys.println(g2.v);
+		var g3:G<Int> = dyn;
+		Sys.println(g3.v);
+	}
+}
+===
+[run]
+1
+7
+2
+9
+as
+4
+18
+10
+10
+3
+10
+3
+1
+1,y,3,4,
+True
+1-y-3-4
+2
+4
+[1,y,3]
+3
+4
+[3,y,1]
+3
+3
+3
+2
+2
+1
+True
+a
+1
+1
+1
+3
+3
+
+# Recorded divergence (decision: Array<Int> passed as Array<Any> works in hxc). gencs's C# for this program
+# does not compile (CS0030), so there is no gencs run. Expected [run]: the length the callee sees.
+--- companion-access-array-any
+// Split from companion-access. An Array<Int> passed where Array<Any> is expected: Haxe unifies the two, and
+// gencs emits `(global::Array<object>) (ai)`, C# that does not compile (CS0030, types notes §5). hxc compiles
+// it and the callee sees the three elements. Recorded divergence (a gencs failure on a path that should work).
+class P {
+	static function takeAny(a:Array<Any>):Int return a.length;
+	static function main() {
+		var ai:Array<Int> = [1, 2, 3];
+		Sys.println(takeAny(ai));
+	}
+}
+===
+[run]
+3
+
+# Casts notes §6.2. No line needed splitting: its two throws (a string pushed into an Array<Int> held as
+# Array<Dynamic>, an Int pushed into an Array<String> one) come from genericCast on the typed array, which hxc
+# reproduces with companion typing; no line is a gencs throw on a path hxc makes work.
+--- cast-array-view @gencs
+// A typed Array<X> passed as Array<Dynamic>: gencs passes the same object (Array<Dynamic> is the companion
+// interface), so writes reach the caller's array and a wrong-typed write throws from genericCast. @gencs.
+class P {
+	static var sDyn:Array<Dynamic>;
+
+	static function takeDyn(a:Array<Dynamic>) {
+		a.push(99);
+		a[0] = 42;
+	}
+
+	static function takeDynStr(a:Array<Dynamic>)
+		a.push("s");
+
+	static function retDyn(a:Array<Int>):Array<Dynamic>
+		return a;
+
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("arg", () -> { var ai = [1, 2, 3]; takeDyn(ai); Std.string(ai); });
+		run("arg wrong type", () -> { var ai = [1, 2, 3]; takeDynStr(ai); Std.string(ai); });
+		run("local", () -> { var ai = [1, 2, 3]; var d:Array<Dynamic> = ai; d.push(4); Std.string(ai) + " " + (d == ai) + " " + Std.string(Type.typeof(d)); });
+		run("return", () -> { var ai = [1, 2, 3]; var d = retDyn(ai); d.push(4); Std.string(ai); });
+		run("static", () -> { var ai = [1, 2, 3]; sDyn = ai; sDyn.push(4); Std.string(ai); });
+		run("closure", () -> { var f:Array<Dynamic>->Void = takeDyn; var ai = [1, 2]; f(ai); Std.string(ai); });
+		run("push 1.5 and '7' into int", () -> { var ai = [1]; var d:Array<Dynamic> = ai; d.push(1.5); d.push("7"); Std.string(ai); });
+		run("cast Str->Dyn push int", () -> { var ids = ["a", "b"]; var params:Array<Dynamic> = cast ids.copy(); params.push(5); Std.string(params); });
+		run("Dynamic write wrong", () -> { var ai = [1, 2]; var d:Dynamic = ai; d[0] = 2.5; d.push("7"); Std.string(ai); });
+		run("Box<Int> as Box<Dynamic>", () -> { var b = new Box<Int>(1); var t:Box<Dynamic> = b; t.v = 2.5; b.v; });
+	}
+}
+
+class Box<T> {
+	public var v:T;
+
+	public function new(v:T)
+		this.v = v;
+}
+===
+[run]
+arg: [42,2,3,99]
+arg wrong type: EXC System.FormatException: The input string 's' was not in a correct format.
+local: [1,2,3,4] true TClass(Array`1[System.Int32])
+return: [1,2,3,4]
+static: [1,2,3,4]
+closure: [42,2,99]
+push 1.5 and '7' into int: [1,2,7]
+cast Str->Dyn push int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+Dynamic write wrong: [2,2,7]
+Box<Int> as Box<Dynamic>: 2
+
+# Types notes §8.11 (probe enumargs): enum constructor arguments of generic class types.
+--- generic-enum-arguments @gencs
+// Enum constructor arguments of generic class types: gencs's field and parameter types.
+class C { public function new() {} }
+class G<T> { public var v:T; public function new(v:T) this.v = v; }
+enum En<T> {
+	Ca(a:Array<T>);
+	Cb(a:Array<Dynamic>);
+	Cc(a:Array<Int>);
+	Cd(g:G<C>);
+	Ce(x:T);
+	Cf(g:G<T>);
+	Cg(a:Array<Null<T>>);
+}
+class P {
+	static function main() {
+		var e = Ca([1]);
+		switch (e) { case Ca(a): Sys.println(a.length + " " + Type.getClass(a)); case _: }
+		var f:En<Int> = Cf(new G(1));
+		switch (f) { case Cf(g): Sys.println(Type.getClass(g)); case _: }
+		var b:En<Int> = Cb([1, "a"]);
+		Sys.println(Type.enumParameters(b));
+	}
+}
+===
+[run]
+1 Array`1[System.Int32]
+G`1[System.Int32]
+[[1,a]]

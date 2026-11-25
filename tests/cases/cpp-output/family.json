@@ -1,0 +1,8 @@
+{
+	"name": "cpp-output",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "--main", "$module", "--cpp", "cppout", "-D", "no-compilation"]
+}

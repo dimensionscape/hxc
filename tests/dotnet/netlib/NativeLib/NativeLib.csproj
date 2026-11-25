@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>NativeLib</AssemblyName><Nullable>disable</Nullable><LangVersion>latest</LangVersion><GenerateDocumentationFile>false</GenerateDocumentationFile></PropertyGroup>
+  <!-- A real native library, the runtime's own System.IO.Compression.Native, copied as hxcprobe for this machine's
+       OS and CPU, and as hxcprobe and hxcprobeos for its OS alone, as a NuGet package lays out its native assets. -->
+  <PropertyGroup>
+    <ProbeDir>$(NetCoreRoot)shared/Microsoft.NETCore.App/$(BundledNETCoreAppPackageVersion)/</ProbeDir>
+    <ProbeRid>$(NETCoreSdkPortableRuntimeIdentifier)</ProbeRid>
+    <ProbeOs>$(ProbeRid.Substring(0, $(ProbeRid.LastIndexOf('-'))))</ProbeOs>
+    <ProbeSource>System.IO.Compression.Native.dll</ProbeSource>
+    <ProbeSource Condition="$([MSBuild]::IsOSPlatform('Linux'))">libSystem.IO.Compression.Native.so</ProbeSource>
+    <ProbeSource Condition="$([MSBuild]::IsOSPlatform('OSX'))">libSystem.IO.Compression.Native.dylib</ProbeSource>
+    <ProbePrefix Condition="!$([MSBuild]::IsOSPlatform('Windows'))">lib</ProbePrefix>
+    <ProbeExt>$([System.IO.Path]::GetExtension($(ProbeSource)))</ProbeExt>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(ProbeDir)$(ProbeSource)" Link="runtimes/$(ProbeRid)/native/$(ProbePrefix)hxcprobe$(ProbeExt)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(ProbeDir)$(ProbeSource)" Link="runtimes/$(ProbeOs)/native/$(ProbePrefix)hxcprobe$(ProbeExt)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(ProbeDir)$(ProbeSource)" Link="runtimes/$(ProbeOs)/native/$(ProbePrefix)hxcprobeos$(ProbeExt)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -25,11 +25,44 @@ class Numeric {
 			case _: Std.string(f);
 		}
 		return msvcrtExponent(s);
+		#elseif cs
+		return msvcrtExponent(printfG(f, precision == 18 && Globals.isWindows ? 17 : precision));
 		#else
 		// Interp type-check fallback; the native binary uses the C formatter
 		return Std.string(f);
 		#end
 	}
+
+	#if cs
+	// C's "%.<precision>g" on .NET, whose "E" and "F" formats give the exact decimal digits of a double:
+	// scientific when the exponent is below -4 or not below the precision, fixed otherwise, trailing zeros
+	// dropped, and an exponent of at least two digits.
+	public static function printfG(f:Float, precision:Int):String {
+		if (Math.isNaN(f)) return "nan";
+		if (!Math.isFinite(f)) return f > 0 ? "inf" : "-inf";
+		var inv = cs.system.globalization.CultureInfo.InvariantCulture;
+		var boxed:Dynamic = f;
+		var sci:String = cs.system.String.Format(inv, "{0:E" + (precision - 1) + "}", cs.NativeArray.make(boxed));
+		var ePos = sci.indexOf("E");
+		var negative = sci.charAt(ePos + 1) == "-";
+		var x = 0;
+		for (i in ePos + 2...sci.length) x = x * 10 + (sci.charCodeAt(i) - "0".code);
+		if (negative) x = -x;
+		function strip(s:String):String {
+			if (s.indexOf(".") < 0) return s;
+			var n = s.length;
+			while (s.charCodeAt(n - 1) == "0".code) n--;
+			if (s.charCodeAt(n - 1) == ".".code) n--;
+			return s.substr(0, n);
+		}
+		if (x < -4 || x >= precision) {
+			var ax = negative ? -x : x;
+			return strip(sci.substr(0, ePos)) + "e" + (negative ? "-" : "+") + (ax < 10 ? "0" : "") + ax;
+		}
+		var fixed:String = cs.system.String.Format(inv, "{0:F" + (precision - 1 - x) + "}", cs.NativeArray.make(boxed));
+		return strip(fixed);
+	}
+	#end
 
 	// Msvcrt's printf pads the %g exponent to at least three digits (1.5e+012); the UCRT snprintf hxc
 	// links pads to two. Normalize so folded float lexemes keep the three-digit form on Windows. The C

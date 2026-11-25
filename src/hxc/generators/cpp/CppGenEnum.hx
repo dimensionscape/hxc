@@ -62,7 +62,7 @@ class CppGenEnum {
 
 	function addInclude(w:CppWriter, path:Path):Void {
 		var guard = CppGenClass.joinPath(path, "_");
-		var incPath = CppGenClass.joinPath(path, "/");
+		var incPath = CppGenClass.includePrefix + CppGenClass.joinPath(path, "/");
 		w.writeHUnique("#ifndef INCLUDED_" + guard + "\n#include <" + incPath + ".h>\n#endif\n");
 	}
 

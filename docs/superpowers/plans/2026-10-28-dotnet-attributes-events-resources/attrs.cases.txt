@@ -1,0 +1,568 @@
+# Candidate tests/dotnet cases for milestone 4c, area attrs (attributes, nullable metadata, @:nativeGen).
+# @gencs cases: [run] is gencs's real output (probes under D:/_hxc4c/attrs/cases); refusals: proposed text.
+# @:strict on a tool model as the server app writes them: Description and Required on a @:nativeGen class's
+# @:property vars (the Property row, not the backing field), Range's (int,int) and (double,double) overloads
+# picked from the literal, named arguments, and an argument's @:strict, which gencs does not write. The
+# @:strict entries come out in reverse source order (strictMeta.ml prepends them). The externs are written
+# out so the case does not depend on hxcs's net-20 externs having DataAnnotations.
+--- serverapp-strict-tool-model @gencs
+import cs.system.reflection.BindingFlags;
+
+@:native("System.ComponentModel.DescriptionAttribute") extern class DescriptionAttribute extends cs.system.Attribute {
+	public function new(d:String);
+	public var Description(default, never):String;
+}
+@:native("System.ComponentModel.DataAnnotations.RequiredAttribute") extern class RequiredAttribute extends cs.system.Attribute {
+	public function new();
+	public var AllowEmptyStrings:Bool;
+}
+@:native("System.ComponentModel.DataAnnotations.RangeAttribute") extern class RangeAttribute extends cs.system.Attribute {
+	@:overload public function new(a:Int, b:Int);
+	@:overload public function new(a:Float, b:Float);
+	public var Minimum(default, never):Dynamic;
+	public var ErrorMessage:String;
+}
+
+// A tool model as the server app writes them: @:strict attributes on a @:nativeGen class's @:property vars.
+@:nativeGen
+@:strict(DescriptionAttribute("the model"))
+class Search_Model {
+	public function new() {}
+	@:strict(DescriptionAttribute("Text to search for."))
+	@:strict(RequiredAttribute)
+	@:property public var text:String = "";
+	@:strict(DescriptionAttribute("Maximum results."))
+	@:property public var limit:Int = 10;
+	@:strict(RequiredAttribute({AllowEmptyStrings: true}))
+	@:strict(RangeAttribute(1, 5, {ErrorMessage: "out of range"}))
+	public var plain:Int = 0;
+	@:strict(RangeAttribute(1.5, 5))
+	public var real:Float = 0;
+	@:strict(DescriptionAttribute("a method")) public function run(@:strict(DescriptionAttribute("arg, not written")) q:String):Int return 0;
+	@:strict(DescriptionAttribute("static")) public static function make():Search_Model return new Search_Model();
+}
+
+class P {
+	static function show(a:Dynamic):String {
+		if (Std.isOfType(a, DescriptionAttribute)) return "Description(" + (a : DescriptionAttribute).Description + ")";
+		if (Std.isOfType(a, RangeAttribute)) { var r:RangeAttribute = a; return "Range(" + Std.string(r.Minimum) + " " + cs.Lib.toNativeType(Type.getClass(r.Minimum)).Name + ", " + r.ErrorMessage + ")"; }
+		if (Std.isOfType(a, RequiredAttribute)) return "Required(" + (a : RequiredAttribute).AllowEmptyStrings + ")";
+		return Std.string(a);
+	}
+	static function list(label:String, attrs:cs.NativeArray<Dynamic>) {
+		Sys.println(label + ": " + [for (i in 0...attrs.Length) show(attrs[i])].join(" "));
+	}
+	static function main() {
+		var t = cs.Lib.toNativeType(Search_Model);
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		list("class", t.GetCustomAttributes(false));
+		for (n in ["text", "limit"]) list("property " + n, t.GetProperty(n).GetCustomAttributes(false));
+		for (n in ["plain", "real"]) list("field " + n, t.GetField(n, all).GetCustomAttributes(false));
+		for (n in ["run", "make"]) list("method " + n, t.GetMethod(n, all).GetCustomAttributes(false));
+		list("parameter q", t.GetMethod("run", all).GetParameters()[0].GetCustomAttributes(false));
+		var bf = t.GetField("<text>k__BackingField", new cs.Flags(BindingFlags.NonPublic) | BindingFlags.Instance);
+		list("backing field", bf.GetCustomAttributes(false));
+	}
+}
+===
+[run]
+class: Description(the model)
+property text: Required(false) Description(Text to search for.)
+property limit: Description(Maximum results.)
+field plain: Range(1 Int32, out of range) Required(true)
+field real: Range(1.5 Double, null)
+method run: Description(a method)
+method make: Description(static)
+parameter q:
+backing field: System.Runtime.CompilerServices.CompilerGeneratedAttribute
+# @:meta forms gencs writes: a Haxe attribute class (hxgen, so Name is a field and the named argument is
+# FIELD 0x53) and a @:nativeGen one with typeof, string-array, enum, double and bool constructor overloads;
+# AllowMultiple from the class's own AttributeUsage; the hxgen constructor's attributes on the
+# (haxe.lang.EmptyObject) constructor; @:noCompletion as EditorBrowsable(Never), also on the interface
+# accessor Haxe generates; a typedef's @:meta on a parameter of that typedef's type; a @:nativeGen enum's
+# @:meta on its TypeDef. gencs drops @:meta(A, B) (two parameters), an hxgen enum's @:meta and an enum
+# constructor's; hxc refuses the first (attrs-refuse-meta-two-parameters) and matches the other two.
+--- attrs-meta-forms @gencs
+import cs.system.reflection.BindingFlags;
+
+// Attribute classes defined in Haxe: an hxgen one (fields as named arguments) and a @:nativeGen one.
+@:meta(System.AttributeUsage(System.AttributeTargets.All, AllowMultiple = true))
+class Tag extends cs.system.Attribute {
+	public var Name:String;
+	public var n:Int;
+	public function new(n:Int) { super(); this.n = n; }
+	public function toString():String return "Tag(" + n + (Name == null ? "" : ", Name=" + Name) + ")";
+}
+@:nativeGen
+@:meta(System.AttributeUsage(System.AttributeTargets.All, AllowMultiple = true))
+class TypeTag extends cs.system.Attribute {
+	public var t:cs.system.Type;
+	public var list:cs.NativeArray<String>;
+	public var kind:cs.system.AttributeTargets;
+	public var d:Float;
+	public var b:Bool;
+	public var s:String;
+	@:overload public function new(t:cs.system.Type) { super(); this.t = t; }
+	@:overload public function new(list:cs.NativeArray<String>) { super(); this.list = list; }
+	@:overload public function new(kind:cs.system.AttributeTargets) { super(); this.kind = kind; }
+	@:overload public function new(d:Float) { super(); this.d = d; }
+	@:overload public function new(b:Bool) { super(); this.b = b; }
+	@:overload public function new(s:String) { super(); this.s = s; }
+	public function toString():String {
+		return "TypeTag(" + (t != null ? "typeof " + t.FullName : list != null ? "[" + [for (i in 0...list.Length) list[i]].join(",") + "]"
+			: s != null ? "s=" + s : "kind=" + Std.string(kind) + " d=" + d + " b=" + b) + ")";
+	}
+}
+
+@:meta(Tag(1, Name = "one"))
+@:meta(Tag(2))
+@:meta(TypeTag(typeof(System.String)))
+@:meta(TypeTag(["a", "b"]))
+@:meta(TypeTag(System.AttributeTargets.Method))
+@:meta(TypeTag(1.5))
+@:meta(TypeTag(true))
+class C {
+	@:meta(Tag(3)) public function new() {}
+	@:meta(Tag(4)) @:meta(Tag(5)) public var v:Int = 0;
+	@:noCompletion public var hidden:Int = 0;
+	@:noCompletion public function hiddenM():Void {}
+	public var twoInOne:Int = 0;
+	public function takes(x:Tagged):Int return x;
+}
+
+@:meta(Tag(8)) typedef Tagged = Int;
+
+interface I {
+	@:meta(Tag(9)) function m():Void;
+	var x(get, never):Int;
+}
+
+@:meta(Tag(10)) enum HxEnum { A; }
+@:nativeGen @:meta(System.Flags) @:meta(Tag(11)) enum ClrEnum { X; @:meta(Tag(12)) Y; }
+
+class P {
+	static function list(label:String, attrs:cs.NativeArray<Dynamic>) {
+		var s = [for (i in 0...attrs.Length) Std.string(attrs[i])];
+		Sys.println(label + ": " + s.join(" "));
+	}
+	static function main() {
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var t = cs.Lib.toNativeType(C);
+		list("C", t.GetCustomAttributes(false));
+		var cs_ = t.GetConstructors(all);
+		var ctors = [for (i in 0...cs_.Length) Std.string(cs_[i]) + " " + [for (a in cs_[i].GetCustomAttributes(false)) Std.string(a)].join(" ")];
+		ctors.sort(Reflect.compare);
+		Sys.println("ctors: " + ctors.join("; "));
+		for (n in ["v", "hidden", "twoInOne"]) list("field " + n, t.GetField(n, all).GetCustomAttributes(false));
+		list("method hiddenM", t.GetMethod("hiddenM", all).GetCustomAttributes(false));
+		list("param x", t.GetMethod("takes", all).GetParameters()[0].GetCustomAttributes(false));
+		var it = cs.system.Type._GetType("I");
+		var ms = it.GetMethods();
+		var names = [for (i in 0...ms.Length) ms[i].Name + " " + [for (a in ms[i].GetCustomAttributes(false)) Std.string(a)].join(" ")];
+		names.sort(Reflect.compare);
+		Sys.println("I: " + names.join("; "));
+		list("HxEnum", cs.system.Type._GetType("HxEnum").GetCustomAttributes(false));
+		var ce = cs.system.Type._GetType("ClrEnum");
+		list("ClrEnum", ce.GetCustomAttributes(false));
+		list("ClrEnum.Y", ce.GetField("Y").GetCustomAttributes(false));
+	}
+}
+===
+[run]
+C: Tag(1, Name=one) Tag(2) TypeTag(typeof System.String) TypeTag([a,b]) TypeTag(kind=Method d=0 b=false) TypeTag(kind=0 d=1.5 b=false) TypeTag(kind=0 d=0 b=true)
+ctors: Void .ctor() ; Void .ctor(haxe.lang.EmptyObject) Tag(3)
+field v: Tag(4) Tag(5)
+field hidden: System.ComponentModel.EditorBrowsableAttribute
+field twoInOne:
+method hiddenM: System.ComponentModel.EditorBrowsableAttribute
+param x: Tag(8)
+I: get_x System.ComponentModel.EditorBrowsableAttribute; m Tag(9)
+HxEnum:
+ClrEnum: System.FlagsAttribute Tag(11)
+ClrEnum.Y:
+# Which DefaultValueAttribute constructor C# picks for each literal: (double), (int), (bool), (string), and
+# (string) for null, since string is the most specific reference-typed overload (blob 0100FF0000).
+--- attrs-constructor-overload-from-literal @gencs
+import cs.system.componentmodel.DefaultValueAttribute;
+
+// Which constructor C# picks for a literal argument: DefaultValueAttribute has (bool), (char), (double), (int),
+// (long), (object), (string), (float), (short), (byte), (Type, string) and more.
+class C {
+	public function new() {}
+	@:meta(System.ComponentModel.DefaultValueAttribute(1.5)) public var fl:Float = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(7)) public var it:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(-7)) public var neg:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(true)) public var bo:Bool = false;
+	@:meta(System.ComponentModel.DefaultValueAttribute("s")) public var st:String;
+	@:meta(System.ComponentModel.DefaultValueAttribute(null)) public var nu:String;
+	@:strict(DefaultValueAttribute(2.5)) public var sfl:Float = 0;
+}
+
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(C);
+		for (n in ["fl", "it", "neg", "bo", "st", "nu", "sfl"]) {
+			var a = t.GetField(n).GetCustomAttributes(false);
+			var d:DefaultValueAttribute = cast a[0];
+			var v = d.Value;
+			Sys.println(n + " " + a.Length + " " + (v == null ? "null" : Std.string(v) + " " + cs.Lib.toNativeType(Type.getClass(v)).Name));
+		}
+	}
+}
+===
+[run]
+fl 1 1.5 Double
+it 1 7 Int32
+neg 1 -7 Int32
+bo 1 true Boolean
+st 1 s String
+nu 1 null
+sfl 1 2.5 Double
+# Pseudo-custom attributes: StructLayout(Explicit) is the ExplicitLayout type flag and FieldOffset a
+# FieldLayout row; Serializable and NonSerialized are flags. None is a CustomAttribute row. hxcs's FPHelper
+# (Bytes.setDouble/getFloat and friends) depends on the first two; hxc today prints zeros for every line.
+--- attrs-pseudo-layout-and-serializable @gencs
+// Pseudo-custom attributes become flags and layout rows, not CustomAttribute rows: hxcs's own FPHelper
+// relies on StructLayout(Explicit) and FieldOffset(0) to reinterpret a float's bits.
+@:meta(System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit))
+@:struct @:nativeGen class Overlay {
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var i:Int;
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var f:Single;
+	@:meta(System.Runtime.InteropServices.FieldOffset(4)) public var hi:Int;
+	public function new(f:Single) { this.i = 0; this.hi = 7; this.f = f; }
+}
+@:meta(System.Serializable) class Ser {
+	public var a:Int = 1;
+	@:meta(System.NonSerialized) public var b:Int = 2;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var b = haxe.io.Bytes.alloc(16);
+		b.setDouble(0, 1.5);
+		b.setFloat(8, 2.25);
+		Sys.println(b.toHex());
+		Sys.println(b.getDouble(0) + " " + b.getFloat(8));
+		Sys.println(haxe.io.FPHelper.floatToI32(1.0) + " " + haxe.io.FPHelper.i32ToFloat(0x40490fdb));
+		var d = haxe.io.FPHelper.doubleToI64(1.0);
+		Sys.println(d.high + " " + d.low + " " + haxe.io.FPHelper.i64ToDouble(0, 0x3ff00000));
+		var o = new Overlay(1.0);
+		Sys.println(o.i + " " + o.hi);
+		var t = cs.Lib.toNativeType(Overlay);
+		Sys.println("explicit " + t.IsExplicitLayout + ", attributes " + t.GetCustomAttributes(false).Length);
+		var s = cs.Lib.toNativeType(Ser);
+		Sys.println("serializable " + s.IsSerializable + ", b not serialized " + s.GetField("b").IsNotSerialized + ", attributes " + s.GetCustomAttributes(false).Length);
+	}
+}
+===
+[run]
+000000000000f83f0000104000000000
+1.5 2.25
+1065353216 3.1415927410125732
+1072693248 0 1
+1065353216 7
+explicit true, attributes 0
+serializable true, b not serialized true, attributes 1
+# ThreadStatic, as hxcs's haxe.NativeStackTrace.exception uses it. hxc today shares the static: "other
+# thread saw 1, main still has 2".
+--- attrs-thread-static @gencs
+class P {
+	@:meta(System.ThreadStaticAttribute) static var perThread:Int;
+	static function main() {
+		perThread = 1;
+		var seen = -1;
+		var t = new cs.system.threading.Thread(() -> { seen = perThread; perThread = 2; });
+		t.Start();
+		t.Join();
+		Sys.println("other thread saw " + seen + ", main still has " + perThread);
+	}
+}
+===
+[run]
+other thread saw 0, main still has 1
+# A @:nativeGen class's constructor and methods get an overload per trailing optional argument (gencs.ml
+# get_overloads_for_optional_args), the constructors chaining with : this(...). The parameterless one is
+# what Type.createEmptyInstance and SK's model construction need; hxc today has only the full overloads and
+# createEmptyInstance throws MissingMethodException.
+--- attrs-nativegen-optional-overloads @gencs
+import cs.system.reflection.BindingFlags;
+// gencs gives a @:nativeGen class's constructor and methods an overload per trailing optional argument.
+@:nativeGen class NG {
+	public var a:Int;
+	public function new(?x:Int, y:String = "y") { a = x == null ? 9 : x; }
+	public function opt(a:Int, ?b:Int, c:String = "c"):String return a + "," + b + "," + c;
+	public static function sopt(?z:Float):String return "z=" + z;
+}
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(NG);
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var ms = t.GetMethods(all);
+		var sigs = [for (i in 0...ms.Length) Std.string(ms[i])];
+		var cs_ = t.GetConstructors(all);
+		for (i in 0...cs_.Length) sigs.push(Std.string(cs_[i]));
+		sigs.sort(Reflect.compare);
+		for (s in sigs) Sys.println(s);
+		var n:NG = Type.createEmptyInstance(NG);
+		Sys.println(n != null);
+		Sys.println(new NG().opt(1) + " " + NG.sopt());
+	}
+}
+===
+[run]
+System.String opt(Int32)
+System.String opt(Int32, haxe.lang.Null`1[System.Int32])
+System.String opt(Int32, haxe.lang.Null`1[System.Int32], System.String)
+System.String sopt()
+System.String sopt(haxe.lang.Null`1[System.Double])
+Void .ctor()
+Void .ctor(haxe.lang.Null`1[System.Int32])
+Void .ctor(haxe.lang.Null`1[System.Int32], System.String)
+True
+1,null,c z=null
+# Nullable metadata: the server app's build puts `#nullable enable` before every `namespace ai.tools {` of
+# gencs's output, and SK reads NullabilityInfoContext for the AI tool schemas. -D dotnet-nullable=<package>
+# (proposed) does the same for the modules of that package: every type of the module, other.Plain included
+# (the C# file is enabled from its first `namespace tools {` on). [run] is gencs's output with the server
+# app's patch applied by hand to g/src/tools/P.cs (verified); [gencs] is what the harness's unpatched gencs
+# build prints. Null<Int> (haxe.lang.Null<int>, a struct) and Nullable<int> read the same either way.
+--- attrs-nullable-opt-in @gencs @module=tools.P + -D dotnet-nullable=tools
+package tools;
+
+import cs.system.collections.generic.List_1;
+import cs.system.Nullable_1;
+
+@:native("System.Reflection.NullabilityInfoContext") extern class NullabilityInfoContext {
+	function new();
+	@:overload function Create(p:cs.system.reflection.PropertyInfo):NullabilityInfo;
+	@:overload function Create(p:cs.system.reflection.ParameterInfo):NullabilityInfo;
+	@:overload function Create(f:cs.system.reflection.FieldInfo):NullabilityInfo;
+}
+@:native("System.Reflection.NullabilityInfo") extern class NullabilityInfo {
+	var ReadState(default, never):NullabilityState;
+	var GenericTypeArguments(default, never):cs.NativeArray<NullabilityInfo>;
+	var ElementType(default, never):NullabilityInfo;
+}
+@:native("System.Reflection.NullabilityState") extern enum NullabilityState { Unknown; NotNull; Nullable; }
+
+// The namespace the server app's build patches with `#nullable enable` (here `tools`).
+@:nativeGen class Model {
+	public function new() {}
+	@:property public var name:String = "";
+	@:property public var count:Int = 0;
+	@:property public var maybe:Null<String> = null;
+	@:property public var tags:List_1<String> = new List_1<String>();
+	@:property public var when:Nullable_1<Int> = null;
+	@:property public var boxed:Null<Int> = null;
+	@:property public var any:Dynamic = null;
+	@:property public var arr:cs.NativeArray<String> = null;
+	public var field:String = "";
+	public function run(q:String, n:Null<Int>):String return q;
+}
+@:nativeGen @:native("other.Plain") class Plain {
+	public function new() {}
+	@:property public var name:String = "";
+}
+
+class P {
+	static function state(i:NullabilityInfo):String {
+		if (i == null) return "-";
+		var s = Std.string(i.ReadState);
+		var args = i.GenericTypeArguments;
+		if (args.Length > 0) s += "<" + [for (k in 0...args.Length) state(args[k])].join(",") + ">";
+		if (i.ElementType != null) s += "[" + state(i.ElementType) + "]";
+		return s;
+	}
+	static function main() {
+		var ctx = new NullabilityInfoContext();
+		var t = cs.Lib.toNativeType(Model);
+		for (n in ["name", "count", "maybe", "tags", "when", "boxed", "any", "arr"]) Sys.println(n + " " + state(ctx.Create(t.GetProperty(n))));
+		Sys.println("field " + state(ctx.Create(t.GetField("field"))));
+		var m = t.GetMethod("run");
+		var ps = m.GetParameters();
+		Sys.println("run(q " + state(ctx.Create(ps[0])) + ", n " + state(ctx.Create(ps[1])) + ") returns " + state(ctx.Create(m.ReturnParameter)));
+		Sys.println("Plain.name " + state(ctx.Create(cs.Lib.toNativeType(Plain).GetProperty("name"))));
+	}
+}
+===
+[run]
+name NotNull
+count NotNull
+maybe NotNull
+tags NotNull<NotNull>
+when Nullable
+boxed NotNull<NotNull>
+any NotNull
+arr NotNull[NotNull]
+field NotNull
+run(q NotNull, n NotNull<NotNull>) returns NotNull
+Plain.name NotNull
+[gencs]
+name Unknown
+count NotNull
+maybe Unknown
+tags Unknown<Unknown>
+when Nullable
+boxed NotNull<NotNull>
+any Unknown
+arr Unknown[Unknown]
+field Unknown
+run(q Unknown, n NotNull<NotNull>) returns Unknown
+Plain.name Unknown
+# @:cs.assemblyMeta and @:cs.assemblyStrict: assembly-level attributes, which gencs writes on the first
+# class of a module that has a package. hxc's StrictMeta port matches ":assemblyStrict" instead of
+# ":cs.assemblyStrict" today, and nothing writes either.
+--- attrs-assembly-meta @gencs @module=pk.A
+package pk;
+
+import cs.system.reflection.AssemblyCompanyAttribute;
+import cs.system.reflection.AssemblyDescriptionAttribute;
+
+// Assembly-level attributes: gencs writes them on the first class of a module that has a package.
+@:cs.assemblyMeta(System.Reflection.AssemblyDescriptionAttribute("described"))
+@:cs.assemblyStrict(AssemblyCompanyAttribute("company"))
+class A {
+	static function main() {
+		var asm = cs.Lib.toNativeType(A).Assembly;
+		var d:AssemblyDescriptionAttribute = cast cs.system.Attribute.GetCustomAttribute(asm, cs.Lib.toNativeType(AssemblyDescriptionAttribute));
+		var c:AssemblyCompanyAttribute = cast cs.system.Attribute.GetCustomAttribute(asm, cs.Lib.toNativeType(AssemblyCompanyAttribute));
+		Sys.println(d == null ? "no description" : d.Description);
+		Sys.println(c == null ? "no company" : c.Company);
+	}
+}
+===
+[run]
+described
+company
+# C# error CS0579 in gencs's build: DescriptionAttribute's AttributeUsage has AllowMultiple=false.
+--- attrs-refuse-duplicate
+import cs.system.componentmodel.DescriptionAttribute;
+class P {
+	@:strict(DescriptionAttribute("a")) @:strict(DescriptionAttribute("b")) static var dup:Int = 0;
+	static function main() { dup = 1; }
+}
+===
+[compile]
+P.hx:3: characters 11-36 : dotnet: System.ComponentModel.DescriptionAttribute is already on dup, and its AttributeUsage does not allow it more than once (C# error CS0579)
+# C# error CS0592 in gencs's build.
+--- attrs-refuse-invalid-target
+import cs.system.componentmodel.dataannotations.RangeAttribute;
+class P {
+	@:strict(RangeAttribute(1, 2)) static function badTarget():Void {}
+	static function main() badTarget();
+}
+===
+[compile]
+P.hx:3: characters 11-31 : dotnet: System.ComponentModel.DataAnnotations.RangeAttribute is not valid on a method; its AttributeUsage allows property, indexer, field, parameter (C# error CS0592)
+# C# error CS0246 (twice: NoSuchAttribute, NoSuchAttributeAttribute) in gencs's build.
+--- attrs-refuse-unknown-type
+class P {
+	@:meta(NoSuchAttribute) static var unknown:Int = 0;
+	static function main() unknown = 1;
+}
+===
+[compile]
+P.hx:2: characters 9-24 : dotnet: the attribute type NoSuchAttribute is not found, nor NoSuchAttributeAttribute (C# error CS0246)
+# C# error CS0616 in gencs's build.
+--- attrs-refuse-not-an-attribute
+class P {
+	@:meta(System.String) static var notAttr:Int = 0;
+	static function main() notAttr = 1;
+}
+===
+[compile]
+P.hx:2: characters 9-22 : dotnet: System.String is not an attribute class (C# error CS0616)
+# C# error CS1503 in gencs's build. With @:strict, Haxe's own typer reports this.
+--- attrs-refuse-constructor-arguments
+class P {
+	@:meta(System.ComponentModel.DescriptionAttribute(1)) static var badArgs:Int = 0;
+	static function main() badArgs = 1;
+}
+===
+[compile]
+P.hx:2: characters 9-54 : dotnet: no constructor of System.ComponentModel.DescriptionAttribute takes (Int) (C# error CS1503)
+# C# error CS0182 in gencs's build.
+--- attrs-refuse-not-constant
+class P {
+	@:meta(System.ComponentModel.DescriptionAttribute(P.x)) static var notConst:Int = 0;
+	static var x = "s";
+	static function main() notConst = 1;
+}
+===
+[compile]
+P.hx:2: characters 52-55 : dotnet: an attribute argument must be a constant, a typeof or an array of constants (C# error CS0182)
+# C# error CS0246 ('Nope' as a type name) in gencs's build; hxc names the member instead.
+--- attrs-refuse-unknown-named-argument
+class P {
+	@:meta(System.ComponentModel.DescriptionAttribute("ok", Nope = 1)) static var badNamed:Int = 0;
+	static function main() badNamed = 1;
+}
+===
+[compile]
+P.hx:2: characters 58-66 : dotnet: System.ComponentModel.DescriptionAttribute has no public field or settable property Nope (C# error CS0246)
+# C# error CS0121 in gencs's build: null converts to both overloads, and neither is more specific.
+--- attrs-refuse-ambiguous-null
+@:nativeGen class Two extends cs.system.Attribute {
+	@:overload public function new(s:String) { super(); }
+	@:overload public function new(a:cs.NativeArray<String>) { super(); }
+}
+class P {
+	@:meta(Two(null)) static var amb:Int = 0;
+	static function main() amb = 1;
+}
+===
+[compile]
+P.hx:6: characters 9-18 : dotnet: the call to Two's constructor is ambiguous between Two(String) and Two(cs.NativeArray<String>) (C# error CS0121)
+# gencs writes nothing for a @:meta with two parameters (gen_attributes matches one), so the
+# attributes are lost without a word; hxc refuses instead (a deliberate divergence).
+--- attrs-refuse-meta-two-parameters
+class P {
+	@:meta(System.ComponentModel.DescriptionAttribute("x"), System.ObsoleteAttribute("y")) static var two:Int = 0;
+	static function main() two = 1;
+}
+===
+[compile]
+P.hx:2: characters 9-56 : dotnet: @:meta takes one attribute; write one @:meta per attribute
+# @:meta("C# text") is pasted into gencs's C# as written. No real use; hxc refuses it rather than parse C#.
+--- attrs-refuse-meta-csharp-text
+class P {
+	@:meta("System.ComponentModel.DescriptionAttribute(\"raw\")") static var raw:Int = 0;
+	static function main() raw = 1;
+}
+===
+[compile]
+P.hx:2: characters 9-62 : dotnet: @:meta with C# text is not supported; write the attribute as an expression, like @:meta(System.ComponentModel.DescriptionAttribute("raw"))
+# gencs writes a non-physical var's attributes with no member after them, so C# attaches them to the
+# next member (here get_x's). hxc refuses (a deliberate divergence).
+--- attrs-refuse-non-physical-var
+class P {
+	@:meta(System.ObsoleteAttribute("x")) static var x(get, never):Int;
+	static function get_x() return 1;
+	static function main() Sys.println(x);
+}
+===
+[compile]
+P.hx:2: characters 9-38 : dotnet: x has no field or property in .NET (it is not physical), so its @:meta has nothing to go on; put it on get_x, or make x @:isVar or @:property
+# Haxe types an argument's @:strict, and gencs then drops it (it writes only a typedef's meta on a
+# parameter). hxc refuses rather than drop it (a deliberate divergence).
+--- attrs-refuse-strict-on-argument
+import cs.system.componentmodel.DescriptionAttribute;
+class P {
+	static function f(@:strict(DescriptionAttribute("q")) q:Int):Int return q;
+	static function main() f(1);
+}
+===
+[compile]
+P.hx:3: characters 29-54 : dotnet: @:strict on a function argument is not written (gencs drops it too); put the attribute on a typedef of the argument's type
+# Pseudo-custom attributes other than Serializable, NonSerialized, StructLayout, FieldOffset and
+# ThreadStatic (a real attribute) have no use in the apps or std: DllImport, MarshalAs, ComImport, MethodImpl,
+# PreserveSig, In, Out, Optional, SpecialName. gencs compiles this one (MethodImpl becomes the NoInlining
+# impl flag).
+--- attrs-refuse-pseudo-attribute
+class P {
+	@:meta(System.Runtime.CompilerServices.MethodImplAttribute(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)) static function f() {}
+	static function main() f();
+}
+===
+[compile]
+P.hx:2: characters 9-122 : dotnet: System.Runtime.CompilerServices.MethodImplAttribute is a pseudo-attribute (a flag, not an attribute row) and is not supported

@@ -321,15 +321,14 @@ enum ConstLattice {
 }
 
 class ConstPropagation {
-	static var lattice:IntMap<ConstLattice> = new IntMap();
-
-	static function getCell(i:Int):ConstLattice {
-		var r = lattice.get(i);
+	// The cells are the context's (constLattice), so each function analysed has its own.
+	static function getCell(ctx:AnalyzerContext, i:Int):ConstLattice {
+		var r:Null<ConstLattice> = ctx.constLattice.get(i);
 		return r == null ? Top : r;
 	}
 
-	static function setCell(i:Int, ct:ConstLattice):Void {
-		lattice.set(i, ct);
+	static function setCell(ctx:AnalyzerContext, i:Int, ct:ConstLattice):Void {
+		ctx.constLattice.set(i, ct);
 	}
 
 	// Physical equality of the module type payload
@@ -385,7 +384,7 @@ class ConstPropagation {
 					if (TypeFunctions.follow(v.type).match(TDynamic(_)) || TypeFunctions.hasVarFlag(v, VCaptured))
 						return Bottom;
 					else
-						return getCell(v.id);
+						return getCell(ctx, v.id);
 				case TBinop(OpAssign, _, e2):
 					return eval(bb, e2);
 				case TBinop(op, e1, e2):
@@ -482,7 +481,7 @@ class ConstPropagation {
 	}
 
 	static function init(ctx:AnalyzerContext):Void {
-		lattice = new IntMap();
+		ctx.constLattice = new IntMap();
 	}
 
 	static function commitAll(ctx:AnalyzerContext):Void {
@@ -490,7 +489,7 @@ class ConstPropagation {
 		// throw+catch is expensive and this is a hot site. The result is consumed immediately at three
 		// local call sites below, so a nullable return is observationally identical.
 		function inlineCell(e:TExpr, i:Int):Null<TExpr> {
-			return switch (getCell(i)) {
+			return switch (getCell(ctx, i)) {
 				case Top | Bottom | LEnumValue(_, _) | LNull(_):
 					null;
 				case LConst(ct):
@@ -555,8 +554,8 @@ class ConstPropagation {
 			equals: latEquals,
 			bottom: Bottom,
 			top: Top,
-			getCell: getCell,
-			setCell: setCell,
+			getCell: i -> getCell(ctx, i),
+			setCell: (i, ct) -> setCell(ctx, i, ct),
 			init: init,
 			commit: commitAll,
 			conditional: true
@@ -572,15 +571,14 @@ enum CopyLattice {
 }
 
 class CopyPropagation {
-	static var lattice:IntMap<CopyLattice> = new IntMap();
-
-	static function getCell(i:Int):CopyLattice {
-		var r = lattice.get(i);
+	// The cells are the context's (copyLattice), so each function analysed has its own.
+	static function getCell(ctx:AnalyzerContext, i:Int):CopyLattice {
+		var r:Null<CopyLattice> = ctx.copyLattice.get(i);
 		return r == null ? CopyTop : r;
 	}
 
-	static function setCell(i:Int, ct:CopyLattice):Void {
-		lattice.set(i, ct);
+	static function setCell(ctx:AnalyzerContext, i:Int, ct:CopyLattice):Void {
+		ctx.copyLattice.set(i, ct);
 	}
 
 	static function latEquals(t1:CopyLattice, t2:CopyLattice):Bool {
@@ -611,7 +609,7 @@ class CopyPropagation {
 	}
 
 	static function init(ctx:AnalyzerContext):Void {
-		lattice = new IntMap();
+		ctx.copyLattice = new IntMap();
 	}
 
 	static function commitAll(ctx:AnalyzerContext):Void {
@@ -623,9 +621,9 @@ class CopyPropagation {
 					// hxcpp. leave() clears the lattice cell - the side effect is the point, the null is
 					// only
 					// the exit.
-					var lat = getCell(v.id);
+					var lat = getCell(ctx, v.id);
 					inline function leave():Null<TExpr> {
-						lattice.remove(v.id);
+						ctx.copyLattice.remove(v.id);
 						return null;
 					}
 					var r:Null<TExpr> = switch (lat) {
@@ -671,8 +669,8 @@ class CopyPropagation {
 			equals: latEquals,
 			bottom: CopyBottom,
 			top: CopyTop,
-			getCell: getCell,
-			setCell: setCell,
+			getCell: i -> getCell(ctx, i),
+			setCell: (i, ct) -> setCell(ctx, i, ct),
 			init: init,
 			commit: commitAll,
 			conditional: false
@@ -905,10 +903,13 @@ class Run {
 				|| TypeFunctions.hasClassFieldFlag(cf, CfPostProcessed))
 			return;
 		var config = AnalyzerConfig.updateConfigFromMeta(com, config, cf.meta);
+		// The debug options print as they go: that is the main thread's.
+		if (!config.debugKind.match(DebugNone) || config.fusionDebug) hxc.core.Par.mainOnly();
 		var identifier = hxc.core.Globals.sTypePath(c.path) + "." + cf.name;
 		var actx = createAnalyzerContext(com, config, identifier, e);
 		var e = runOnExpr(actx, e);
 		e = reduceControlFlow(com, e);
+		if (hxc.core.Par.bailTest > 0 && identifier.length % hxc.core.Par.bailTest == 0) hxc.core.Par.mainOnly();
 		cf.expr = e;
 		// @:analyzer(full_debug) prints every collected stage AST.
 		if (config.debugKind.match(DebugFull)) {
@@ -939,19 +940,7 @@ class Run {
 		for (cf in c.orderedFields) processField(false, cf);
 		for (cf in c.orderedStatics) processField(true, cf);
 		if (c.constructor != null) processField(false, c.constructor);
-		if (c.init != null) {
-			var einit = c.init;
-			var tf = new TFunc([], einit.type, einit);
-			var e = TypeFunctions.mk(TFunction(tf), TypeFunctions.tfun([], einit.type), einit.pos);
-			var config2 = config.copy();
-			config2.optimize = false;
-			var actx = createAnalyzerContext(com, config2, hxc.core.Globals.sTypePath(c.path) + ".__init__", e);
-			var e = runOnExpr(actx, e);
-			switch (e.expr) {
-				case TFunction(tf): c.init = tf.expr;
-				case _: throw new TypingError("Malformed __init__ analyzer result", e.pos);
-			}
-		}
+		if (c.init != null) runOnInit(com, config, c);
 	}
 
 	static function runOnType(com:Context, config:AnalyzerConfig, t:ModuleType):Void {
@@ -966,7 +955,117 @@ class Run {
 		var config = AnalyzerConfig.getBaseConfig(com);
 		if (config.optimize && config.purityInference)
 			AnalyzerFusion.PurityInference.infer(com);
+		var threads = hxc.core.Par.threadCount();
+		if (threads > 1 && types.length >= 64) {
+			runOnTypesParallel(com, config, types, threads);
+			return;
+		}
 		for (t in types) runOnType(com, config, t);
+	}
+
+	// The fields runOnClass analyses, in its order (a field, then its overloads).
+	static function classFields(c:TClass):Array<TClassField> {
+		var out:Array<TClassField> = [];
+		function add(cf:TClassField):Void {
+			out.push(cf);
+			for (cf2 in cf.overloads) add(cf2);
+		}
+		for (cf in c.orderedFields) switch (cf.kind) {
+			case Var(_):
+			case _: add(cf);
+		}
+		for (cf in c.orderedStatics) add(cf);
+		if (c.constructor != null) switch (c.constructor.kind) {
+			case Var(_):
+			case _: add(c.constructor);
+		}
+		return out;
+	}
+
+	static function runOnInit(com:Context, config:AnalyzerConfig, c:TClass):Void {
+		var einit = c.init;
+		var tf = new TFunc([], einit.type, einit);
+		var e = TypeFunctions.mk(TFunction(tf), TypeFunctions.tfun([], einit.type), einit.pos);
+		var config2 = config.copy();
+		config2.optimize = false;
+		var actx = createAnalyzerContext(com, config2, hxc.core.Globals.sTypePath(c.path) + ".__init__", e);
+		var e = runOnExpr(actx, e);
+		switch (e.expr) {
+			case TFunction(tf): c.init = tf.expr;
+			case _: throw new TypingError("Malformed __init__ analyzer result", e.pos);
+		}
+	}
+
+	// runOnTypes over worker threads, one class at a time each. A field's result only replaces the field's
+	// expression once it is whole, so a field a worker gives up on (hxc.core.Par.bail, or any other
+	// exception) is as it was and is analysed again here, on the main thread, where a message or an error
+	// comes out as it would have. The variables each field makes are numbered afterwards, class by class and
+	// field by field, so every one has the id a one-thread run gives it.
+	static function runOnTypesParallel(com:Context, base:AnalyzerConfig, types:Array<ModuleType>, threads:Int):Void {
+		var units:Array<ParClass> = [];
+		for (t in types) switch (t) {
+			case TClassDecl(c) if (AnalyzerConfig.isIgnored(c.meta)):
+			case TClassDecl(c): units.push(new ParClass(c, classFields(c)));
+			case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
+		}
+		function attempt(run:Void->Void):Null<Array<TVar>> {
+			var seg = TypeFunctions.beginVarSegment();
+			var ok = try {
+				run();
+				true;
+			} catch (_:Dynamic) false;
+			TypeFunctions.endVarSegment();
+			return ok ? seg : null;
+		}
+		function redo(run:Void->Void):Void {
+			var seg = TypeFunctions.beginVarSegment();
+			try run() catch (e:Dynamic) {
+				TypeFunctions.endVarSegment();
+				TypeFunctions.varCapture = false;
+				throw e;
+			}
+			TypeFunctions.endVarSegment();
+			TypeFunctions.numberVarSegment(seg);
+		}
+		TypeFunctions.varCapture = true;
+		hxc.core.Par.forEach(threads, units.length, function(i) {
+			var u = units[i];
+			var c = u.c;
+			var config = try AnalyzerConfig.updateConfigFromMeta(com, base, c.meta) catch (_:Dynamic) null;
+			if (config == null) return;
+			u.config = config;
+			for (k in 0...u.fields.length) {
+				var cf = u.fields[k];
+				u.segments[k] = attempt(() -> runOnFieldSingle(com, config, c, cf));
+			}
+			if (c.init != null) u.initSegment = attempt(() -> runOnInit(com, config, c));
+		});
+		var redone = 0;
+		for (u in units) {
+			var c = u.c;
+			if (u.config == null) {
+				// The class's own options did not come out on a worker: from the top.
+				u.config = AnalyzerConfig.updateConfigFromMeta(com, base, c.meta);
+				redone++;
+			}
+			var config = u.config;
+			for (k in 0...u.fields.length) {
+				var seg = u.segments[k];
+				if (seg != null) TypeFunctions.numberVarSegment(seg) else {
+					var cf = u.fields[k];
+					redone++;
+					redo(() -> runOnFieldSingle(com, config, c, cf));
+				}
+			}
+			if (c.init != null) {
+				if (u.initSegment != null) TypeFunctions.numberVarSegment(u.initSegment) else {
+					redone++;
+					redo(() -> runOnInit(com, config, c));
+				}
+			}
+		}
+		TypeFunctions.varCapture = false;
+		if (hxc.core.Par.debug) hxc.core.HostStdio.err().writeString("[par] analyzer: " + threads + " threads, " + units.length + " classes, " + redone + " redone\n");
 	}
 
 	// Always optimize so const
@@ -976,5 +1075,21 @@ class Run {
 		config.optimize = true;
 		var actx = createAnalyzerContext(com, config, identifier, e);
 		return runOnExpr(actx, e);
+	}
+}
+
+// One class of a parallel run: its fields in order, and for each the variables its analysis made (null where
+// a worker gave the field up).
+private class ParClass {
+	public var c:TClass;
+	public var fields:Array<TClassField>;
+	public var config:Null<AnalyzerConfig> = null;
+	public var segments:Array<Null<Array<TVar>>>;
+	public var initSegment:Null<Array<TVar>> = null;
+
+	public function new(c:TClass, fields:Array<TClassField>) {
+		this.c = c;
+		this.fields = fields;
+		segments = [for (_ in fields) null];
 	}
 }

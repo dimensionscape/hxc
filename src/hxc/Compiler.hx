@@ -135,6 +135,10 @@ class Compiler {
 				var mb = Std.parseInt(wm);
 				if (mb != null) cpp.vm.Gc.setMinimumWorkingMemory(mb * 1024 * 1024);
 			}
+			// The collector keeps this much free after a collection, so that a build's early collections,
+			// which free little while the typed program is still growing, come less often: about 3% of a
+			// large build. HXCPP_MINIMUM_FREE_SPACE, which the runtime reads itself, still decides when set.
+			if (Sys.getEnv("HXCPP_MINIMUM_FREE_SPACE") == null) cpp.vm.Gc.setMinimumFreeSpace(512 * 1024 * 1024);
 			if (g == "off") cpp.vm.Gc.enable(false);
 			else if (g != null) {
 				var pct = Std.parseInt(g);
@@ -148,6 +152,8 @@ class Compiler {
 	// callMain): the static initializers run again, but a static without one keeps its value, so this flag
 	// has none, and on re-entry every such static goes back to its fresh-process value (ProcessState).
 	static var mainHasRun:Null<Bool>;
+	// The class paths addLibs took from `haxelib path`, by library, over the command line being expanded.
+	static var libraryClassPaths:Array<{classPath:String, library:String}> = [];
 
 	public static function main() {
 		if (mainHasRun == true) hxc.core.ProcessState.resetUninitializedStatics();
@@ -159,7 +165,7 @@ class Compiler {
 		// A completion answer raised anywhere in a one-shot compilation is written to stderr and the
 		// process exits 0.
 		try run(Sys.args())
-		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) Sys.stderr().writeString(mj.output)
+		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) hxc.core.HostStdio.err().writeString(mj.output)
 		// The top-level handler wraps the whole compilation, argument processing included: a bad argument
 		// and a plain failure both report "Error: " + msg at a NULL position, which prints with no
 		// location prefix. Without it an argument failure escapes to the hxcpp runtime and prints in its
@@ -191,7 +197,7 @@ class Compiler {
 			ctx.addDiagnostic(text, Position.nullPos);
 			flushPendingMessages(ctx);
 		} else {
-			Sys.stderr().writeString(text + "\n");
+			hxc.core.HostStdio.err().writeString(text + "\n");
 		}
 		hxc.compiler.HostRuntime.exit(1);
 	}
@@ -238,7 +244,7 @@ class Compiler {
 
 	static function runWaitStdio():Void {
 		hxc.core.BinaryStdio.setStdin();
-		runWaitLoop(Sys.stdin(), Sys.stderr());
+		runWaitLoop(Sys.stdin(), hxc.core.HostStdio.err());
 	}
 
 	// The STARTUP arguments are parsed before entering the wait loop, so a --cwd given when the server was
@@ -270,12 +276,12 @@ class Compiler {
 		}
 		var port = Std.parseInt(portStr);
 		if (port == null) {
-			Sys.stderr().writeString("Invalid port\n");
+			hxc.core.HostStdio.err().writeString("Invalid port\n");
 			hxc.compiler.HostRuntime.exit(1);
 		}
 		var sock = new sys.net.Socket();
 		try sock.connect(new sys.net.Host(host), port) catch (e:Dynamic) {
-			Sys.stderr().writeString("Couldn't connect on " + host + ":" + port + "\n");
+			hxc.core.HostStdio.err().writeString("Couldn't connect on " + host + ":" + port + "\n");
 			hxc.compiler.HostRuntime.exit(1);
 		}
 		runWaitLoop(sock.input, sock.output);
@@ -289,10 +295,12 @@ class Compiler {
 	static var liveMemFile:Null<String> = Sys.getEnv("HXC_DBG_LIVEMEM");
 
 	static function recordLiveMem():Void {
+		#if cpp
 		cpp.vm.Gc.run(true);
 		var out = sys.io.File.append(liveMemFile, false);
 		out.writeString(censusCount + " " + Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1024) + "\n");
 		out.close();
+		#end
 	}
 
 	// HXC_DBG_STATICCENSUS=N: a static-root census every N requests (HeapCensus.staticCensus).
@@ -315,7 +323,7 @@ class Compiler {
 		head.set(1, (body.length >> 8) & 0xFF);
 		head.set(2, (body.length >> 16) & 0xFF);
 		head.set(3, (body.length >> 24) & 0xFF);
-		Sys.stdout().flush();
+		hxc.core.HostStdio.out().flush();
 		stderr.write(head);
 		stderr.write(body);
 		stderr.flush();
@@ -517,10 +525,14 @@ class Compiler {
 		}
 		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:hxc.core.JsonRpc.InvalidArgument) fatalArgError(e.message, false)
+		// a .NET assembly the reader cannot read prints as the reference's raw exception
+		catch (e:hxc.codegen.dotnet.PeData.PeErrorMessage) fatalArgError(e.message, false)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
 	}
 
 	static function runInner(args:Array<String>):Void {
+		// Per request: the compile server runs several in one process.
+		libraryClassPaths = [];
 		hxc.core.BinaryStdio.set();
 		// The mono seams (create, bind, classify) route through TypeUnification; without this
 		// the printer's constraint rendering sees the CUnknown stub and drops " : Constraint".
@@ -544,7 +556,7 @@ class Compiler {
 			var stderr = proc.stderr.readAll();
 			var code = proc.exitCode();
 			proc.close();
-			if (stdout.length > 0) Sys.stdout().writeString(stdout.toString());
+			if (stdout.length > 0) hxc.core.HostStdio.out().writeString(stdout.toString());
 			if (stderr.length > 0) answerOut(stderr.toString());
 			if (code != 0) {
 				exitRequest(code);
@@ -560,6 +572,7 @@ class Compiler {
 		var waitAt = args.indexOf("--wait");
 		if (waitAt >= 0 && waitAt + 1 < args.length && args[waitAt + 1] == "stdio") {
 			applyStartupArgs(args);
+			hxc.core.ReadAhead.never = true;
 			runWaitStdio();
 			return;
 		}
@@ -570,6 +583,7 @@ class Compiler {
 			return;
 		}
 		var ctx = new Context();
+		ctx.libraryClassPaths = libraryClassPaths;
 		// The top-level handler holds the same context whose message list the argument handlers have been
 		// appending to, so an argument failure reports through that list rather than past it. Recorded
 		// here so the top-level handler can reach it.
@@ -783,9 +797,23 @@ class Compiler {
 					setPlatform(Neko);
 					targetDir = "neko";
 					ctx.file = argValue(args, i++, a);
-				case "-php" | "--php" | "-swf" | "--swf" | "-cs" | "--cs"
-					| "-python" | "--python" | "-lua" | "--lua"
-					| "-hl" | "--hl":
+				case "-cs" | "--cs":
+					// Set like for java. The cs std overlay imports cs.system types that resolve only
+					// once the .NET std DLLs (ctx.netStdFiles) are read.
+					setPlatform(Cs);
+					targetDir = "cs";
+					ownPackages = ["cs"];
+					ctx.file = argValue(args, i++, a);
+				case "--dotnet":
+					// (no single-dash alias); like --jvm, the cs platform with the dotnet define, so the IL
+					// generator writes the output.
+					ctx.defines.rawDefine("dotnet");
+					setPlatform(Cs);
+					targetDir = "cs";
+					ownPackages = ["cs"];
+					ctx.file = argValue(args, i++, a);
+				case "-php" | "--php" | "-swf" | "--swf"
+					| "-python" | "--python" | "-lua" | "--lua":
 					// Targets without a generator here; the output-file value must still be consumed
 					// so it does not parse as a compilation root.
 					if (targetTaken || platform != Cross) throw new ArgFailure("Multiple targets");
@@ -797,12 +825,16 @@ class Compiler {
 					ownPackages = switch (a) {
 						case "-php" | "--php": ["php"];
 						case "-swf" | "--swf": ["flash"];
-						case "-cs" | "--cs": ["cs"];
 						case "-python" | "--python": ["python"];
-						case "-lua" | "--lua": ["lua"];
-						case _: ["hl"];
+						case _: ["lua"];
 					};
 					i++;
+				case "-hl" | "--hl":
+					// No bytecode generator yet, but the platform is set for the same reason as -neko above.
+					setPlatform(Hl);
+					targetDir = "hl";
+					ownPackages = ["hl"];
+					ctx.file = argValue(args, i++, a);
 				case "--display":
 					ctx.displaySpec = argValue(args, i++, a);
 				case "-java-lib" | "--java-lib":
@@ -812,13 +844,17 @@ class Compiler {
 				case "--java-lib-extern":
 					// type checking only, so nothing of it is generated.
 					nativeLibs.push({file: argValue(args, i++, a), isExtern: true});
+				case "-net-lib" | "--net-lib":
+					// Like --java-lib; on cs a `@std` suffix marks the library as a std one.
+					nativeLibs.push({file: argValue(args, i++, a), isExtern: false});
+				case "-net-std" | "--net-std":
+					ctx.netStd.push(argValue(args, i++, a));
 				case "-c-arg" | "--c-arg":
 					// The argument is prepended to cArgs.
 					ctx.cArgs.unshift(argValue(args, i++, a));
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
 					| "--swf-version" | "-swf-header" | "--swf-header"
-					| "-net-lib" | "--net-lib" | "-net-std"
-					| "--net-std" | "--connect" | "--neko-lib-path":
+					| "--connect" | "--neko-lib-path":
 					// Options without an implementation here; the value must still be consumed.
 					// --neko-lib-path collects neko link paths; there is no neko generator here, so the
 					// directory is consumed and dropped.
@@ -841,8 +877,13 @@ class Compiler {
 					didSomething = true;
 				// `--help` answers with the usage screen and nothing else.
 				case "--help" | "-help" | "-h":
-					Sys.stdout().writeString(hxc.compiler.Usage.help());
-					Sys.stdout().flush();
+					hxc.core.HostStdio.out().writeString(hxc.compiler.Usage.help());
+					hxc.core.HostStdio.out().flush();
+					exitRequest(0);
+				// hxc's own defines and environment variables; `--help-defines` stays Haxe's list.
+				case "--help-hxc":
+					hxc.core.HostStdio.out().writeString(hxc.compiler.Usage.hxcHelp());
+					hxc.core.HostStdio.out().flush();
 					exitRequest(0);
 				case "--help-metas":
 					// MetaRegistry embeds meta.json verbatim, so the doc text is already here; only the
@@ -945,8 +986,8 @@ class Compiler {
 			// the target - a bare target flag prints the usage screen and never loads the std it just added.
 			// An argument that already did its job exits quietly instead.
 			if (!didSomething) {
-				Sys.stdout().writeString(hxc.compiler.Usage.text());
-				Sys.stdout().flush();
+				hxc.core.HostStdio.out().writeString(hxc.compiler.Usage.text());
+				hxc.core.HostStdio.out().flush();
 			}
 			flushPendingMessages(ctx);
 			return;
@@ -995,7 +1036,20 @@ class Compiler {
 				ctx.forbiddenPackages.remove("jvm");
 			}
 		}
+		if (platform == Cs && ctx.defines.rawDefined("dotnet")) Setup.addDotnetRuntime(ctx);
+		if (platform == Cs) hxc.codegen.dotnet.NetSetup.beforeGenerate(ctx);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
+		if (platform == Hl) {
+			// hl-ver defaults to the std's hl/hl_version, found through the class path and trimmed.
+			// hlc is defined when the output is a .c file.
+			if (!ctx.defines.rawDefined("hl_ver")) {
+				var vf = hxc.context.ModuleLoader.findFileOpt(ctx, "hl/hl_version");
+				if (vf == null || !sys.FileSystem.exists(vf))
+					throw "The file hl_version could not be found. Please make sure HAXE_STD_PATH is set to the standard library corresponding to the used compiler version.";
+				ctx.defines.rawDefineValue("hl_ver", StringTools.trim(sys.io.File.getContent(vf)));
+			}
+			if (ctx.file != null && StringTools.endsWith(ctx.file, ".c")) ctx.defines.rawDefine("hlc");
+		}
 		// Run while the arguments are processed: a --display request whose mode does not type the whole
 		// compile (usage, diagnostics and statistics do) defines `display` as that mode, "1" for the empty
 		// one. A JSON payload defines it once its method is known, below.
@@ -1153,7 +1207,7 @@ class Compiler {
 					// Every display mode EXCEPT the ones that report the compile itself ignores errors, and
 					// the typer consults that (ignoreError) at the handful of places where an error would
 					// cost the answer rather than describe it.
-					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
+					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
 					// Only the modes that report the COMPILE keep full typing. A mode that answers about
 					// one position leaves it false, and the field typer reads that to type only the field
 					// under the cursor.
@@ -1212,6 +1266,9 @@ class Compiler {
 				catch (_:hxc.compiler.DisplayXml.DisplayRaised) answeredBeforeTyping = true;
 			if (!answeredBeforeTyping) {
 				hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
+				// From here modules load as typing reaches them: their files are read ahead on worker
+				// threads until typing ends.
+				if (hxc.parser.Parser.displayFile == null) hxc.core.ReadAhead.start();
 				hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 				hxc.debug.LiveMark.mark("after init macros");
 				// The init-macro callbacks run after the stage changes and before root modules type.
@@ -1340,6 +1397,7 @@ class Compiler {
 				hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx, () -> TypeFields.typeAllModules(ctx));
 				TypeFields.typeAllModules(ctx);
 				tType();
+				hxc.core.ReadAhead.stop();
 				TypeFields.checkRecursiveAbstracts(ctx);
 			} catch (_:hxc.compiler.DisplayXml.DisplayRaised) {}
 			// A metadata argument containing the display position types as an expression so completion can
@@ -1648,6 +1706,7 @@ class Compiler {
 				ctx.diagnostics = ctx.diagnostics.filter(function(d) return d.printedOnly == true);
 				abortOnDiagnostics(ctx, platform);
 			}
+			var dotnetWritten = false;
 			{
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
@@ -1696,15 +1755,35 @@ class Compiler {
 						var tGen = hxc.core.Timer.timer(["generate", "java"]);
 						hxc.codegen.jvm.GenerateJvm.generate(ctx.jvmFlag, ctx);
 						tGen();
+					} else if (platform == Cs && ctx.defines.rawDefined("dotnet")) {
+						// --cs alone writes nothing; the dotnet define, which --dotnet sets, selects the IL generator.
+						ctx.log("Generating dotnet: " + ctx.file);
+						var tGen = hxc.core.Timer.timer(["generate", "dotnet"]);
+						hxc.codegen.dotnet.GenerateDotnet.generate(ctx);
+						tGen();
+						dotnetWritten = true;
+					} else if (platform == Hl) {
+						// The log line, the timer, the old output's removal and fix_overrides are in the generator.
+						hxc.codegen.hl.HlGenerate.generate(ctx);
 					}
 				}
 			}
+			// Haxe runs the after-generation callbacks only on output that was written: a generator error
+			// aborts its compile first. Here the generators report and carry on, so the abort is made here;
+			// otherwise a callback that packages the output (haxeui-cs's Android project, around the
+			// --dotnet assembly) builds from a file that was never written.
+			abortOnDiagnostics(ctx, platform);
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
 			// A generator error (a printed error during generation, e.g. a bad @:native code placeholder)
 			// fails
 			// the compile like the final error check does, so a real target that printed an error does not
 			// exit 0.
 			abortOnDiagnostics(ctx, platform);
+			// After the callbacks, which can still write to the output, and only from an assembly written without errors.
+			if (dotnetWritten && hxc.codegen.dotnet.Publish.wanted(ctx)) {
+				hxc.codegen.dotnet.Publish.publish(ctx);
+				abortOnDiagnostics(ctx, platform);
+			}
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.
@@ -1993,7 +2072,7 @@ class Compiler {
 			req.writeOut(b, 0, n);
 			return;
 		}
-		var out = Sys.stdout();
+		var out = hxc.core.HostStdio.out();
 		out.writeFullBytes(b, 0, n);
 		out.flush();
 	}
@@ -3391,7 +3470,7 @@ class Compiler {
 	// Writes a request answer to the wait-server buffer when one is active, or the
 	// process stderr in one-shot mode.
 	static function answerOut(sv:String):Void {
-		if (requestOutput != null) requestOutput.add(sv) else Sys.stderr().writeString(sv);
+		if (requestOutput != null) requestOutput.add(sv) else hxc.core.HostStdio.err().writeString(sv);
 	}
 
 	// The protocol envelope around a report-time answer.
@@ -4369,9 +4448,24 @@ class Compiler {
 		return null;
 	}
 
-	// Only the java target has a loader here; a directory contributes each .jar inside it .
-	static function registerNativeLibs(ctx:Context, platform:Platform, libs:Array<{file:String, isExtern:Bool}>):Void {
+	// The java and cs targets have a loader here; for java a directory contributes each .jar inside it.
+	public static function registerNativeLibs(ctx:Context, platform:Platform, libs:Array<{file:String, isExtern:Bool}>):Void {
 		if (libs.length == 0) return;
+		if (platform == Cs) {
+			// every library is registered, then every one is read
+			var added = [];
+			for (lib in libs) {
+				var parts = lib.file.split("@");
+				var isStd = switch (parts) {
+					case [_]: false;
+					case [_, "std"]: true;
+					case _: throw "unsupported file@`std` format: " + lib.file;
+				}
+				added.push(hxc.codegen.dotnet.NetSetup.addNetLib(ctx, parts[0], isStd, lib.isExtern));
+			}
+			for (l in added) l.load();
+			return;
+		}
 		if (platform != Java)
 			throw "Target " + hxc.core.Globals.platformName(platform)
 				+ " does not support native libraries (trying to load " + libs[0].file + ")";
@@ -4483,6 +4577,24 @@ class Compiler {
 				i = 0;
 				continue;
 			}
+			// A C# target likewise pulls in hxcs, as Haxe does, but only when it is installed: without it,
+			// hxc's own copy of hxcs's Mono reference assemblies serves (NetSetup, Netlib).
+			if ((a == "--cs" || a == "-cs" || a == "--dotnet") && hasValue) {
+				acc.push(a);
+				acc.push(l[i + 1]);
+				var rest = l.slice(i + 2);
+				// An explicit `-lib hxcs` still fails when it is not installed: only a found one is marked added.
+				if (!addedLibs.exists("hxcs")) {
+					var found = try addLibs(["hxcs"], rest) catch (_:ArgFailure) null;
+					if (found != null) {
+						addedLibs.set("hxcs", true);
+						rest = found.concat(rest);
+					}
+				}
+				l = rest;
+				i = 0;
+				continue;
+			}
 			// An hxml argument is NOT expanded when it follows -cmd, and one that cannot be read is pushed
 			// back as the literal `<arg> (file not found)`.
 			if (StringTools.endsWith(a, ".hxml") && !(acc.length > 0 && (acc[acc.length - 1] == "-cmd" || acc[acc.length - 1] == "--cmd"))) {
@@ -4544,17 +4656,24 @@ class Compiler {
 		// Each non-empty stripped line - a bare path is a class path, `-L <dir>` a neko link path, anything
 		// else a flag with the rest of the line after its first space.
 		var out:Array<String> = [];
+		// The class paths since the last library's `-D <name>=<version>` line, which names their library.
+		var pending:Array<String> = [];
 		for (line in stdout.split("\n")) {
 			var l = StringTools.trim(line);
 			if (l == "") continue;
 			if (l.charCodeAt(0) != "-".code) {
 				out.push("-cp");
 				out.push(l);
+				pending.push(l);
 				continue;
 			}
 			var sp = l.indexOf(" ");
 			var param = sp < 0 ? l : l.substr(0, sp);
 			var value = sp < 0 ? "" : l.substr(sp + 1);
+			if (param == "-D" && value.indexOf("=") > 0) {
+				for (cp in pending) libraryClassPaths.push({classPath: cp, library: value.substr(0, value.indexOf("="))});
+				pending = [];
+			}
 			if (param == "-L") {
 				out.push("--neko-lib-path");
 				out.push(l.substr(3));

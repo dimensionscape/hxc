@@ -1,0 +1,57 @@
+--- macro-resource-listed + --macro M.addTwo()
+class P {
+	static function main() {
+		for (n in haxe.Resource.listNames()) Sys.println(n + "=" + haxe.Resource.getString(n));
+	}
+}
+
+--- macro-resource-init-macro-string-args + --macro M.add('n','text')
+class P {
+	static function main() {
+		for (n in haxe.Resource.listNames()) Sys.println(n + "=" + haxe.Resource.getString(n));
+	}
+}
+
+--- macro-resource-added-while-typing-main
+class P {
+	static function main() {
+		M.add("late", "from an expression macro");
+		for (n in haxe.Resource.listNames()) Sys.println(n + "=" + haxe.Resource.getString(n));
+	}
+}
+
+--- macro-resource-replaces-cli + -resource cmd-a.txt@a --macro M.replaceA()
+class P {
+	static function main() {
+		for (n in haxe.Resource.listNames()) Sys.println(n + "=" + haxe.Resource.getString(n));
+	}
+}
+
+--- macro-resource-replaces-cli-after-others + -resource cmd-a.txt@a -resource cmd-b.txt@z --macro M.replaceA()
+class P {
+	static function main() {
+		for (n in haxe.Resource.listNames()) Sys.println(n + "=" + haxe.Resource.getString(n));
+	}
+}
+
+--- macro-resource-added-twice + --macro M.addTwo() --macro M.addTwo()
+class P {
+	static function main() {
+		M.add("m1", "again");
+		for (n in haxe.Resource.listNames()) Sys.println(n + "=" + haxe.Resource.getString(n));
+	}
+}
+
+--- macro-get-resources + -resource cmd-a.txt@a -resource cmd-b.txt@b
+class P {
+	static function main() {
+		M.report();
+	}
+}
+
+--- macro-get-resources-after-a-macro-adds + -resource cmd-a.txt@a --macro M.addTwo()
+class P {
+	static function main() {
+		M.report();
+	}
+}

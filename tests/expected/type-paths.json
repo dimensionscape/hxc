@@ -1,0 +1,5 @@
+{
+	"wildcard-import-finds-a-sub-type": "P.hx:2: characters 71-72 : Warning : wpk.Data",
+	"wildcard-import-sub-type-in-a-later-package": "P.hx:3: characters 65-66 : Warning : wpk.Data\nP.hx:3: characters 99-100 : Warning : wpk2.Other",
+	"wildcard-import-sub-type-not-found": "P.hx:2: characters 42-53 : Type not found : Def"
+}

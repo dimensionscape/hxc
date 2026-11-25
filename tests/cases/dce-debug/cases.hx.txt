@@ -1,0 +1,16 @@
+--- entry-points-and-removals
+class P {
+	static function main() { trace(new C().f() + Std.string(new D())); }
+}
+class C { public function new() {} public function f() return 1; public function g() return 2; }
+class D { public function new() {} }
+class Unused {}
+
+--- full-dce-entry-points-and-removals + -dce full
+class P {
+	static function main() { trace(new C().f() + Std.string(new D())); }
+}
+class C { public function new() {} public function f() return 1; public function g() return 2; }
+class D { public function new() {} }
+@:keep class Kept { public function k() {} }
+class Unused {}

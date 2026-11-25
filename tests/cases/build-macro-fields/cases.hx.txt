@@ -1,0 +1,86 @@
+--- local-class-has-no-fields-while-it-builds
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public static var sa = 0; public function new() {} }
+class B extends A { public var b:Int = 2; static var sb = 3; public function new() { super(); } }
+class P { static function main() { new B(); } }
+
+--- fields-are-checked-after-the-last-build
+@:autoBuild(M.dropInherited())
+@:autoBuild(M.keep())
+class A { public var a:Int = 1; public function new() {} }
+class B extends A { public var a:Int = 2; public var b:Int = 3; }
+class P { static function main() { new B().b; } }
+
+--- the-class-has-no-fields-between-its-builds
+@:build(M.keep())
+@:build(M.show())
+class P { var x:Int = 1; static function main() {} }
+
+--- a-subclass-has-no-fields-while-it-builds-its-parent
+@:build(M.peek(["B"]))
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public function new() {} }
+class B extends A { public var b:Int = 2; }
+class P { static function main() { new B().b; } }
+
+--- a-subclass-the-parents-build-reaches-builds-after-it
+class B extends A { public var b:Int = 2; }
+class C extends A { public var c:Int = 3; }
+@:build(M.peek(["B", "C"]))
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public function new() {} }
+class P { static function main() { new B().b + new C().c; } }
+
+--- a-grandchild-waits-on-the-same-parent
+class D extends B { public var d:Int = 4; }
+class B extends A { public var b:Int = 2; }
+@:build(M.peek(["D", "B"]))
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public function new() {} }
+class P { static function main() { new D().d; } }
+
+--- subclasses-another-module-loads-build-after-the-parent
+class P { static function main() { new MSubs.B().b + new MSubs.C().c; } }
+
+--- the-macro-api-builds-a-canceled-class-once-its-parent-is-built
+class B extends A { public var b:Int = 2; }
+@:build(M.peek(["B"]))
+class E { public function new() {} }
+@:build(M.peek(["B"]))
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public function new() {} }
+class P { static function main() { new B().b; new E(); } }
+
+--- a-subclass-a-building-parent-reaches-builds-after-it
+class C extends Q { public var c:Int = 3; }
+@:build(M.peek(["C"]))
+@:autoBuild(M.show())
+class G { public var g:Int = 1; public function new() {} }
+class Q extends G { public var p:Int = 2; }
+class P { static function main() { new C().c; } }
+
+--- a-build-canceled-again-with-nothing-built-between-is-a-loop
+class C extends Q { public var c:Int = 3; }
+@:build(M.peek(["C", "C"]))
+@:autoBuild(M.show())
+class G { public var g:Int = 1; public function new() {} }
+class Q extends G { public var p:Int = 2; }
+class P { static function main() { new C().c; } }
+
+--- a-grandchild-of-a-building-parent-is-a-loop
+class D extends C { public var d:Int = 4; }
+class C extends Q { public var c:Int = 3; }
+@:build(M.peek(["D"]))
+@:autoBuild(M.show())
+class G { public var g:Int = 1; public function new() {} }
+class Q extends G { public var p:Int = 2; }
+class P { static function main() { new D().d; } }
+
+--- add-metadata-builds-a-std-class-the-core-types-load + --macro addMetadata('@:build(M.show())','haxe.EnumTools')
+enum E { A; }
+class P { static function main() { haxe.EnumTools.getName(E); } }
+
+--- a-function-expression-with-a-null-kind-is-anonymous
+@:build(M.nullKindOverload())
+extern class E { static function f(i:Int):Void; }
+class P { static function main() { E.f("s"); E.f(1); E.f(true); } }

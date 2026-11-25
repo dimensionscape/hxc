@@ -1,0 +1,473 @@
+# Candidate tests/dotnet cases for milestone 4c's carried items (research area "carried").
+# Each @gencs case's [run] is gencs's real output (probe dirs under D:/_hxc4c/carried/probes/).
+# @netlib=CarLib: fixture source D:/_hxc4c/carried/netlib/CarLib/CarLib.cs -> tests/dotnet/netlib/CarLib/.
+# An interface a subclass lists, implemented by a final or inline method of its Haxe superclass. Roslyn makes
+# such a method of the same compilation `virtual final newslot` (B.m implements I in B already; B.n and the inline
+# B.k implement J and K only for D) and adds no stub; hxc refuses it ("a final inherited method"). Replaces
+# FromFinal's line in class-and-struct-declaration-errors.
+--- iface-method-inherited-final @gencs
+interface I { function m():Int; }
+interface J { function n():Int; }
+class B implements I {
+	public function new() {}
+	public final function m():Int return 1;
+	public final function n():Int return 2;
+	public inline function k():Int return 3;
+}
+interface K { function k():Int; }
+class D extends B implements I implements J implements K { public function new() super(); }
+class P {
+	static function main() {
+		var i:I = new D(), j:J = new D(), k:K = new D();
+		Sys.println(i.m() + " " + j.n() + " " + k.k());
+	}
+}
+===
+[run]
+1 2 3
+# haxe.ds.EnumValueMap re-lists IMap, whose keyValueIterator BalancedTree implements with an inline method
+# (virtual final newslot in BalancedTree, in hxc's DLL as in gencs's). A call through IMap keeps it, and hxc
+# leaves EnumValueMap out ("a final inherited method"); with -dce no it is the one std class left out.
+--- enum-value-map-imap-key-value-iterator @gencs
+enum E { A; B(x:Int); }
+class P { static function main() {
+  var m:haxe.Constraints.IMap<E, Int> = new haxe.ds.EnumValueMap<E, Int>();
+  m.set(B(2), 2); m.set(A, 1);
+  for (k => v in m) Sys.println(k + " " + v);
+  var it = m.keyValueIterator(); Sys.println(it.hasNext());
+} }
+===
+[run]
+A 1
+B(2) 2
+True
+# An @:overload override of G<C>'s g(x:Int):T that returns C: gencs's C# `public override C g(int x)` is a C#
+# covariant-return override, which Roslyn writes as `virtual newslot` S.g with PreserveBaseOverridesAttribute and
+# a MethodImpl row (body S::g, declaration G`1<object>::g(!0)). Reflection sees both g(Int32).
+--- haxe-override-overload-covariant-return @gencs
+class C { public function new() {} public function toString() return "C"; }
+class G<T> {
+	public function new() {}
+	@:overload public function g(x:Int):T return null;
+	@:overload public function g(x:String):String return "G.g(String)";
+}
+class S extends G<C> {
+	public function new() super();
+	@:overload override public function g(x:Int):C return new C();
+}
+class P {
+	static function main() {
+		var s = new S();
+		Sys.println(s.g(1));
+		var b:G<C> = s;
+		Sys.println(b.g(1));
+		Sys.println(b.g("x"));
+		var d:Dynamic = s;
+		Sys.println(d.g(1));
+		var m = [for (x in Type.getInstanceFields(S)) x]; m.sort(Reflect.compare); Sys.println(m);
+		var t = cs.Lib.toNativeType(S);
+		for (mi in t.GetMethods()) if (mi.Name == "g") Sys.println(Std.string(mi) + " " + mi.DeclaringType.Name);
+	}
+}
+===
+[run]
+C
+C
+G.g(String)
+C
+[G_cast,g,g,g]
+C g(Int32) S
+System.String g(System.String) G`1
+System.Object g(Int32) G`1
+# gencs's RenameTypeParameters: per class, a counter starting at 0 and the set of names in use (the class's type
+# parameters, then each field's own); a method type parameter whose name is taken becomes name + the next
+# counter value not taken, over the instance fields first, then the statics. Only GenericParam names show it.
+--- method-type-param-renamed @gencs
+class G<T> {
+	public function new() {}
+	public static function s<T>(x:T):T return x;
+	public function i<T>(x:T):T return x;
+	public function j<U>(x:U):U return x;
+}
+class K<T> extends G<T> {
+	public function new() super();
+	public function k<T>(x:T):T return x;
+}
+class L<T> {
+	public function new() {}
+	public static function s<T1, T>(a:T1, x:T):T return x;
+}
+class M {
+	public static function s<T>(x:T):T return x;
+}
+class P {
+	static function show(c:Class<Dynamic>) {
+		var t = cs.Lib.toNativeType(c);
+		var out = [];
+		for (m in t.GetMethods()) if (m.IsGenericMethodDefinition && m.DeclaringType == t) {
+			var ps = [for (a in m.GetGenericArguments()) a.Name];
+			out.push(m.Name + "<" + ps.join(",") + ">");
+		}
+		out.sort(Reflect.compare);
+		Sys.println(t.Name + " " + out.join(" "));
+	}
+	static function main() {
+		show(G); show(K); show(L); show(M);
+		Sys.println(G.s(1) + new G<String>().i(2) + new K<Int>().k(4) + L.s(1, 2) + M.s(3));
+	}
+}
+===
+[run]
+G`1 G_cast<T_c> __hx_cast<T_c_c> i<T1> j<U> s<T2>
+K`1 G_cast<T_c> K_cast<T_c> __hx_cast<T_c_c> k<T1>
+L`1 L_cast<T_c> __hx_cast<T_c_c> s<T1,T2>
+M s<T>
+12
+# A .NET base class's non-virtual method or property implementing an interface member for a Haxe subclass: Roslyn
+# adds a forwarding stub per accessor or method, `private final virtual newslot` named `car.INamed.get_Name`
+# (the interface's display name, no global::), body `ldarg.0; ldarg.N...; call Base::m; ret`, a MethodImpl row,
+# no Property row, after the class's own methods. Replaces the two *-base-nonvirtual-is-unsupported cases.
+--- netlib-iface-base-nonvirtual-forwarding-stub @gencs @netlib=CarLib
+import car.*;
+class HN extends BaseN implements INamed { public function new() super(); }
+class HG extends BaseGN implements IGreet { public function new() super(); }
+class HRW extends BaseRW implements IRW { public function new() super(); }
+class P {
+	static function main() {
+		Sys.println(Names.Read(new HN()));
+		Sys.println(Greets.Call(new HG()));
+		var h = new HG();
+		Sys.println(h.Greet("y"));
+		var g:IGreet = h;
+		Sys.println(g.Greet("z"));
+		Sys.println(RWs.Bump(new HRW()));
+	}
+}
+===
+[run]
+base
+basegn x
+basegn y
+basegn z
+10
+# A static non-physical @:property var: gencs's gen_prop makes a static property, public static SpecialName
+# get_x/set_x calling private static _get_x/_set_x, and the store's value is the argument (5, not 6). Replaces
+# property-var-static-accessors-is-unsupported.
+--- property-var-static-accessors @gencs
+class C {
+	static var n = 0;
+	@:property public static var x(get, set):Int;
+	static function get_x():Int return n * 10;
+	static function set_x(v:Int):Int { n = v; return v + 1; }
+	@:property public static var y(get, never):String;
+	static function get_y():String return "y" + n;
+}
+class P {
+	static function main() {
+		C.x = 4;
+		Sys.println(C.x);
+		Sys.println(C.x = 5);
+		C.x += 2;
+		Sys.println(C.x + " " + C.y);
+		var d:Dynamic = C;
+		Sys.println(Reflect.field(C, "x") + " " + Reflect.getProperty(C, "x"));
+		var t = cs.Lib.toNativeType(C);
+		for (p in t.GetProperties()) Sys.println(p.Name + " " + p.CanRead + " " + p.CanWrite + " " + p.GetValue(null, null));
+	}
+}
+===
+[run]
+40
+5
+520 y52
+520 520
+y true false y52
+x true true 520
+# The same in a generic class: gencs's C# compiles it (a static property of C<T>, reached as C<object>.x), unlike
+# an instance one (CS0686).
+--- property-var-static-accessors-generic @gencs
+class C<T> {
+	static var n = 0;
+	@:property public static var x(get, set):Int;
+	static function get_x():Int return n * 10;
+	static function set_x(v:Int):Int { n = v; return v + 1; }
+	public function new() {}
+}
+class P { static function main() { C.x = 4; Sys.println(C.x); new C<Int>(); } }
+===
+[run]
+40
+# .NET methods as delegate method groups, as Roslyn writes them: a static one `ldnull; ldftn`, an instance one
+# `ldftn` on the receiver, a virtual one `dup; ldvirtftn Inst::Mul` (runs InstD's override), the overload of Ov
+# whose parameters are Invoke's (int), and a struct's method on a boxed copy (`box SVal; ldftn`).
+--- netlib-delegate-net-method-groups @gencs @netlib=CarLib + -D net-ver=40
+import car.*;
+class P {
+	static function main() {
+		Sys.println(Ext.Apply(Ext.Twice, 5));
+		var i = new Inst();
+		Sys.println(Ext.Apply(i.Add, 5));
+		var d:Inst = new InstD();
+		Sys.println(Ext.Apply(d.Mul, 5));
+		Sys.println(Ext.Apply(Ext.Ov, 5));
+		var s = new SVal(4);
+		Sys.println(Ext.Apply(s.Add, 5));
+	}
+}
+===
+[run]
+10
+8
+-5
+6
+9
+# The Haxe method groups hxc refuses: an @:overload method (the overload the typer chose, `dup; ldvirtftn
+# H::f(int32)`), a @:struct's method (`box S; ldftn S::add`), a method reached through a Dynamic instantiation's
+# companion interface (`dup; ldvirtftn G::f`, the interface method), and a structure's field (gencs reads it
+# with Runtime.getField and wraps it, as any other function value).
+--- delegate-haxe-method-groups-more @gencs @netlib=CarLib + -D net-ver=40
+import car.*;
+class H {
+	public function new() {}
+	@:overload public function f(x:Int):Int return x + 100;
+	@:overload public function f(x:String):String return x + "?";
+}
+@:struct class S {
+	public var k:Int;
+	public function new(k) this.k = k;
+	public function add(x:Int):Int return x + k;
+}
+class G<T> {
+	public var t:T;
+	public function new(t) this.t = t;
+	public function f(x:Int):Int return x + 1000;
+}
+class A {
+	public function new() {}
+	public function f(x:Int):Int return x + 10;
+}
+class P {
+	static function main() {
+		var h = new H();
+		Sys.println(Ext.Apply(h.f, 5));
+		var s = new S(7);
+		Sys.println(Ext.Apply(s.add, 5));
+		var g:G<Dynamic> = new G<String>("s");
+		Sys.println(Ext.Apply(g.f, 5));
+		var o:{function f(x:Int):Int;} = new A();
+		Sys.println(Ext.Apply(o.f, 5));
+	}
+}
+===
+[run]
+105
+12
+1005
+15
+# A hand-written extern whose .NET method is generic (Ovl.G<T>(T)), called with an argument typed by a type
+# parameter: C# infers T as that type parameter (`call Ovl::G<!0>`, no box), so typeof(T) is the instantiation's
+# type. hxc boxes the value and calls G<object>. F(x:Any) stays F(object), as in gencs.
+--- netlib-extern-type-parameter-argument-inference @gencs @netlib=CarLib
+@:native("car.Ovl") extern class O { static function G(x:Any):String; static function F(x:Any):String; }
+class H<U> {
+	public function new() {}
+	public function g(x:U):String return O.G(x);
+	public function f(x:U):String return O.F(x);
+}
+class P {
+	static function sg<V>(x:V):String return O.G(x);
+	static function main() {
+	Sys.println(new H<Int>().g(1));
+	Sys.println(new H<String>().g("s"));
+	Sys.println(sg(1.5));
+	var a:Any = 3;
+	Sys.println(O.G(a));
+	Sys.println(new H<Int>().f(1));
+} }
+===
+[run]
+G<Int32>
+G<String>
+G<Double>
+G<Object>
+F(object)
+# An argument of an unconstrained type parameter in inline C# to an overloaded .NET method: C# converts T only to
+# object, so Convert.ToString(object) binds. hxc refuses it ("may accept (!!0)": Convert.ToString(decimal) is
+# AUnknown before converts' type-parameter rule). Replaces inline-cs-null-type-param-is-an-error, whose
+# f(null : T) gencs prints as false, false.
+--- inline-cs-type-param-argument-overloaded @gencs
+class P {
+	static function f<T>(x:T):String {
+		return untyped __cs__("System.Convert.ToString({0})", x);
+	}
+	static function g<T>(x:T):String return cs.system.Convert.ToString(x);
+	static function h<T:haxe.Constraints.IMap<Int,Int>>(x:T):String return untyped __cs__("System.Convert.ToString({0})", x);
+	static function main() {
+		Sys.println(f("s") + " " + f(1) + " " + f(null));
+		Sys.println(g("s") + " " + g(1));
+		Sys.println(h(new Map<Int,Int>()));
+	}
+}
+===
+[run]
+s 1 
+s 1
+haxe.ds.IntMap`1[System.Int32]
+# SILENT TODAY: a @:nativeGen class's type parameter with an interface constraint is `where T : IComparable` in
+# gencs's C#, so a hand-written extern call or inline C# with a T argument binds H(IComparable). hxc writes no
+# GenericParamConstraint and binds H(object). hxc must match (constraint rows + T converts to its constraints)
+# or refuse ("hxc cannot tell which .NET overload C# picks for an argument of the constrained type parameter T").
+--- netlib-nativegen-constrained-type-param-argument @gencs @netlib=CarLib
+import car.*;
+@:native("car.Ovl") extern class O { static function H(x:Any):String; }
+class K implements cs.system.IComparable { public function new() {} public function CompareTo(o:Dynamic):Int return 0; }
+@:nativeGen class N<T:cs.system.IComparable> {
+	public function new() {}
+	public function b(x:T):String return O.H(x);
+	public function c(x:T):String return untyped __cs__("car.Ovl.H({0})", x);
+}
+class P {
+	static function main() {
+		var n = new N<K>();
+		Sys.println(n.b(new K()));
+		Sys.println(n.c(new K()));
+	}
+}
+===
+[run]
+H(IComparable)
+H(IComparable)
+# 4b Task 9's carried converts refinements: (a) Nullable<A> to Nullable<B> (int? to long? converts, so M(long?)
+# applies and a null picks N(int?) over N(long?)) and (c) array covariance (string[] to object[]: B(object[])
+# applies, and a null picks A(string[]) over A(object[])). hxc refuses all four today.
+--- netlib-extern-conversions-nullable-and-arrays @gencs @netlib=CarLib
+import cs.system.Nullable_1;
+@:native("car.Conv") extern class C {
+	static function N(x:Nullable_1<Int>):String;
+	@:native("N") static function N2(x:Dynamic):String;
+	static function M(x:Nullable_1<Int>):String;
+	static function A(a:cs.NativeArray<String>):String;
+	static function B(a:cs.NativeArray<String>):String;
+	@:native("C") static function C1(a:cs.NativeArray<String>):String;
+	@:native("A") static function A2(a:cs.NativeArray<Int>):String;
+}
+class P {
+	static function main() {
+		var ni = new Nullable_1<Int>(3);
+		trace(C.N(ni));
+		trace(C.N2(null));
+		trace(C.M(ni));
+		var sa = new cs.NativeArray<String>(1);
+		trace(C.A(sa));
+		trace(C.B(sa));
+		trace(C.C1(sa));
+		trace(C.A(null));
+	}
+}
+===
+[run]
+P.hx:14: N(int?)
+P.hx:15: N(int?)
+P.hx:16: M(long?)
+P.hx:18: A(string[])
+P.hx:19: B(object[])
+P.hx:20: C(params string[])
+P.hx:21: A(string[])
+# hxcs's @:classCode members of haxe.lang.Null<T>: _ofDynamic, op_Implicit(T) and op_Implicit(__NoValue__)
+# (SpecialName), and the nested class __NoValue__. The server app's C# passes a bool where a Haxe method takes
+# Null<Bool> 14 times, which compiles only through op_Implicit(T). If __NoValue__ stays out (nested types),
+# this case keeps hxc's [run] without it and gencs's under [gencs].
+--- nullable-csharp-operators @gencs
+class P {
+	static function main() {
+		var open = cs.system.Type.GetType("haxe.lang.Null`1");
+		var args = new cs.NativeArray<cs.system.Type>(1);
+		args[0] = cs.system.Type.GetType("System.Int32");
+		var t = open.MakeGenericType(args);
+		var names = [];
+		for (m in t.GetMethods()) if (m.IsStatic) names.push(m.Name + (m.IsSpecialName ? "*" : "") + "(" + [for (p in m.GetParameters()) p.ParameterType.Name].join(",") + ")");
+		names.sort(Reflect.compare);
+		Sys.println(names.join(" "));
+		var nested = [for (n in t.GetNestedTypes()) n.Name];
+		Sys.println(nested);
+		var call = new cs.NativeArray<Dynamic>(1);
+		call[0] = 5;
+		for (m in t.GetMethods()) if (m.Name == "op_Implicit" && m.GetParameters()[0].ParameterType == args[0]) {
+			var r:Dynamic = m.Invoke(null, call);
+			Sys.println(Std.string(r));
+		}
+		for (m in t.GetMethods()) if (m.Name == "_ofDynamic") Sys.println(Std.string(m.Invoke(null, call)));
+	}
+}
+===
+[run]
+_ofDynamic(Object) ofDynamic(Object) op_Implicit*(Int32) op_Implicit*(__NoValue__)
+[__NoValue__]
+5
+5
+# `{0}[i]` on a program class with __get/__set (its get_Item, 4b) and on an Array: gencs's C# binds the indexer.
+--- inline-cs-program-class-indexer @gencs
+class V {
+	var a:Array<Int> = [10, 20, 30];
+	public function new() {}
+	public function __get(i:Int):Int return a[i];
+	public function __set(i:Int, v:Int):Int return a[i] = v;
+}
+class P {
+	static function main() {
+		var v = new V();
+		var x:Int = untyped __cs__("{0}[1]", v);
+		Sys.println(x);
+		Sys.println(v.__get(2));
+		var arr = [1, 2, 3];
+		var y:Int = untyped __cs__("{0}[0]", arr);
+		Sys.println(y);
+	}
+}
+===
+[run]
+20
+30
+1
+# SILENT TODAY: a float literal rounded twice (decimal -> double -> float). 1.0000000596046447753906250001f is
+# just above the midpoint of 1 and the next float; the double rounds to the midpoint, which rounds to even (1).
+# Roslyn rounds once: 1.0000001192092896. hxc must round once, or refuse a literal whose double is a midpoint.
+--- inline-cs-float-literal-rounding @gencs
+class P {
+	static function main() {
+		var a:Float = untyped __cs__("(double)1.0000000596046447753906250001f");
+		var b:Float = untyped __cs__("(double)1.0000000596046447753906250000f");
+		var c:Float = untyped __cs__("(double)0.1f");
+		Sys.println(a + " " + b + " " + c);
+	}
+}
+===
+[run]
+1.0000001192092896 1 0.10000000149011612
+# Optional (j): gencs's method order, seen through .NET reflection: statics (sm) right after the constructors,
+# before the instance methods; hxc writes them after the instance members (a recorded divergence).
+--- member-order-statics-after-constructors @gencs
+class C {
+	public var a:Int = 1;
+	public static var s1 = 2;
+	public function new() {}
+	public function m1() {}
+	public static function sm() {}
+	public function m2() {}
+	public static var s2 = 3;
+}
+class P {
+	static function main() {
+		Sys.println(Type.getClassFields(C));
+		Sys.println(Type.getInstanceFields(C));
+		var t = cs.Lib.toNativeType(C);
+		Sys.println([for (m in t.GetMethods()) if (m.DeclaringType == t) m.Name].join(","));
+		Sys.println([for (m in t.GetFields()) m.Name].join(","));
+	}
+}
+===
+[run]
+[sm,s1,s2]
+[m1,m2,a]
+sm,m1,m2,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
+a,s1,s2

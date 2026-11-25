@@ -1,0 +1,957 @@
+# Manifest resources (4c). With no resource, haxe.Resource.content is still an empty array: gencs always
+# assigns it in Resource's static constructor. hxc at 7df87731 leaves it null, so listNames() throws.
+--- resource-list-names-empty @gencs
+class P {
+	static function main() {
+		Sys.println(haxe.Resource.listNames());
+		Sys.println(haxe.Resource.getString("x") == null);
+		Sys.println(haxe.Resource.getBytes("x") == null);
+		Sys.println(cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames().Length);
+	}
+}
+===
+[run]
+[]
+True
+True
+0
+# -resource files: each is the manifest resource "src.Resources." + the name escaped as haxe.Resource escapes it
+# (Path.escape(name, true): every byte but A-Z a-z 0-9 _ . / becomes -x<code>), so a name with slashes, dots
+# or "Resources." in it round-trips. Needs gencs.csproj.in to embed gencs's src/Resources (see NOTES §2.6).
+--- resource-file-names @gencs + --resource P.hx@P.hx --resource P.hx@dir/sub/p.txt --resource P.hx@with-dash.and.dots --resource P.hx@.leading --resource P.hx@UPPER --resource P.hx@x/Resources.y --resource P.hx@Resources.x --resource P.hx@a_b
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		Sys.println(names);
+		for (n in names) {
+			var b = haxe.Resource.getBytes(n);
+			Sys.println(n + " " + (haxe.Resource.getString(n) == b.toString()) + " " + b.length + " " + haxe.crypto.Md5.make(b).toHex());
+		}
+		var asm = cs.Lib.toNativeType(P).Assembly;
+		var mn = asm.GetManifestResourceNames();
+		var all = [for (i in 0...mn.Length) mn[i]];
+		all.sort(Reflect.compare);
+		for (n in all) Sys.println("manifest " + n + " " + asm.GetManifestResourceStream(n).Length);
+	}
+}
+===
+[run]
+[a_b,dir/sub/p.txt,x/Resources.y,.leading,P.hx,Resources.x,with-dash.and.dots,UPPER]
+a_b true 554 9664eecd6b0ba6518665194eb65a8028
+dir/sub/p.txt true 554 9664eecd6b0ba6518665194eb65a8028
+x/Resources.y true 554 9664eecd6b0ba6518665194eb65a8028
+.leading true 554 9664eecd6b0ba6518665194eb65a8028
+P.hx true 554 9664eecd6b0ba6518665194eb65a8028
+Resources.x true 554 9664eecd6b0ba6518665194eb65a8028
+with-dash.and.dots true 554 9664eecd6b0ba6518665194eb65a8028
+UPPER true 554 9664eecd6b0ba6518665194eb65a8028
+manifest src.Resources..leading 554
+manifest src.Resources.P.hx 554
+manifest src.Resources.Resources.x 554
+manifest src.Resources.UPPER 554
+manifest src.Resources.a_b 554
+manifest src.Resources.dir/sub/p.txt 554
+manifest src.Resources.with-x45dash.and.dots 554
+manifest src.Resources.x/Resources.y 554
+# A macro's Context.addResource: binary data (all 256 byte values), an empty resource, a UTF-8 BOM (kept:
+# getString does not strip it), CRLF, and a nested name, read back through haxe.Resource and through
+# Assembly.GetManifestResourceStream. hxc at 7df87731 drops macro resources silently (EvalStdLib
+# add_resource writes only the interpreter's own map), compiles with no error and throws in listNames.
+--- resource-macro-binary @gencs + --macro P.addRes()
+#if macro
+class P {
+	static function addRes() {
+		var all = haxe.io.Bytes.alloc(256);
+		for (i in 0...256) all.set(i, i);
+		haxe.macro.Context.addResource("all256.bin", all);
+		haxe.macro.Context.addResource("empty", haxe.io.Bytes.alloc(0));
+		haxe.macro.Context.addResource("bom.txt", haxe.io.Bytes.ofHex("efbbbf626f6d"));
+		haxe.macro.Context.addResource("utf8.txt", haxe.io.Bytes.ofString("h\u00e9llo \u20ac \u{1F600}\r\n"));
+		haxe.macro.Context.addResource("dir/sub/deep.bin", all.sub(128, 128));
+	}
+}
+#else
+class P {
+	static function hex(b:haxe.io.Bytes):String {
+		return b == null ? "null" : b.length + ":" + haxe.crypto.Md5.make(b).toHex();
+	}
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(n + " " + hex(haxe.Resource.getBytes(n)));
+		var all = haxe.Resource.getBytes("all256.bin");
+		var ok = all.length == 256;
+		for (i in 0...256) if (all.get(i) != i) ok = false;
+		Sys.println("all256 " + ok);
+		var s = haxe.Resource.getString("utf8.txt");
+		Sys.println("utf8 " + s.length + " " + StringTools.urlEncode(s));
+		var bom = haxe.Resource.getString("bom.txt");
+		Sys.println("bom " + bom.length + " " + bom.charCodeAt(0));
+		Sys.println("empty [" + haxe.Resource.getString("empty") + "] " + hex(haxe.Resource.getBytes("empty")));
+		// What C# code reading the assembly's manifest resources sees.
+		var asm = cs.Lib.toNativeType(P).Assembly;
+		var mn = asm.GetManifestResourceNames();
+		var sorted = [for (i in 0...mn.Length) mn[i]];
+		sorted.sort(Reflect.compare);
+		for (n in sorted) {
+			var st = asm.GetManifestResourceStream(n);
+			var buf = new cs.NativeArray<cs.types.UInt8>(cast st.Length);
+			var got = st.Read(buf, 0, buf.Length);
+			Sys.println("manifest " + n + " " + hex(haxe.io.Bytes.ofData(buf)) + " read=" + got);
+		}
+		var info = asm.GetManifestResourceInfo("src.Resources.all256.bin");
+		Sys.println("location " + info.ResourceLocation);
+	}
+}
+#end
+===
+[run]
+all256.bin 256:e2c865db4162bed963bfaa9ef6ac18f0
+bom.txt 6:4fa45acfff78d2b05847562a7640f90c
+dir/sub/deep.bin 128:16f404156c0500ac48efa2d3abc5fbcf
+empty 0:d41d8cd98f00b204e9800998ecf8427e
+utf8.txt 17:9611a2976038f372c8566861b47673a9
+all256 true
+utf8 12 h%C3%A9llo%20%E2%82%AC%20%F0%9F%98%80%0D%0A
+bom 4 65279
+empty [] 0:d41d8cd98f00b204e9800998ecf8427e
+manifest src.Resources.all256.bin 256:e2c865db4162bed963bfaa9ef6ac18f0 read=256
+manifest src.Resources.bom.txt 6:4fa45acfff78d2b05847562a7640f90c read=6
+manifest src.Resources.dir/sub/deep.bin 128:16f404156c0500ac48efa2d3abc5fbcf read=128
+manifest src.Resources.empty 0:d41d8cd98f00b204e9800998ecf8427e read=0
+manifest src.Resources.utf8.txt 17:9611a2976038f372c8566861b47673a9 read=17
+location Embedded, ContainedInManifestFile
+# listNames() is the reverse of the order OCaml's Hashtbl.iter visits the names (Context.resourceFoldOrder in
+# hxc, already used by the jvm and cpp generators), with -resource and macro names in one table; a name
+# added again keeps its place and takes the new bytes. hxc writes the ManifestResource rows in
+# resourceFoldOrder, the order hxcs passes them to csc.
+--- resource-list-names-order @gencs + --resource P.hx@first --macro P.addRes()
+#if macro
+class P {
+	static function addRes() {
+		for (i in 0...60) haxe.macro.Context.addResource("many/m" + i, haxe.io.Bytes.ofString("m" + i));
+		// A name added again keeps its place and takes the new bytes.
+		haxe.macro.Context.addResource("many/m7", haxe.io.Bytes.ofString("replaced"));
+	}
+}
+#else
+class P {
+	static function main() {
+		// listNames is the reverse of the hash table's bucket order, not the order the names were added in.
+		Sys.println(haxe.Resource.listNames().join(","));
+		Sys.println(haxe.Resource.getString("many/m7") + " " + haxe.Resource.getString("many/m59") + " " + (haxe.Resource.getBytes("first").length > 0));
+		Sys.println(cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames().Length);
+	}
+}
+#end
+===
+[run]
+many/m23,many/m45,many/m22,many/m48,many/m0,many/m20,many/m27,many/m44,many/m55,many/m26,many/m36,many/m57,many/m11,many/m47,many/m49,many/m16,many/m54,many/m6,many/m7,many/m8,many/m12,many/m19,many/m14,many/m9,many/m31,many/m28,many/m34,many/m43,many/m58,many/m1,many/m2,many/m59,many/m40,first,many/m38,many/m46,many/m35,many/m37,many/m21,many/m18,many/m5,many/m15,many/m24,many/m30,many/m33,many/m39,many/m50,many/m53,many/m41,many/m42,many/m52,many/m10,many/m25,many/m56,many/m3,many/m51,many/m17,many/m29,many/m32,many/m4,many/m13
+replaced m59 true
+61
+# C# code reading the hxc assembly's manifest resources (EvLib's res.Reader: GetManifestResourceNames,
+# GetManifestResourceStream, GetManifestResourceInfo).
+--- resource-csharp-reads-manifest @gencs @netlib=EvLib + --macro P.addRes()
+#if macro
+class P {
+	static function addRes() {
+		var all = haxe.io.Bytes.alloc(256);
+		for (i in 0...256) all.set(i, i);
+		haxe.macro.Context.addResource("all256.bin", all);
+		haxe.macro.Context.addResource("empty", haxe.io.Bytes.alloc(0));
+		haxe.macro.Context.addResource("dir/x.txt", haxe.io.Bytes.ofString("x"));
+	}
+}
+#else
+class P {
+	static function main() {
+		Sys.print(res.Reader.Dump(cs.Lib.toNativeType(P).Assembly));
+	}
+}
+#end
+===
+[run]
+src.Resources.all256.bin 256 e2c865db4162bed963bfaa9ef6ac18f0 Embedded, ContainedInManifestFile
+src.Resources.dir/x.txt 1 9dd4e461268c8034f5c8564e155c67a6 Embedded, ContainedInManifestFile
+src.Resources.empty 0 d41d8cd98f00b204e9800998ecf8427e Embedded, ContainedInManifestFile
+# A non-ASCII name: gencs escapes the name's UTF-8 bytes (é is -x195-x169) but haxe.Resource escapes its UTF-16
+# code units at run time (é is -x233), so under gencs getString returns null for a name listNames gives. hxc
+# names the resource the way the runtime looks it up, so it is found (recorded divergence; NOTES §2.4 Q2).
+--- resource-non-ascii-name @gencs + --macro P.addRes()
+#if macro
+class P {
+	static function addRes() {
+		haxe.macro.Context.addResource("caf\u00e9.txt", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("\u20ac", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("plain.txt", haxe.io.Bytes.ofString("ok"));
+	}
+}
+#else
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(StringTools.urlEncode(n) + " " + haxe.Resource.getString(n));
+		var mn = cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames();
+		var all = [for (i in 0...mn.Length) mn[i]];
+		all.sort(Reflect.compare);
+		for (n in all) Sys.println("manifest " + StringTools.urlEncode(n));
+	}
+}
+#end
+===
+[run]
+caf%C3%A9.txt ok
+plain.txt ok
+%E2%82%AC ok
+manifest src.Resources.-x8364
+manifest src.Resources.caf-x233.txt
+manifest src.Resources.plain.txt
+[gencs]
+caf%C3%A9.txt null
+plain.txt ok
+%E2%82%AC null
+manifest src.Resources.-x226-x130-x172
+manifest src.Resources.caf-x195-x169.txt
+manifest src.Resources.plain.txt
+# A backslash in a name: gencs's file name escapes it (-x92), hxcs's csc call names the unescaped path (a missing
+# file, CS1566), and the runtime keeps it, so gencs never finds it. hxc keeps it, as the runtime does.
+--- resource-backslash-name @gencs + --macro P.addRes()
+#if macro
+class P {
+	static function addRes() {
+		haxe.macro.Context.addResource("a\\b", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("c\\d/e", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("plain.txt", haxe.io.Bytes.ofString("ok"));
+	}
+}
+#else
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(StringTools.urlEncode(n) + " " + haxe.Resource.getString(n));
+		var mn = cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames();
+		var all = [for (i in 0...mn.Length) mn[i]];
+		all.sort(Reflect.compare);
+		for (n in all) Sys.println("manifest " + StringTools.urlEncode(n));
+	}
+}
+#end
+===
+[run]
+a%5Cb ok
+c%5Cd%2Fe ok
+plain.txt ok
+manifest src.Resources.a%5Cb
+manifest src.Resources.c%5Cd%2Fe
+manifest src.Resources.plain.txt
+[gencs]
+a%5Cb null
+c%5Cd%2Fe null
+plain.txt ok
+manifest src.Resources.a-x92b
+manifest src.Resources.c-x92d%2Fe
+manifest src.Resources.plain.txt
+# Two names that escape to one manifest name ("\x01" + "2" and "\x0c" are both -x12): gencs writes one file over
+# the other (csc: CS1508 duplicate resource; MSBuild: both names read the same bytes, as below). hxc refuses.
+--- resource-escape-collision-is-an-error + --macro P.addRes()
+#if macro
+class P {
+	static function addRes() {
+		// "\x01" then "2", and "\x0c": both escape to -x12.
+		haxe.macro.Context.addResource(String.fromCharCode(1) + "2", haxe.io.Bytes.ofString("one-two"));
+		haxe.macro.Context.addResource(String.fromCharCode(12), haxe.io.Bytes.ofString("twelve"));
+	}
+}
+#else
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(StringTools.urlEncode(n) + " " + haxe.Resource.getString(n));
+	}
+}
+#end
+===
+[compile]
+dotnet: the resources "\x0c" and "\x012" would both be the manifest resource src.Resources.-x12
+# Events defined in Haxe (4c): an @:event var with add_/remove_ bodies is a C# event whose public accessors call
+# the bodies, renamed _add_X/_remove_X and private (gencs's gen_event). Haxe calls of add_X/remove_X go through
+# the accessors (gencs writes s.Changed += h). The var is no field and no reflection field (@:skipReflection);
+# Type.getInstanceFields sees the event through .NET reflection. hxc at 7df87731 writes a public field for the
+# var and no event.
+--- event-custom-instance-and-static @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+import cs.system.reflection.BindingFlags;
+
+class Src {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void {
+		Sys.println("add_Changed");
+		handlers = handlers + h;
+	}
+	public function remove_Changed(h:EventHandler):Void {
+		Sys.println("remove_Changed");
+		handlers = handlers - h;
+	}
+	public function fire(tag:String) {
+		if (handlers != null) handlers.Invoke(tag, EventArgs.Empty) else Sys.println("nobody for " + tag);
+	}
+
+	@:event static var SChanged:EventHandler;
+	static var shandlers:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void {
+		Sys.println("add_SChanged");
+		shandlers = shandlers + h;
+	}
+	public static function remove_SChanged(h:EventHandler):Void {
+		shandlers = shandlers - h;
+	}
+	public static function sfire(tag:String) {
+		if (shandlers != null) shandlers.Invoke(tag, EventArgs.Empty) else Sys.println("nobody for " + tag);
+	}
+}
+
+class P {
+	static function main() {
+		var s = new Src();
+		var h = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("handler got " + o));
+		s.add_Changed(h);
+		s.fire("a");
+		s.remove_Changed(h);
+		s.fire("b");
+		Src.add_SChanged(h);
+		Src.sfire("c");
+		Src.remove_SChanged(h);
+		Src.sfire("d");
+		// What C# sees: an event per @:event var, whose public accessors call the Haxe add_/remove_.
+		var t = cs.Lib.toNativeType(Src);
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var evs = t.GetEvents(all);
+		for (i in 0...evs.Length) {
+			var e = evs[i];
+			var add = e.GetAddMethod(true), rem = e.GetRemoveMethod(true);
+			Sys.println("event " + e.Name + " : " + e.EventHandlerType + " attrs=" + e.Attributes + " add=" + add.Name + " (" + add.Attributes + ")"
+				+ " remove=" + rem.Name + " (" + rem.Attributes + ")");
+		}
+		var fs = t.GetFields(all);
+		var names = [for (i in 0...fs.Length) fs[i].Name];
+		names.sort(Reflect.compare);
+		Sys.println("fields " + names);
+		// C#'s `s.Changed += h`, through reflection.
+		t.GetEvent("Changed").AddEventHandler(s, (cast h : cs.system.Delegate));
+		s.fire("e");
+		t.GetEvent("SChanged").AddEventHandler(null, (cast h : cs.system.Delegate));
+		Src.sfire("f");
+		// Haxe reflection reaches add_/remove_ as methods, and the event var is no field of it.
+		Reflect.callMethod(s, Reflect.field(s, "remove_Changed"), [h]);
+		s.fire("g");
+		Sys.println(Reflect.fields(s));
+		Sys.println(Type.getInstanceFields(Src).filter(f -> f.indexOf("Changed") >= 0));
+		Sys.println(Type.getClassFields(Src).filter(f -> f.indexOf("Changed") >= 0));
+	}
+}
+===
+[run]
+add_Changed
+handler got a
+remove_Changed
+nobody for b
+add_SChanged
+handler got c
+nobody for d
+event SChanged : System.EventHandler attrs=None add=add_SChanged (Public, Static, HideBySig, SpecialName) remove=remove_SChanged (Public, Static, HideBySig, SpecialName)
+event Changed : System.EventHandler attrs=None add=add_Changed (Public, HideBySig, SpecialName) remove=remove_Changed (Public, HideBySig, SpecialName)
+fields [handlers,shandlers]
+add_Changed
+handler got e
+add_SChanged
+handler got f
+remove_Changed
+nobody for g
+[handlers]
+[add_Changed,remove_Changed,Changed]
+[add_SChanged,remove_SChanged,SChanged]
+# Empty add_/remove_ bodies: gencs writes a field-like C# event, whose private backing field the class reads
+# and writes as the var, and whose compiler-generated accessors combine into it with Interlocked.CompareExchange.
+# hxc at 7df87731 compiles this and loses every handler ("nobody for b").
+--- event-field-like @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+// Empty add_/remove_ bodies: gencs writes a field-like C# event (`public event EventHandler Changed;`), whose
+// compiler-generated accessors combine into a private backing field that the class reads as `Changed`.
+class Auto {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+	public function remove_Changed(h:EventHandler):Void {}
+	public function fire(tag:String) {
+		if (Changed != null) Changed.Invoke(tag, EventArgs.Empty) else Sys.println("nobody for " + tag);
+	}
+	public function clear() Changed = null;
+
+	@:event static var SChanged:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void {}
+	public static function remove_SChanged(h:EventHandler):Void {}
+	public static function sfire(tag:String) {
+		if (SChanged != null) SChanged.Invoke(tag, EventArgs.Empty) else Sys.println("nobody for " + tag);
+	}
+}
+
+class P {
+	static function main() {
+		var a = new Auto();
+		a.fire("a");
+		var h1 = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("one got " + o));
+		var h2 = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("two got " + o));
+		a.add_Changed(h1);
+		a.add_Changed(h2);
+		a.fire("b");
+		a.remove_Changed(h1);
+		a.fire("c");
+		a.clear();
+		a.fire("d");
+		Auto.add_SChanged(h1);
+		Auto.sfire("e");
+		var t = cs.Lib.toNativeType(Auto);
+		t.GetEvent("Changed").AddEventHandler(a, (cast h2 : cs.system.Delegate));
+		a.fire("f");
+		var e = t.GetEvent("Changed");
+		Sys.println("add " + e.GetAddMethod().Attributes);
+		var f = t.GetField("Changed", new cs.Flags(cs.system.reflection.BindingFlags.NonPublic) | cs.system.reflection.BindingFlags.Instance);
+		Sys.println("backing " + f.Name + " " + f.Attributes);
+		Sys.println(Reflect.fields(a));
+	}
+}
+===
+[run]
+nobody for a
+one got b
+two got b
+two got c
+nobody for d
+one got e
+two got f
+add Public, HideBySig, SpecialName
+backing Changed Private
+[]
+# A Haxe interface's @:event var: the interface declares the event, its accessors are the interface's add_/remove_
+# (abstract, SpecialName, CompilerGenerated), and the class's accessors implement them (virtual final newslot).
+--- event-haxe-interface @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+// A Haxe interface's @:event var is a C# interface event, whose accessors are the interface's add_/remove_.
+interface INotify {
+	@:event private var Changed:EventHandler;
+	function add_Changed(h:EventHandler):Void;
+	function remove_Changed(h:EventHandler):Void;
+}
+
+class Impl implements INotify {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void {
+		Sys.println("Impl.add_Changed");
+		handlers = handlers + h;
+	}
+	public function remove_Changed(h:EventHandler):Void {
+		handlers = handlers - h;
+	}
+	public function fire(tag:String) if (handlers != null) handlers.Invoke(tag, EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var i:INotify = new Impl();
+		var h = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o));
+		i.add_Changed(h);
+		(cast i : Impl).fire("a");
+		i.remove_Changed(h);
+		(cast i : Impl).fire("b");
+		for (t in [cs.Lib.toNativeType(INotify), cs.Lib.toNativeType(Impl)]) {
+			var e = t.GetEvent("Changed");
+			Sys.println(t.Name + " " + e.Name + " add=" + e.GetAddMethod().Attributes);
+		}
+		// C#'s `((INotify)x).Changed += h`, through the interface's EventInfo.
+		cs.Lib.toNativeType(INotify).GetEvent("Changed").AddEventHandler(i, (cast h : cs.system.Delegate));
+		(cast i : Impl).fire("c");
+	}
+}
+===
+[run]
+Impl.add_Changed
+got a
+INotify Changed add=Public, Virtual, HideBySig, VtableLayoutMask, Abstract, SpecialName
+Impl Changed add=Public, Final, Virtual, HideBySig, VtableLayoutMask, SpecialName
+Impl.add_Changed
+got c
+# A Haxe class implementing a .NET interface's event: C# subscribes with += through the interface
+# (callvirt INotify::add_Noted) and through EventInfo.AddEventHandler. hxc at 7df87731 refuses the class
+# ("events of .NET interfaces are not supported yet", TclassToIl.hx:787).
+--- netlib-event-implements-interface @gencs @netlib=EvLib
+import ev.*;
+class Src implements INotify {
+  public function new() {}
+  @:event var Noted:Note;
+  var h:Note;
+  public function add_Noted(n:Note):Void { Sys.println("Src.add_Noted"); h = h + n; }
+  public function remove_Noted(n:Note):Void { Sys.println("Src.remove_Noted"); h = h - n; }
+  public function fire(s:String) { if (h != null) h.Invoke(s); else Sys.println("nobody for " + s); }
+}
+class Plain {
+  public function new() {}
+  @:event var Changed:Note;
+  var h:Note;
+  public function add_Changed(n:Note):Void { h = h + n; }
+  public function remove_Changed(n:Note):Void { h = h - n; }
+  public function fire(s:String) { if (h != null) h.Invoke(s); else Sys.println("nobody for " + s); }
+  @:event static var SChanged:Note;
+  static var sh:Note;
+  public static function add_SChanged(n:Note):Void { sh = sh + n; }
+  public static function remove_SChanged(n:Note):Void { sh = sh - n; }
+  public static function sfire(s:String) { if (sh != null) sh.Invoke(s); else Sys.println("nobody for " + s); }
+}
+class P {
+  static function main() {
+    var s = new Src();
+    Use.Subscribe(s, "cs");
+    s.fire("a");
+    var i:INotify = s;
+    var d = new Note((x) -> Sys.println("haxe got " + x));
+    i.add_Noted(d);
+    s.fire("b");
+    i.remove_Noted(d);
+    s.fire("c");
+    Sys.println(Use.Events(cs.Lib.toNativeType(Src)));
+    Sys.println(Use.Reflect(s, "Noted"));
+    s.fire("d");
+    var p = new Plain();
+    Sys.println(Use.Events(cs.Lib.toNativeType(Plain)));
+    Sys.println(Use.Reflect(p, "Changed"));
+    p.fire("e");
+    Sys.println(Use.Reflect(cs.Lib.toNativeType(Plain), "SChanged"));
+    Plain.sfire("f");
+    p.add_Changed(d);
+    p.fire("g");
+    Reflect.callMethod(p, Reflect.field(p, "remove_Changed"), [d]);
+    p.fire("h");
+    Sys.println(Type.getInstanceFields(Plain).filter(f -> f.indexOf("Changed") >= 0));
+    Sys.println(Type.getClassFields(Plain).filter(f -> f.indexOf("Changed") >= 0));
+  }
+}
+===
+[run]
+Src.add_Noted
+cs got a
+Src.add_Noted
+cs got b
+haxe got b
+Src.remove_Noted
+cs got c
+Src events [Noted:Note]
+Src.add_Noted
+event Noted : Note attrs=None add=add_Noted(Public, Final, Virtual, HideBySig, VtableLayoutMask, SpecialName) remove=remove_Noted(Public, Final, Virtual, HideBySig, VtableLayoutMask, SpecialName) multicast=True
+cs got d
+reflected handler got d
+Plain events [SChanged:Note; Changed:Note]
+event Changed : Note attrs=None add=add_Changed(Public, HideBySig, SpecialName) remove=remove_Changed(Public, HideBySig, SpecialName) multicast=True
+reflected handler got e
+event SChanged : Note attrs=None add=add_SChanged(Public, Static, HideBySig, SpecialName) remove=remove_SChanged(Public, Static, HideBySig, SpecialName) multicast=True
+reflected handler got f
+reflected handler got g
+haxe got g
+reflected handler got h
+[add_Changed,remove_Changed,Changed]
+[add_SChanged,remove_SChanged,SChanged]
+# Under -dce full a @:event var Haxe never reads is removed. gencs then renames add_ to a private _add_Changed,
+# DCE has removed the unused remove_Changed, and no event is written, so its C# fails:
+#   P.hx(18,5): error CS1061: 'A' does not contain a definition for 'add_Changed'
+# hxc keeps an @:event var and both its methods together, so the event is there (NOTES §1.6).
+--- event-dce-full-unread-var + -dce full
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+// Under -dce full a @:event var that Haxe code never reads is removed, and gencs writes no event: its add_ and
+// remove_ stay plain methods.
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	public function fire(tag:String) if (handlers != null) handlers.Invoke(tag, EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var a = new A();
+		a.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o)));
+		a.fire("a");
+		var t = cs.Lib.toNativeType(A);
+		Sys.println(t.GetEvent("Changed") == null);
+		Sys.println(t.GetMethod("add_Changed").Attributes);
+	}
+}
+===
+[run]
+got a
+False
+Public, HideBySig, SpecialName
+# With @:keep the var survives -dce full, and so does its event (Haxe also keeps add_/remove_ then).
+--- event-dce-full-keep @gencs + -dce full
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+// With @:keep the var survives -dce full, and so does its event.
+class A {
+	public function new() {}
+	@:keep @:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	public function fire(tag:String) if (handlers != null) handlers.Invoke(tag, EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var a = new A();
+		a.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o)));
+		a.fire("a");
+		var t = cs.Lib.toNativeType(A);
+		Sys.println(t.GetEvent("Changed") == null);
+		Sys.println(t.GetMethod("add_Changed").Attributes);
+	}
+}
+===
+[run]
+got a
+False
+Public, HideBySig, SpecialName
+#
+--- event-protected @gencs
+import cs.system.EventHandler;
+import cs.system.reflection.BindingFlags;
+
+// @:protected on the var makes the C# event protected (gencs's get_fun_modifiers).
+class A {
+	public function new() {}
+	@:protected @:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+}
+
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(A);
+		Sys.println(t.GetEvent("Changed") == null);
+		var e = t.GetEvent("Changed", new cs.Flags(BindingFlags.NonPublic) | BindingFlags.Instance);
+		Sys.println(e.Name + " add=" + e.GetAddMethod(true).Attributes + " remove=" + e.GetRemoveMethod(true).Attributes);
+	}
+}
+===
+[run]
+True
+Changed add=Family, HideBySig, SpecialName remove=Family, HideBySig, SpecialName
+#
+--- event-declaration-order @gencs
+import cs.system.EventHandler;
+
+// gencs declares a class's events in the reverse of their order in the class, statics first, so .NET
+// reflection lists them that way.
+class A {
+	public function new() {}
+	@:event var First:EventHandler;
+	public function add_First(h:EventHandler):Void {}
+	public function remove_First(h:EventHandler):Void {}
+	@:event var Second:EventHandler;
+	public function add_Second(h:EventHandler):Void Sys.println("second");
+	public function remove_Second(h:EventHandler):Void Sys.println("second");
+	@:event static var SFirst:EventHandler;
+	public static function add_SFirst(h:EventHandler):Void {}
+	public static function remove_SFirst(h:EventHandler):Void {}
+	@:event var Third:EventHandler;
+	public function add_Third(h:EventHandler):Void Sys.println("third");
+	public function remove_Third(h:EventHandler):Void Sys.println("third");
+	@:event static var SSecond:EventHandler;
+	public static function add_SSecond(h:EventHandler):Void {}
+	public static function remove_SSecond(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		var evs = cs.Lib.toNativeType(A).GetEvents();
+		Sys.println([for (i in 0...evs.Length) evs[i].Name]);
+	}
+}
+===
+[run]
+[SSecond,SFirst,Third,Second,First]
+# Haxe 4.3.7's own checks (filters.ml check_cs_events, run for cs on every non-extern class before DCE), which hxc
+# lacks at 7df87731 (it compiles all three).
+--- event-public-is-an-error
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:event public var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+	public function remove_Changed(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		new A();
+	}
+}
+===
+[compile]
+P.hx:5: characters 10-42 : @:event fields must be private
+#
+--- event-missing-method-is-an-error
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		new A();
+	}
+}
+===
+[compile]
+P.hx:5: characters 10-35 : Missing event method: remove_Changed
+#
+--- event-method-signature-is-an-error
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Bool return true;
+	public function remove_Changed(h:String):Void {}
+}
+
+class P {
+	static function main() {
+		new A();
+	}
+}
+===
+[compile]
+P.hx:6: characters 2-62 : (h : cs.system.EventHandler) -> Bool should be cs.system.EventHandler -> Void
+P.hx:6: characters 2-62 : Cannot unify return types
+P.hx:6: characters 2-62 : Bool should be Void
+P.hx:7: characters 2-50 : (h : String) -> Void should be cs.system.EventHandler -> Void
+P.hx:7: characters 2-50 : Cannot unify argument 1
+P.hx:7: characters 2-50 : String should be cs.system.EventHandler
+# gencs's C#: P.cs(27,3): error CS0686: Accessor 'G<T>.Changed.add' cannot implement interface member
+# 'G.add_Changed(EventHandler)' for type 'G<T>'. Use an explicit interface implementation.
+--- event-generic-class-is-an-error
+import cs.system.EventHandler;
+
+// An @:event var of a generic class: gencs's event accessors would have to implement the companion interface's
+// add_/remove_, which C# refuses (CS0686).
+class G<T> {
+	public function new() {}
+	public var v:T;
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+}
+
+class P {
+	static function main() {
+		new G<Int>().add_Changed(null);
+	}
+}
+===
+[compile]
+P.hx:8: characters 10-35 : dotnet: an @:event var of a generic class (G.Changed) is not supported (gencs: C# error CS0686)
+# gencs's C#: P.cs(172,23): error CS0115: 'Sub.add_Changed(EventHandler)': no suitable method found to override.
+# hxc at 7df87731 compiles it as a plain override.
+--- event-override-accessor-is-an-error
+import cs.system.EventHandler;
+
+// gencs makes Base's add_Changed the event's private body _add_Changed, so the override has nothing to
+// override (C# error CS0115).
+class Base {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+}
+
+class Sub extends Base {
+	override public function add_Changed(h:EventHandler):Void {
+		Sys.println("Sub.add_Changed");
+		super.add_Changed(h);
+	}
+}
+
+class P {
+	static function main() {
+		var b:Base = new Sub();
+		b.add_Changed(null);
+	}
+}
+===
+[compile]
+P.hx:14: lines 14-17 : dotnet: Sub.add_Changed overrides the add_ method of the event Base.Changed, which is no virtual method (gencs: C# error CS0115)
+# gencs's C#: P.hx(10,17): error CS0079: The event 'A.Changed' can only appear on the left hand side of += or -=.
+# hxc at 7df87731 reads its own public field (always null).
+--- event-read-is-an-error
+import cs.system.EventHandler;
+
+// An event with add_/remove_ bodies has no value: C# lets it appear only on the left of += and -= (CS0079).
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	public function isEmpty() return Changed == null;
+}
+
+class P {
+	static function main() {
+		Sys.println(new A().isEmpty());
+	}
+}
+===
+[compile]
+P.hx:10: characters 35-42 : dotnet: the event A.Changed has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)
+# One of add_/remove_ empty: gencs takes the event's kind from the one declared first, so here it writes a
+# field-like event and silently drops add_Changed's body. hxc makes a field-like event only when both are empty.
+--- event-one-empty-body @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+// One of add_/remove_ empty: gencs takes the event's kind from whichever of the two comes first in the class.
+// Here remove_ comes first and is empty, so gencs writes a field-like event and drops add_'s body.
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function remove_Changed(h:EventHandler):Void {}
+	public function add_Changed(h:EventHandler):Void Sys.println("add body");
+}
+
+class P {
+	static function main() {
+		var a = new A();
+		a.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> {}));
+		Sys.println("done");
+	}
+}
+===
+[run]
+add body
+done
+[gencs]
+done
+# Overriding a .NET event's accessors with @:overload override: gencs writes C# methods (CS0115, and CS0534 for the
+# abstract event), while the CLR overrides add_Virt by name and signature, which hxc at 7df87731 already does.
+# Kept as is: the base class's Event row describes the event.
+--- netlib-event-accessor-override @netlib=EvLib
+import ev.*;
+class Der extends Base {
+  public function new() super();
+  var a:Note;
+  @:overload override public function add_Virt(n:Note):Void { Sys.println("Der.add_Virt"); super.add_Virt(n); }
+  @:overload override public function remove_Virt(n:Note):Void { super.remove_Virt(n); }
+  @:overload public function add_Abs(n:Note):Void { Sys.println("Der.add_Abs"); a = a + n; }
+  @:overload public function remove_Abs(n:Note):Void { a = a - n; }
+  public function fireAbs(s:String) if (a != null) a.Invoke(s);
+}
+class P {
+  static function main() {
+    var d = new Der();
+    Use.SubscribeVirt(d, "cs");
+    d.FireVirt("v");
+    Use.SubscribeAbs(d, "cs");
+    d.fireAbs("x");
+  }
+}
+===
+[run]
+Der.add_Virt
+Base.add_Virt
+cs virt got v
+Der.add_Abs
+cs abs got x
+# A plain var implementing a .NET interface's event: gencs's C# fails (CS0535, CS0470).
+--- netlib-event-var-not-event-is-an-error @netlib=EvLib
+import ev.*;
+class Src implements INotify {
+  public function new() {}
+  var Noted:Note;
+  public function add_Noted(n:Note):Void { Sys.println("add"); }
+  public function remove_Noted(n:Note):Void {}
+}
+class P { static function main() { Use.Subscribe(new Src(), "cs"); } }
+===
+[compile]
+P.hx:4: characters 3-18 : dotnet: Src.Noted implements the event ev.INotify.Noted, so it must be an @:event var (gencs: C# error CS0535)
+P.hx:8: characters 50-59 : dotnet: Src (left out: Src.Noted implements the event ev.INotify.Noted, so it must be an @:event var (gencs: C# error CS0535)) is not supported yet
+# Consuming .NET events (4a; no gap): instance, static, generic EventHandler<T>, and through an interface.
+--- netlib-event-consume @gencs @netlib=EvLib
+import ev.*;
+class P { static function main() {
+  var s = new Source();
+  var d = new Note(x -> Sys.println("haxe got " + x));
+  s.add_Noted(d);
+  var i:INotify = s;
+  var d2 = new Note(x -> Sys.println("via interface " + x));
+  i.add_Noted(d2);
+  s.add_Generic(new cs.system.EventHandler_1<NoteArgs>((o:Dynamic, a:NoteArgs) -> Sys.println("generic " + a.Text)));
+  s.Fire("a");
+  i.remove_Noted(d2);
+  s.remove_Noted(d);
+  s.Fire("b");
+  Source.add_StaticNoted(d);
+  Source.FireStatic("c");
+  Source.remove_StaticNoted(d);
+  Source.FireStatic("d");
+} }
+===
+[run]
+Source.add_Noted
+Source.add_Noted
+haxe got a
+via interface a
+generic a
+Source.remove_Noted
+Source.remove_Noted
+generic b
+haxe got c
+no static handler for d
+# `+=` on an event in inline C# stays outside the 4b subset.
+--- inline-cs-event-plus-equals-is-an-error @netlib=EvLib
+import ev.*;
+
+// `+=` on an event in inline C#: C# subscribes through add_Noted, but compound assignment is outside the
+// inline C# subset; Haxe code writes s.add_Noted(d).
+class P {
+	static function main() {
+		var s = new Source();
+		var d = new Note(x -> Sys.println("inline got " + x));
+		cs.Syntax.code("{0}.Noted += {1}", s, d);
+		s.Fire("a");
+	}
+}
+===
+[compile]
+P.hx:9: characters 3-43 : dotnet: assignment is not part of the inline C# subset; write it in Haxe (a .NET indexer's setter is x.set_Item(a, b, value))

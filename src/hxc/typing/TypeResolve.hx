@@ -829,7 +829,7 @@ class TypeResolve {
 		// macros run before a single signature is typed, so the fields of a class with a build to run are
 		// the build's to resolve (EvalMacro.runClassBuildMacros) - the list it leaves, and only that.
 		if (c.hxcBuildState != BUILT) {
-			if (hxc.eval.EvalMacro.hasPendingBuild(ctx, c)) c.hxcFieldsDeferred = true;
+			if (c.hxcAutoBuildFrom != null || hxc.eval.EvalMacro.hasPendingBuild(ctx, c)) c.hxcFieldsDeferred = true;
 			else resolveClassFields(ctx, c, d, p);
 		}
 		// A build that got past its heritage and fields forces the class's own type parameters here, so a
@@ -859,8 +859,20 @@ class TypeResolve {
 		return {path: {tpackage: pack, tname: t.tname, tsub: t.tsub, tparams: t.tparams}, pos: pt.pos};
 	}
 
+	// A parent whose heritage is still resolving (its heritage forced a build that reached this class) has
+	// not inherited its own parents' @:autoBuild yet. Haxe reads a parent's metadata only once the parent
+	// is built (process_meta after check_cancel_build), so this parent and every later one wait for the
+	// class's build (TypeFields.buildClass), in order, and the fields wait with them.
+	static function inheritAutoBuildOnceBuilt(ctx:Context, c:TClass, parent:TClass, state:BuildState):Void {
+		if (c.hxcAutoBuildFrom == null && !state.match(Building(_))) inheritAutoBuild(ctx, c, parent);
+		else {
+			if (c.hxcAutoBuildFrom == null) c.hxcAutoBuildFrom = [];
+			c.hxcAutoBuildFrom.push(parent);
+		}
+	}
+
 	// Inherited @:autoBuild entries become @:build entries on the derived type.
-	static function inheritAutoBuild(ctx:Context, c:TClass, parent:TClass):Void {
+	public static function inheritAutoBuild(ctx:Context, c:TClass, parent:TClass):Void {
 		var meta = parent.meta.copy();
 		if (ctx.defines.rawDefined("haxe_next")) meta.reverse();
 		for (m in meta) if (m.name == ":autoBuild") {
@@ -1534,15 +1546,11 @@ class TypeResolve {
 						TypeFunctions.addDescendant(csup, c);
 					}
 					// Each heritage entry yields a closure that runs before field initialisation: the super
-					// is FORCED
-					// first, so a base declared later in the module is built before anything reads it, and
-					// then its
-					// metadata is processed. hxc does not cancel and reschedule the build when the super is
-					// not Built;
-					// it forces and continues - forceBuild's own BUILDING guard is what stops a cycle
-					// recursing.
-					forceBuild(ctx, csup);
-					inheritAutoBuild(ctx, c, csup);
+					// is FORCED first, so a base declared later in the module is built before anything reads
+					// it, and then its metadata is processed. forceBuild's own BUILDING guard is what stops a
+					// cycle recursing; a super it finds BUILDING has its metadata read once it is built, and
+					// the class's build cancels while it is not (TypeFields.buildClass).
+					inheritAutoBuildOnceBuilt(ctx, c, csup, forceBuild(ctx, csup));
 				case _:
 					throw new ContextError("Should extend by using a class", p);
 			}
@@ -1567,8 +1575,7 @@ class TypeResolve {
 					}
 					TypeFunctions.addDescendant(intf, c);
 					// An implemented interface is forced the same way.
-					forceBuild(ctx, intf);
-					inheritAutoBuild(ctx, c, intf);
+					inheritAutoBuildOnceBuilt(ctx, c, intf, forceBuild(ctx, intf));
 				case TDynamic(dt):
 					if (c.dynamicType != null) throw new ContextError("Cannot have several dynamics", p);
 					// This is recorded as a display error and the class still gets its dynamic - which is why two

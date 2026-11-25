@@ -267,7 +267,9 @@ class TAnon {
 	}
 }
 
-typedef TObjectFieldKey = {name:String, pos:Position, quotes:QuoteStatus};
+// nameOrigin: what the name's OCaml string stands for, kept from the object declaration it was typed from
+// (TexprTools.objectKeyNameOrigin): Haxe's typed key holds the AST string itself.
+typedef TObjectFieldKey = {name:String, pos:Position, quotes:QuoteStatus, ?nameOrigin:{}};
 typedef TObjectField = {key:TObjectFieldKey, expr:TExpr};
 
 typedef TSwitchCase = {values:Array<TExpr>, expr:TExpr};
@@ -351,6 +353,19 @@ class TClassField {
 	// so a field a later compilation reuses from the cache is not typed again (a member var's initializer,
 	// which the field-init pass moved out, included).
 	public var hxcBodyTyped:Bool = false;
+	// A bodiless method's (an interface's or an abstract one's) argument @:strict entries, which no
+	// argument variable keeps: the .NET generator refuses them, as it does a method argument's.
+	public var hxcArgStrict:Null<Array<MetadataEntry>> = null;
+	// What this field's name string is, in OCaml terms. Haxe's `{cf with ...}` copies keep the cf_name
+	// string physically, so a copy (copyField, withCfType) points here at the field it was copied from, or
+	// at that field's own origin. A field made from a parsed field or object field holds what its name
+	// stands for (Ast.fieldNameOrigin, Ast.objectFieldNameOrigin): that AST field, or what a macro's
+	// string stood for (EvalMacro.nameOriginOf). Null for a field whose name is its own. Only HL/C reads
+	// it: hl2c's type digest marshals vfield names with sharing (TypeFunctions.nameOrigin).
+	public var nameOrigin:Null<{}> = null;
+	// The interpreter's id for `name` (hxc.eval.EvalHash.fieldHash), and the name it was taken for.
+	@:noCompletion public var evalHashName:Null<String> = null;
+	@:noCompletion public var evalHashId:Int = -1;
 	public function new(name:String, type:T, pos:Position, namePos:Position, doc:Documentation,
 			meta:Metadata, kind:FieldKind, params:TypeParams, expr:Null<TExpr>,
 			exprUnoptimized:Null<TExpr>, overloads:Array<TClassField>, flags:Int) {
@@ -455,6 +470,9 @@ class TClass {
 	// and an abstract implementation's operators and casts with them (TypeResolve.resolveAbstractImpl).
 	public var hxcFieldsDeferred:Bool = false;
 	public var hxcAbstractOpsDeferred:Bool = false;
+	// The parents whose @:autoBuild it inherits once its build gets past them
+	// (TypeResolve.inheritAutoBuildOnceBuilt).
+	public var hxcAutoBuildFrom:Null<Array<TClass>> = null;
 	// The class's build while it is still queued (TypeResolve.ClassSlot).
 	public var hxcClassSlot:Dynamic = null;
 	public function new(path:Path, module:ModuleDef, pos:Position, namePos:Position, isPrivate:Bool,
@@ -663,6 +681,16 @@ class ModuleDef {
 	// The types whose global metadata module resolution has not applied yet
 	// (ModuleLoader.applyPendingGlobalMeta).
 	@:noCompletion public var hxcGlobalMetaPending:Null<Array<ModuleType>> = null;
+	// Lookup caches over `types`, each valid for the array and length it was built from: the first public
+	// type of each name (ModuleLoader.findTypeInModuleOpt), and the types that can bring enum constructors
+	// or enum abstract values into scope (Typer.findBareEnumLike). A module of a thousand typedefs is
+	// otherwise walked whole by every lookup that reaches it.
+	@:noCompletion public var hxcNameIndex:Null<haxe.ds.StringMap<ModuleType>> = null;
+	@:noCompletion public var hxcNameIndexOf:Null<Array<ModuleType>> = null;
+	@:noCompletion public var hxcNameIndexLen:Int = -1;
+	@:noCompletion public var hxcEnumLike:Null<Array<ModuleType>> = null;
+	@:noCompletion public var hxcEnumLikeOf:Null<Array<ModuleType>> = null;
+	@:noCompletion public var hxcEnumLikeLen:Int = -1;
 	public var id:Int;
 	public var path:Path;
 	public var types:Array<ModuleType>;
@@ -714,12 +742,12 @@ class ModuleDefExtra {
 	public var resolved:Int = 0;
 	public var deps:Map<Int, ModuleDef>;
 	public var kind:ModuleKind;
-	public var bindedRes:StringMap<String>;
+	public var bindedRes:StringMap<haxe.io.Bytes>;
 	public var ifFeature:Array<MIfFeature>;
 	public var features:StringMap<Bool>;
 	public function new(file:String, sign:String, display:ModuleDefDisplay, checkPolicy:Array<ModuleCheckPolicy>,
 			time:Float, cacheState:ModuleCacheState, added:Int, checked:Int, processed:Int,
-			deps:Map<Int, ModuleDef>, kind:ModuleKind, bindedRes:StringMap<String>, ifFeature:Array<MIfFeature>,
+			deps:Map<Int, ModuleDef>, kind:ModuleKind, bindedRes:StringMap<haxe.io.Bytes>, ifFeature:Array<MIfFeature>,
 			features:StringMap<Bool>) {
 		this.file = file;
 		this.sign = sign;

@@ -624,6 +624,8 @@ class Typeload {
 			if (TypeFunctions.hasMeta(":optional", f.cffMeta)) t = ctx.basic.tnull(t);
 
 			var cf = TypeFunctions.mkField(n, t, f.cffPos, f.cffName.pos, pub, false);
+			// cf_name = fst f.cff_name, a string a macro may have given
+			cf.nameOrigin = Ast.fieldNameOrigin(f);
 			cf.kind = access;
 			cf.doc = f.cffDoc;
 			cf.meta = f.cffMeta;
@@ -701,6 +703,10 @@ class Typeload {
 				&& ctx.currentModule.path.pack.length > 0) {
 			var sib = hxc.context.ModuleLoader.resolveSamePackageSibling(ctx, ctx.currentModule, path.name, p);
 			if (sib != null) return sib;
+		}
+		if (sub != null && path.pack.length == 0 && ctx.currentModule != null) {
+			var imp = hxc.context.ModuleLoader.resolveWildcardImportType(ctx, ctx.currentModule, path.name, p, sub);
+			if (imp != null) return imp;
 		}
 		if (sub != null && path.pack.length == 0 && ctx.currentModule != null
 				&& ctx.currentModule.path.pack.length > 0) {

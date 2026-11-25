@@ -45,7 +45,7 @@ class DebugDump {
 
 	public static function emit(kind:String, p:Position, msg:String):Void {
 		if (!enabled(kind, p)) return;
-		Sys.stderr().writeString("[hxc-dump:" + kind + "] " + where(p) + " " + msg + "\n");
+		hxc.core.HostStdio.err().writeString("[hxc-dump:" + kind + "] " + where(p) + " " + msg + "\n");
 	}
 
 	public static function typed(label:String, e:TExpr):Void {

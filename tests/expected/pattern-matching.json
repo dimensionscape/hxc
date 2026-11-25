@@ -1,0 +1,13 @@
+{
+	"abstract-over-enum-switch-is-exhaustive": "",
+	"abstract-over-enum-switch-missing-a-constructor": "P.hx:5: characters 10-11 : Unmatched patterns: EQ\nP.hx:4: lines 4-9 : Missing return: Int",
+	"abstract-over-enum-value-switch": "",
+	"abstract-over-enum-abstract-switch-covering-every-value": "P.hx:11: characters 9-10 : Local variable x used without being initialized",
+	"final-wildcard-matches-remaining-arguments": "",
+	"final-wildcard-after-every-argument": "P.hx:3: characters 50-60 : Too many arguments",
+	"non-final-wildcard-still-needs-every-argument": "P.hx:3: characters 55-62 : Not enough arguments",
+	"too-many-arguments-before-a-final-wildcard": "P.hx:3: characters 46-56 : Too many arguments",
+	"macro-world-capture-shares-its-name-with-a-field-of-the-payload-class": "",
+	"capture-shares-its-name-with-a-deprecated-property": "P.hx:9: characters 84-88 : Warning : (WDeprecated) zoom is deprecated",
+	"enum-abstract-value-shares-its-name-with-a-deprecated-property": ""
+}

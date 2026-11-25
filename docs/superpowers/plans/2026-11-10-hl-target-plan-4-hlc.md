@@ -1,0 +1,414 @@
+# HashLink target, Plan 4: HL/C (`--hl x.c`) — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** `hxc --hl out/main.c` writes the same files as Haxe 4.3.7, byte for byte: the `.c`/`.h` sources and
+`hlc.json`. This holds for the existing HL cases, for cases aimed at HL/C, and for JoeClash's `build.android.hxml`.
+
+**Architecture:**
+- A close port of Haxe 4.3.7's `hl2c.ml` (1833 lines) into four files in `src/hxc/codegen/hl/`, all prefixed
+  `Hlc`.
+- It takes the `HlCode` that `HlGenerate` already builds and optimises. The `.hl` writer is just swapped out
+  when the output file ends in `.c`, as in `genhl.ml`'s `generate`.
+- About a quarter of the work is not C at all. `hl2c.ml` orders its output by OCaml runtime behaviour, so
+  `HlcOcaml.hx` models that behaviour exactly:
+  - local declarations come from a `Hashtbl.iter`, so they follow `Hashtbl` bucket order under the
+    structural `Hashtbl.hash`;
+  - type names are the MD5 of a `Marshal.to_bytes`;
+  - `hlc.json`'s `libs` come from a `Hashtbl.fold`.
+
+**Tech Stack:**
+- Haxe 4.3. hxc is self-hosting; build it with `AEDIFEX_ROOT=D:/_github/hxc-toolchain/aedifex haxelib run aedifex build cpp .`.
+- Haxe 4.3.7 at `C:\HaxeToolkit\haxe` as the oracle.
+- The haxe-conformance harness (`D:\_github\haxe-conformance`, `neko run.n`).
+- No C compiler is needed: identical files are the bar.
+
+**Spec:** `docs/superpowers/specs/2026-11-08-hl-target-design.md`: Goal 2, Goal 4 (the HL/C half) and milestone
+M6. Plans 1–3 are `docs/superpowers/plans/2026-11-08-hl-target-plan-1-bytecode.md`, `…-plan-2-optimiser.md`
+and `2026-11-10-…-plan-3-unit-suite.md`.
+
+**Reference source:** Haxe tag `4.3.7` (commit `e0b355c`):
+- `src/generators/hl2c.ml`, the whole file;
+- `hlcode.ml`, for the `ttype`, `class_proto`, `enum_proto` and `virtual_proto` definitions (their OCaml
+  layout matters) and for `gather_types`;
+- `genhl.ml` 4152–4166, the HL/C branch of `generate`.
+
+Get them from `https://codeload.github.com/HaxeFoundation/haxe/tar.gz/refs/tags/4.3.7` into a scratch folder,
+never into the repo. The OCaml runtime's `runtime/hash.c` (`caml_hash`), `runtime/extern.c` (Marshal) and
+`stdlib/hashtbl.ml` define what `HlcOcaml` models; take them from OCaml 4.14 (`https://github.com/ocaml/ocaml`,
+tag `4.14.1`).
+
+## Global Constraints
+
+- **Identical output.** File for file and byte for byte with Haxe 4.3.7, for the same source and command line.
+  The same set of files, the same paths, the same bytes, and a UTF-8 BOM on every file except `hlc.json`.
+  A difference is a bug until it is fixed or listed with a reason.
+- **Branch.** Work on branch `hl-c` from `main` at `46751349`, in the worktree `D:/_github/hxc/.claude/worktrees/hl-c`.
+  - Never work in `D:/_github/hxc` itself; other sessions use it.
+  - Commits stay local; the user pushes.
+- **Public repo.** No private app names in anything committed: contents, file names, case names, commit
+  messages. The controller gives the check command with each task. Don't change git config.
+- **Imports.** The new `HlcOcaml.hx`, `HlcNames.hx`, `HlcFunctions.hx` and `HlcWriter.hx` import nothing from hxc
+  outside `hxc.codegen.hl`, like `HlCode.hx`/`HlDump.hx`/`HlOpt.hx`, so that `tools/hl/HlcCheck.hx` can run them
+  under `haxe --run`. `HlGenerate.hx` is the only file that touches `com`.
+- **OCaml semantics `hl2c.ml` relies on.** Model each one exactly, never approximate:
+  - `Hashtbl.hash` is `caml_hash` with meaningful 10 and total 100. The hash mixes block headers without
+    counting them, and counts ints, strings and doubles.
+  - A `Hashtbl` starts with 16 buckets for `Hashtbl.create 0`. `add` puts a key at the head of its bucket;
+    `replace` replaces in place or else adds at the head. The table doubles when its size exceeds twice its
+    bucket count, and keeps chain order when it does. `iter` and `fold` walk buckets 0 to n−1, each chain from
+    head to tail.
+  - `Marshal.to_bytes` uses the 20-byte small header and shares blocks *and strings* that are the same
+    physical value (back-references). Which values are physically shared follows the way `genhl.ml`/`hl2c.ml`
+    build them.
+  - `PMap` iterates in `compare` order. For `ttype` keys that is the order `HlTypeTable` already reproduces.
+  - `List.sort`/`Array.sort` with `compare` is stable on lists. `Array.sort` is not stable, but every
+    `Array.sort` in `hl2c.ml` has a total order.
+  - `Digest` is MD5 (`haxe.crypto.Md5`).
+  - `Printf "%.19g"` for floats, `%ld` for Int32 (signed).
+  - `String.escaped` in `hlc.json`; `StringHelper.s_escape` in `USTR("…")`.
+- **Defines.** `hlc.json`'s `defines` is every define Haxe holds, iterated in `PMap` key order: keys with `-`
+  stored as `_`, values as Haxe stores them, `String.escaped` on both. Before writing, genhl adds
+  `source_header` = `Generated by HLC 4.3.7 (HL v<code.version>)` unless it is already set.
+- **Compilation.** Unless `no-compilation` is defined, hxc runs `haxelib run hashlink build "<file>"`, quoting
+  with `escape_command`, and fails with `Build failed` on a non-zero exit, as `genhl.ml` does. The hashlink
+  haxelib is not installed on this machine, so every case passes `-D no-compilation`.
+- **Suites stay green** (as at `46751349`):
+  - own suite: 257 checked, 0 failed;
+  - `tests/hl/run.sh`: hl-output 35/35 and hl-opt 39/39;
+  - `.NET`: 736/736;
+  - haxe-conformance `corpus unit-hl`: PASS;
+  - JoeClash `build.hxml`: `game.hl` still identical to Haxe's.
+
+  Set `HAXE_STD_PATH=C:/HaxeToolkit/haxe/std` for every hxc compile, but for JoeClash spell it
+  `C:\HaxeToolkit\haxe\std`, or debug file names differ. Run one suite at a time, and none while another
+  session on this machine is running suites or timings.
+
+## Review Focus
+
+1. **Physical sharing inside a marshalled type description.** A `DFun` whose arguments are the same OCaml block,
+   or a `DVirtual` reached twice, is written as a back-reference, so its `t$fun_`/`t$vrt_` name changes. Expected:
+   the same names as Haxe. Pinned by the vectors in Task 2 and by `hlc-type-names` in Task 6 (repeated
+   `Null<Int>` arguments, a recursive anonymous type, nested anonymous types with the same field names).
+2. **A hash walk that reaches what isn't modelled.** `caml_hash` could reach a `PMap` record (its `cmp` is a closure,
+   hashed by code pointer). Expected: hxc stops with an error naming the path, never a guess. If Haxe's own output
+   differs between two runs, the difference is listed, not chased. Pinned by `HlcCheck`'s unmodelled-walk check
+   (Task 2) and by building JoeClash with Haxe twice (Task 7).
+3. **7-character digest collisions.**
+   - A type name whose 7-character prefix is taken gets the full digest. Which one gets the full digest depends
+     on `PMap` order.
+   - A string global gets `short_digest` when its identifier is ambiguous, and `_1`, `_2` suffixes when names
+     clash.
+
+   Expected: the same choice as Haxe. Pinned by `hlc-global-names` in Task 6 (`"a b"`, `"a_b"`, `"a-b"`, a
+   40-character constant).
+4. **Float literals.** `%.19g` of 0.1, 1e300, 5e-324, -0.0, NaN and the infinities. Expected: the same text as
+   Haxe's `.c` (`hl2c.ml` special-cases some of them). Pinned by `hlc-floats` in Task 6.
+5. **A second build into the same directory.** `close_file` rewrites only files whose content changed, and never
+   rewrites a `hl/bytes_<md5>.h`. Old files stay. Expected: building twice into one directory gives the same
+   content as building once. Pinned by Task 4's rebuild check.
+
+---
+
+### Task 1: The HL/C test family and runner
+
+**Files:**
+- Create: `tests/cases/hlc-output/family.json`, `tests/cases/hlc-output/cases.hx.txt`, `tests/cases/hlc-output/fixture/HlcDigest.hx`
+- Modify: `tests/hl/run.sh`
+- Create: `tools/hlc-compare.sh`
+
+**Interfaces:**
+- Produces:
+  - `tests/hl/run.sh --family hlc-output` runs this family's cases.
+  - `tests/hl/run.sh --hlc --family hl-output|hl-opt` runs those families' cases as HL/C.
+  - In both modes each case compiles to `out/main.c` with `-D no-compilation`, into `h/`, `x/` and `y/` instead
+    of `h.hl`/`x.hl`/`y.hl`.
+  - The result notes:
+    - `nondeterministic`: x/ differs from y/;
+    - `differs from Haxe; see tools/hlc-compare.sh`;
+    - `hxc failed`.
+  - `hl.exe` is not run for HL/C.
+  - `tools/hlc-compare.sh <h dir> <x dir>` prints `only in Haxe:`/`only in hxc:` lines, then, for the first
+    differing file, its name and the first 40 lines of `diff -u`.
+
+- [ ] **Step 1: Write the family.**
+  - `family.json`: name `hlc-output`, oracle `haxe`, kind `compile-diff`, cost `quick`, module `P`, args
+    `["-cp", ".", "--main", "$module", "--hl", "out/main.c", "-D", "no-compilation", "--macro", "HlcDigest.after('out')"]`.
+  - `HlcDigest.after(dir)`, in `onAfterGenerate`, prints one line per file under `dir`, in sorted relative-path
+    order: `== <relative path> <length> <md5>`.
+    - The MD5 is taken after replacing the case directory with `$CASE` and the std root with `$STD`.
+    - Use HlDigest's rules for which spellings are replaced, applied to the text.
+  - `cases.hx.txt` starts with:
+    - `empty-main`: `class P { static function main() {} }`;
+    - `trace-hello`: the same as hl-output's.
+- [ ] **Step 2: Teach `run.sh` the directory mode.**
+  - A family whose `family.json` args name `out/main.c`, or any family run with `--hlc`, compiles with
+    `--hl out/main.c -D no-compilation`. With `--hlc`, it keeps the family's `-D hl_no_opt` when the family has it.
+  - The `out/` directory moves to `h/`, `x/` and `y/`.
+  - Comparison is `diff -r -q`.
+  - No hl runs in this mode.
+  - The `-D dump` hlopt comparison still applies.
+- [ ] **Step 3: Write `tools/hlc-compare.sh`** with the output given under Interfaces.
+- [ ] **Step 4: Run to see it fail.**
+  `HAXE_STD_PATH=C:/HaxeToolkit/haxe/std tests/hl/run.sh --compiler bin/hxc-windows-x64.exe --family hlc-output`
+  Expected: both cases `hxc failed`, because hxc reports `hl: HL/C output is not supported yet`. Haxe's side
+  must succeed; if it doesn't, the family is wrong.
+- [ ] **Step 5: Check the other modes.**
+  - `tests/hl/run.sh … --family hl-output` still gives 35/35.
+  - `--hlc --family hl-output` gives 35 failures, all `hxc failed`.
+- [ ] **Step 6: Commit:** `hl: hlc-output family and run.sh directory mode for HL/C`.
+
+### Task 2: OCaml's hash, Hashtbl and Marshal (`HlcOcaml.hx`)
+
+**Files:**
+- Create: `src/hxc/codegen/hl/HlcOcaml.hx`
+- Test: `tools/hl/HlcCheck.hx`, run with `haxe -cp src -cp tools/hl --run HlcCheck`
+
+**Interfaces:**
+- Produces:
+  - `enum OValue { OInt(i:Int); OStr(s:OString); OBlock(b:OBlockRef); ODouble(f:Float); }`
+    - `OString` and `OBlockRef` are classes, so physical identity is Haxe object identity.
+    - `OBlockRef` has `tag:Int` and `fields:Array<OValue>`. A field may be the sentinel
+      `OValue.OBlock(HlcOcaml.UNMODELLED)`.
+  - `HlcOcaml.hash(v:OValue):Int`: `Hashtbl.hash`, 30-bit, as OCaml returns it. It throws
+    `HlcOcaml.Unmodelled("<path>")` if the walk reaches the sentinel.
+  - `class CamlHashtbl<V>` keyed by `OValue`, with structural equality (OCaml `compare = 0`):
+    - `add(k, v)`, `replace(k, v)`, `find(k):Null<V>`, `mem(k)`;
+    - `iter(f:(OValue, V) -> Void)`, `fold<A>(f:(OValue, V, A) -> A, init:A):A`.
+  - `HlcOcaml.marshal(v:OValue):haxe.io.Bytes`: `Marshal.to_bytes v [Marshal.Closures]`.
+  - `HlcOcaml.ttypeValue(t:HlType):OValue`: `ttype` in its OCaml layout, from `hlcode.ml`'s definitions.
+    - Constant constructors are `OInt`, in declaration order (`HVoid`=0 … `HDynObj`); non-constant ones are
+      blocks tagged in declaration order (`HFun`=0, `HObj`=1, … `HPacked`=9).
+    - Records are tag-0 blocks with fields in declaration order, `option` is `0`/a tag-0 block, lists are cons
+      blocks, arrays are tag-0 blocks.
+    - `PMap` fields (`pindex`, `pfunctions`, `pinterfaces`, `vindex`) are the sentinel.
+    - The same `HlType`/proto object always gives the same `OBlockRef`, so sharing is preserved. The same goes
+      for the strings it holds: one `OString` per source string field.
+    - Memoise by object identity (`haxe.ds.ObjectMap`). Never use `EnumValueMap` or a `Map<HlType,…>`: they
+      compare structurally and would merge blocks that OCaml keeps apart.
+  - `HlcOcaml.md5Hex(b:haxe.io.Bytes):String`.
+
+- [ ] **Step 1: Write the failing checks in `HlcCheck.hx`.**
+  Expected values are Haxe 4.3.7's own, read from its HL/C output of a probe program:
+  - The function types below make these names, each `"t$fun_" + md5Hex(marshal(desc)).substr(0, 7)` with
+    `desc = DFun([args], ret, true)`. `DSimple` is block tag 0, `DFun` tag 1, `DNamed` tag 2, from `hl2c.ml`'s
+    `type_desc`.
+    - `(i32):String` gives `t$fun_431710a`;
+    - `(bytes,i32):String` gives `t$fun_7daa93c`;
+    - `(dyn):bytes` gives `t$fun_83f90f5`;
+    - `(bytes):String` gives `t$fun_07b476c`;
+    - `(String,String):String` gives `t$fun_2e5590a`.
+    The constant ttypes inside `DSimple` are ints, and `DNamed "String"` holds the string. Encode the desc with
+    a small `descValue` helper in the check.
+  - Local-declaration order. Insert these `(string, int)` keys with `replace`, in this order:
+    `("int",0)`, `("String",0)`, `("vclosure",1)`, `("haxe__$Log",0)`, `("int",1)`, `("vbyte",1)`,
+    `("vdynobj",1)`, `("vvirtual",1)`. Then `iter` must visit
+    `vdynobj,1 · String,0 · vvirtual,1 · haxe__$Log,0 · vclosure,1 · int,1 · vbyte,1 · int,0`.
+    (These come from `P_main`'s declarations in Haxe's output.)
+  - `hash(OStr("hello"))` equals `HlHashOrder.stringHash("hello")`. That is `HlDump.hx`'s existing string-keyed
+    model of OCaml's Hashtbl, a copy of `hxc.core.NameHash`/`HashTableOrder`; make it reachable rather than copy
+    it again.
+  - Hashing a block whose 3rd field is the sentinel, with fewer than 10 meaningful values before it, throws
+    `Unmodelled`.
+  - After 70 `add`s of `OInt(0)`…`OInt(69)`, the table has resized twice (16 → 32 → 64 buckets). `iter` visits
+    the keys grouped by `hash land 63`, ascending, and within a group in reverse insertion order.
+- [ ] **Step 2: Run** `haxe -cp src -cp tools/hl --run HlcCheck`. Expected: FAIL, because `HlcOcaml` doesn't exist.
+- [ ] **Step 3: Implement `HlcOcaml.hx`** from `hash.c` (`caml_hash`, `caml_hash_mix_*`, `FINAL_MIX`),
+  `hashtbl.ml` (`create`, `add`, `replace`, `resize` with `insert_all_buckets … inplace`, `iter`, `fold`) and
+  `extern.c` (`PREFIX_SMALL_*`, `CODE_INT*`, `CODE_STRING*`, `CODE_BLOCK*`, `CODE_SHARED*`, and the header's
+  `size_32`/`size_64` word counts).
+- [ ] **Step 4: Run it.** Expected: `HlcCheck: all checks passed`.
+- [ ] **Step 5: Commit:** `hl: HlcOcaml models OCaml's Hashtbl, hash and Marshal for hl2c`.
+
+### Task 3: Names, C types and literals (`HlcNames.hx`)
+
+**Files:**
+- Create: `src/hxc/codegen/hl/HlcNames.hx`
+- Test: `tools/hl/HlcCheck.hx` (extend)
+
+**Interfaces:**
+- Consumes: `HlcOcaml` (Task 2), and `HlCodeData`/`HlType`/`HlFunction`/`HlTypeTable`/`HlDump.tstr` from Plans 1–2.
+- Produces. Each name follows its `hl2c.ml` original:
+  - `ident`, `ctype`, `ctypeNoPtr`, `typeId`, `isGcPtr`, `isPtr`, `argsRepr`, `varType`, `dynValueField`;
+  - `makeTypesIdents(htypes):Map` (`make_types_idents`), keyed through `HlTypeTable` and visited in its
+    OCaml-compare order;
+  - `makeGlobalNames(code:HlCodeData, gnames:Array<String>):Array<String>`;
+  - `makeFunctionTable(code:HlCodeData):Array<FunctionEntry>`, where `FunctionEntry` mirrors `function_entry`;
+  - `shortDigest(s)`;
+  - `stringLiteral(code, sid, define:String->Void):String` (`string`);
+  - `hlHash(s):Int`, `HashCache` (`hash` with its Int32 collision loop and `hash_cache_list`);
+  - `floatLiteral(f):String` (the `OFloat` text, `%.19g` and its special cases);
+  - `ocamlEscaped(s):String` (`String.escaped`).
+
+- [ ] **Step 1: Write the failing checks.**
+  - `makeTypesIdents` on a code holding the five function types from Task 2 gives those five names.
+  - `makeGlobalNames` on constants `"hello "`, `"s"`, `"a b"`, `"a_b"` gives `s$hello_`, `s$s`, then for the two
+    clashing ones the `short_digest` form. Expected strings: take them from Haxe's `hl/globals.c` for case
+    `hlc-global-names` (written in Task 6). Until then, leave the check with the two values Haxe gave for the
+    probe (`s$hello_`, `s$s`).
+  - `floatLiteral`: `0.1`, `1e300`, `5e-324`, `-0.0`, `NaN`, `±Infinity`, each equal to the text Haxe writes. Get
+    it with a one-line probe `var a = [0.1, …]` compiled by Haxe with `--hl out/main.c -D no-compilation`; paste
+    the values into the check.
+  - `ocamlEscaped("a\"b\\c\n\t\x01é")` equals OCaml's result, `a\"b\\c\n\t\001\195\169`.
+- [ ] **Step 2: Run.** Expected: FAIL, because `HlcNames` doesn't exist.
+- [ ] **Step 3: Implement `HlcNames.hx`.**
+  - `keywords` is copied verbatim.
+  - `floatLiteral` uses an exact binary-to-decimal expansion rounded to 19 significant digits, then `%g`'s
+    exponent rules.
+  - `valid_ident` replaces each run of characters outside `[A-Za-z0-9_]` with one `_`.
+- [ ] **Step 4: Run.** Expected: all checks passed.
+- [ ] **Step 5: Commit:** `hl: HlcNames ports hl2c's naming, C types and literals`.
+
+### Task 4: The writer and the `--hl x.c` hookup (`HlcWriter.hx`)
+
+**Files:**
+- Create: `src/hxc/codegen/hl/HlcWriter.hx`
+- Modify: `src/hxc/codegen/hl/HlGenerate.hx` (the `fileExtension(com.file) == "c"` branch, about line 637)
+
+**Interfaces:**
+- Consumes: Tasks 2–3. Calls `HlcFunctions.generateFunction(ctx, f)` from Task 5; until then it is a stub that
+  writes nothing.
+- Produces: `HlcWriter.writeC(file:String, code:HlCodeData, gnames:Array<String>, defines:Array<{key:String, value:String}>, version:Int):Void`.
+  - It is `write_c`: `hl/natives.h`, `hl/globals.c`, `hl/types.c`, `hl/reflect.c` (`generate_reflection`), one
+    `.h`/`.c` per module (`make_modules`, `generate_module_types`), `hl/functions.c`, `hl/hashes.c`, the main
+    file and `hlc.json`.
+  - `close_file` is ported with its BOM, its compare-then-write and `mkdir`.
+  - `defines` arrives already in `PMap` key order; `HlGenerate` builds it from hxc's define store.
+  - `HlcContext` (in `HlcWriter.hx`) holds `hl2c.ml`'s `context` fields.
+
+- [ ] **Step 1: Hook up `HlGenerate`, following `genhl.ml` 4153–4166:**
+  - drop the `not supported yet` diagnostic;
+  - make `gnames` from `cglobals`;
+  - set `source_header` when it's absent;
+  - call `HlcWriter.writeC`;
+  - then run the hashlink build unless `no-compilation` is set (Global Constraints). This replaces the `.hl`
+    write.
+- [ ] **Step 2: Implement `HlcWriter.hx`** (`hl2c.ml` 365–520 and 1256–1833), with `generateFunction` stubbed.
+- [ ] **Step 3: Compare the files that don't depend on function bodies.**
+  - Run `tests/hl/run.sh --family hlc-output --case empty-main`, keeping the case directory.
+  - Expected: `cmp` finds these identical between `h/` and `x/`: `hl/natives.h`, `hl/globals.c`, `hl/types.c`,
+    `hl/reflect.c` and `hlc.json`.
+  - The set of file paths is also identical: `diff <(cd h && find . | sort) <(cd x && find . | sort)` prints
+    nothing.
+  - Module `.c` files and `hl/hashes.c` still differ.
+- [ ] **Step 4: Check a rebuild.** Build `empty-main` with hxc twice into the same directory. The second build
+  leaves every file's bytes as the first left them (Review Focus 5).
+- [ ] **Step 5: Check the build step.**
+  - Drop `-D no-compilation` and build `empty-main` with both compilers.
+  - Both exit non-zero, and both print `Build failed` as their last error line. haxelib reports the missing
+    hashlink library first.
+- [ ] **Step 6: Commit:** `hl: --hl x.c writes hl2c's file set and hlc.json (function bodies pending)`.
+
+### Task 5: Function bodies (`HlcFunctions.hx`)
+
+**Files:**
+- Create: `src/hxc/codegen/hl/HlcFunctions.hx`
+- Modify: `src/hxc/codegen/hl/HlcWriter.hx` (remove the stub)
+
+**Interfaces:**
+- Consumes: Tasks 2–4.
+- Produces: `HlcFunctions.generateFunction(ctx:HlcContext, f:HlFunction):Void`, `generate_function` (`hl2c.ml`
+  520–1099).
+  - Locals are declared through a `CamlHashtbl` keyed by `(ctypeNoPtr string, stars)`.
+  - Every opcode's C text, the trap and label handling, closures (`cl$N`) and the per-file `fun_index` follow
+    `hl2c.ml`.
+
+- [ ] **Step 1: Run to see it fail.**
+  `tests/hl/run.sh --family hlc-output` gives 2 cases, both `differs from Haxe`.
+- [ ] **Step 2: Implement `HlcFunctions.hx`.**
+- [ ] **Step 3: Run the HL/C cases.** Use `tools/hlc-compare.sh` on failures.
+  - `--family hlc-output`: 2/2.
+  - `--hlc --family hl-output`: 35/35.
+  - `--hlc --family hl-opt`: 39/39.
+
+  A difference that comes from the front end rather than `hl2c` cannot happen here: the `.hl` cases already
+  match.
+- [ ] **Step 4: Run the HL suites as before.** hl-output 35/35, hl-opt 39/39.
+- [ ] **Step 5: Commit:** `hl: HlcFunctions ports generate_function; HL/C matches Haxe on the HL cases`.
+
+### Task 6: Cases aimed at HL/C
+
+**Files:**
+- Modify: `tests/cases/hlc-output/cases.hx.txt`
+- Modify: `tools/hl/HlcCheck.hx` (the `hlc-global-names` values from Task 3, Step 1)
+
+Each case needs a reason that is HL/C's alone. Add these:
+
+- [ ] **Step 1: Add the cases.**
+  - `hlc-long-strings`: string constants of 63, 64 and 200 bytes, one with non-ASCII. Covers
+    `string_data_limit`, `string$<digest>`, the UTF-16 bytes and the `// …` comment.
+  - `hlc-bytes`: an `hl.Bytes` constant of 10 bytes and one over 1000 bytes. Covers `hl/bytes_<md5>.h` and its
+    `#include`. Use `haxe.Resource` with `--resource` if a literal can't reach `code.bytes`.
+  - `hlc-global-names`: string constants `"a b"`, `"a_b"`, `"a-b"`, `"_"` and a 40-character constant (Review
+    Focus 3). Copy the names from Haxe's `hl/globals.c` into `HlcCheck`.
+  - `hlc-type-names`, covering Review Focus 1:
+    - a function taking `(Null<Int>, Null<Int>)`;
+    - a recursive anonymous type, `typedef R = {next:Null<R>, v:Int}`;
+    - nested anonymous types sharing field names (`{a:{a:Int}}`);
+    - an enum with an anonymous context (`t$ctx_`).
+  - `hlc-floats`: the `floatLiteral` values (Review Focus 4).
+  - `hlc-dynamic-fields`: dynamic field reads, writes and calls on `Dynamic` and on anonymous objects. Covers
+    `hl/hashes.c` and the `hash` collision loop.
+  - `hlc-locals`: one function with locals of 15 or more C types, so the local-declaration table resizes.
+  - `hlc-source-header`: the same as `trace-hello`, plus `-D source-header=custom header`.
+  - `hlc-long-path`: a class in a package path whose module name is longer than 128 characters (the `Digest`
+    folder name).
+  - `hlc-hl-ver`: `trace-hello` plus `-D hl-ver=1.13.0`.
+- [ ] **Step 2: Run** `tests/hl/run.sh --family hlc-output`. Expected: every case passes. Fix what fails in
+  `Hlc*.hx`, each fix with the case that showed it.
+- [ ] **Step 3: Run the harness family:**
+  `neko run.n run --compiler <exe> --cases <worktree>/tests/cases --expected <worktree>/tests/expected --std C:/HaxeToolkit/haxe/std --family hlc-output`.
+  Record the expected digests first with `--compiler C:/HaxeToolkit/haxe/haxe.exe` (the hl-output family's
+  recording procedure). Expected: PASS.
+- [ ] **Step 4: Commit:** `hl: hlc-output cases for strings, bytes, names, floats, hashes and paths`.
+
+### Task 7: JoeClash's Android build
+
+**Files:**
+- Modify: whatever the differences require. Each fix gets a case in `hlc-output`, or in `hl-output` if it is a
+  front-end difference.
+- Create: `tools/hlc-joeclash.sh`
+
+**Interfaces:**
+- Produces: `tools/hlc-joeclash.sh <hxc exe> <scratch dir>`, which:
+  - builds the first section of `D:/_github/_JoeClash/build.android.hxml` (everything before the first `--next`)
+    from JoeClash's folder, with `--hl <scratch>/{h,x}/main.c` in place of its `--hl` line, plus
+    `-D no-compilation`;
+  - builds once with Haxe and once with hxc (`HAXE_STD_PATH` spelled with backslashes);
+  - prints `files: <n> identical` or the `tools/hlc-compare.sh` report;
+  - never writes into JoeClash's `bin/`.
+
+- [ ] **Step 1: Write `tools/hlc-joeclash.sh`.** Check that `git -C D:/_github/_JoeClash status --short` is the
+  same before and after.
+- [ ] **Step 2: Check Haxe against itself.** Run the Haxe half twice into two directories. If they differ, list
+  those files as Haxe's own nondeterminism (Review Focus 2) and leave them out of the comparison, saying so in
+  the script's output.
+- [ ] **Step 3: Run it and fix differences until it prints `identical`.** For each fix:
+  - add the case;
+  - re-run the HL/C families (Task 5, Step 3).
+- [ ] **Step 4: Commit:** `hl: JoeClash's Android HL/C matches Haxe's` (plus one commit per fix, each naming its case).
+
+### Task 8: Acceptance
+
+**Files:**
+- Modify: `README.md` (the `--hl` row), `tests/hl/README.md` (an "HL/C" section)
+
+- [ ] **Step 1: Run every check, one at a time:**
+  - `tests/hl/run.sh` on hl-output 35/35 and hl-opt 39/39;
+  - `--hlc` on both families;
+  - `--family hlc-output`;
+  - the own suite: 0 failed;
+  - `.NET`: 736/736;
+  - `corpus unit-hl`: PASS;
+  - JoeClash `build.hxml`: `game.hl` identical;
+  - `tools/hlc-joeclash.sh`: identical.
+- [ ] **Step 2: Update the docs.**
+  - The README's `--hl` row says HL/C (`--hl x.c`) writes the same files as Haxe 4.3.7 on the HL cases, the
+    hlc-output cases and JoeClash's Android build.
+  - `tests/hl/README.md` documents:
+    - the family and `--hlc`;
+    - `tools/hlc-compare.sh` and `tools/hlc-joeclash.sh`;
+    - `-D no-compilation`;
+    - any listed divergence, with its reason.
+- [ ] **Step 3: Commit:** `hl: HL/C output matches Haxe 4.3.7 (M6)`.
+- [ ] **Step 4: Rebuild the exe.** `find src -newer bin/hxc-windows-x64.exe -type f` must print nothing.

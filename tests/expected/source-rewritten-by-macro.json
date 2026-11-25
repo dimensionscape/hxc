@@ -1,0 +1,4 @@
+{
+	"an-init-macro-rewrites-a-module-before-it-loads": "P.hx:3: 2",
+	"a-build-macro-rewrites-a-module-before-it-loads": "P.hx:4: 3"
+}

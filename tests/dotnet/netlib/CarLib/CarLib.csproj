@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>netstandard2.0</TargetFramework><AssemblyName>CarLib</AssemblyName><Nullable>disable</Nullable><LangVersion>latest</LangVersion><GenerateDocumentationFile>false</GenerateDocumentationFile></PropertyGroup>
+</Project>

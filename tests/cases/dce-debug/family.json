@@ -1,0 +1,8 @@
+{
+	"name": "dce-debug",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "$module", "-js", "$out", "-D", "dce-debug"]
+}

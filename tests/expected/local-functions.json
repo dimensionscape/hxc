@@ -1,0 +1,4 @@
+{
+	"null-default-makes-the-argument-nullable": "P.hx:3: characters 68-71 : Warning : Null<Float>\nP.hx:6: characters 9-10 : Warning : (?num : Null<Int>) -> Void",
+	"other-default-keeps-the-type": "P.hx:3: characters 39-42 : Warning : Float\nP.hx:4: characters 9-10 : Warning : (?num : Float) -> Void"
+}

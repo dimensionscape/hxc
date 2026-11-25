@@ -264,6 +264,13 @@ class TPrinting {
 		return tl.length == 0 ? "" : "<" + [for (_ in tl) "..."].join(", ") + ">";
 	}
 
+	// Haxe's plain rendering of a unification failure (Error.error_msg of Unify): one line per error of the
+	// list, in order, the types of all of them sharing one print context.
+	public static function unifyErrorLines(errors:Array<UnifyErrorKind>):Array<String> {
+		var ctx = printContext();
+		return [for (e in errors) unifyErrorMsgOne(ctx, e)];
+	}
+
 	public static function betterErrorMessage(errors:Array<UnifyErrorKind>):String {
 		var ctx = printContext();
 		// Collapse a run of consecutive Cannot_unify down to its first entry.

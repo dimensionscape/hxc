@@ -1,0 +1,54 @@
+--- macro-method-takes-a-string + --macro M.str('a-b')
+class P {
+	static function main() {}
+}
+
+--- macro-method-takes-an-optional-string + --macro M.str('a-b','c')
+class P {
+	static function main() {}
+}
+
+--- macro-method-takes-each-constant-kind + --macro M.kinds(1,1.5,true,['x','y'],{name:'abc'})
+class P {
+	static function main() {}
+}
+
+--- macro-method-takes-a-dynamic-as-its-value + --macro M.dyn('x')
+class P {
+	static function main() {}
+}
+
+--- macro-method-refuses-the-wrong-type + --macro M.str(1)
+class P {
+	static function main() {}
+}
+
+--- macro-method-refuses-the-wrong-type-of-a-computed-argument + --macro M.str(1+2)
+class P {
+	static function main() {}
+}
+
+--- macro-method-expr-parameter-is-refused + --macro M.expr('x')
+class P {
+	static function main() {}
+}
+
+--- macro-method-exprof-parameter-is-refused + --macro M.exprOf('x')
+class P {
+	static function main() {}
+}
+
+--- macro-method-array-of-expr-parameter-is-refused + --macro M.exprs('a',1,2)
+class P {
+	static function main() {}
+}
+
+--- macro-method-rest-of-expr-parameter-is-refused + --macro M.rest('a',1,2)
+class P {
+	static function main() {}
+}
+
+--- plain-function-takes-a-string + --macro M.plain('a-b')
+class P {
+	static function main() {}
+}

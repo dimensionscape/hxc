@@ -1,0 +1,380 @@
+# Milestone 3c plan: Array casts and the #8314 forwarding (casts notes §1.3, §2, §6).
+# The forwarding applies to any cast of an untyped Array<object> to a basic-element Array.
+#
+
+# Casts notes §6.3: lossy conversions copy through genericCast in both.
+--- cast-array-convert @gencs
+// Array<Dynamic> -> Array<X> where an element does not convert losslessly: a copy through genericCast in
+// gencs and (by the lossless fallback) in hxc. Prints only the converted values. @gencs.
+class P {
+	static function toInts(a:Array<Dynamic>):Array<Int> {
+		var r:Array<Int> = cast a;
+		return r;
+	}
+
+	static function toFloats(a:Array<Dynamic>):Array<Float> {
+		var r:Array<Float> = cast a;
+		return r;
+	}
+
+	static function toBools(a:Array<Dynamic>):Array<Bool> {
+		var r:Array<Bool> = cast a;
+		return r;
+	}
+
+	static function toStrs(a:Array<Dynamic>):Array<String> {
+		var r:Array<String> = cast a;
+		return r;
+	}
+
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("int<-halves", () -> toInts([0.5, 1.5, 2.5, -0.5, -1.5, 1.4, 1.6]));
+		run("int<-null", () -> toInts([null, 1]));
+		run("int<-big", () -> toInts([1e10]));
+		run("int<-nan", () -> toInts([Math.NaN]));
+		run("int<-Int64", () -> toInts([haxe.Int64.make(0, 5)]));
+		run("int<-bool", () -> toInts([true, false]));
+		run("int<-str", () -> toInts(["7", " 8 "]));
+		run("int<-badstr", () -> toInts(["1.5"]));
+		run("int<-obj", () -> toInts([{}]));
+		run("int<-date", () -> toInts([Date.fromTime(0)]));
+		run("float<-null", () -> toFloats([null, 1]));
+		run("float<-str", () -> toFloats(["1.5"]));
+		run("float<-bool", () -> toFloats([true]));
+		run("bool<-int", () -> toBools([1]));
+		run("bool<-null", () -> toBools([null, true]));
+		run("str<-int", () -> toStrs([1]));
+		run("str<-obj", () -> toStrs([{}]));
+		run("single", () -> { var r:Array<Single> = haxe.Json.parse("[1.1, null]"); Std.string(r); });
+		run("int64", () -> { var r:Array<haxe.Int64> = haxe.Json.parse("[1.6]"); Std.string(r); });
+	}
+}
+===
+[run]
+int<-halves: [0,2,2,0,-2,1,2]
+int<-null: [0,1]
+int<-big: EXC System.OverflowException: Value was either too large or too small for an Int32.
+int<-nan: EXC System.OverflowException: Value was either too large or too small for an Int32.
+int<-Int64: [5]
+int<-bool: [1,0]
+int<-str: [7,8]
+int<-badstr: EXC System.FormatException: The input string '1.5' was not in a correct format.
+int<-obj: EXC System.NullReferenceException: Object reference not set to an instance of an object.
+int<-date: EXC System.NullReferenceException: Object reference not set to an instance of an object.
+float<-null: [0,1]
+float<-str: [1.5]
+float<-bool: [1]
+bool<-int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.Boolean'.
+bool<-null: [false,true]
+str<-int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+str<-obj: EXC System.InvalidCastException: Unable to cast object of type 'haxe.lang.DynamicObject' to type 'System
+single: [1.1,0]
+int64: [1]
+
+# Casts notes §6.4: the last two reads are reinterpreted by hxc and must still print the same.
+--- cast-array-lossless-serial @gencs
+// Reading a typed field never rewrites stored data: with 1.5 in an Array<Int> field, or null in an
+// Array<Float> one, the read copies and the record re-serializes as it was. @gencs.
+typedef TI = {val:Array<Int>};
+typedef TF = {val:Array<Float>};
+
+class P {
+	static function main() {
+		var t:TI = haxe.Json.parse('{"val":[1.5,2,null]}');
+		var v = t.val;
+		Sys.println(Std.string(v) + " " + haxe.Serializer.run(t));
+		var u:TF = haxe.Unserializer.run("oy3:valad1.5i2nhg");
+		var w = u.val;
+		Sys.println(Std.string(w) + " " + haxe.Serializer.run(u));
+		var x:TI = haxe.Json.parse('{"val":[1,2]}');
+		var y = x.val;
+		Sys.println(Std.string(y) + " " + haxe.Serializer.run(x));
+		var z:TF = haxe.Json.parse('{"val":[1,2]}');
+		var q = z.val;
+		Sys.println(Std.string(q) + " " + haxe.Serializer.run(z));
+	}
+}
+===
+[run]
+[2,2,0] oy3:valad1.5i2nhg
+[1.5,2,0] oy3:valad1.5i2nhg
+[1,2] oy3:valai1i2hg
+[1,2] oy3:valai1i2hg
+
+# Recorded #8314 divergence (casts notes §6.11). gencs: `body: [ val : [1,0,0,0] ] | [ val : [1,0,0,0] ] |
+# [ val : [2,0,0,0] ]` and `json: ... | [] [] same=false`. Expected [run]: the hxc output casts §6.11 states.
+--- cast-8314-issue
+// Haxe issue 8314's own example (issue body) and the haxe.Json example from its comments (aartzrc, 2019-06-24).
+// gencs: writes through a typed read of an unserialized array are lost. Recorded #8314 divergence: hxc keeps them.
+typedef DataItem = {data:String, a:Array<String>};
+
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("body", () -> {
+			var simpleObj:{val:Array<Float>} = {val: [0, 0, 0, 0]};
+			var newVal1:Int = 1;
+			var newVal2:Int = 2;
+			simpleObj.val[0] = newVal1;
+			var s1 = Std.string(simpleObj);
+			var afterSerialize:{val:Array<Float>} = haxe.Unserializer.run(haxe.Serializer.run(simpleObj));
+			afterSerialize.val[0] = newVal2;
+			var s2 = Std.string(afterSerialize);
+			afterSerialize.val = afterSerialize.val.copy();
+			afterSerialize.val[0] = newVal2;
+			s1 + " | " + s2 + " | " + Std.string(afterSerialize);
+		});
+		run("json", () -> {
+			var t:DataItem = {data: "d", a: []};
+			var a = t.a;
+			t.a.push("raw anonymous object is ok");
+			var r1 = Std.string(a) + " " + Std.string(t.a);
+			var t:DataItem = haxe.Json.parse(haxe.Json.stringify({data: "d", a: []}));
+			var a = t.a;
+			t.a.push("after json conversion fails");
+			r1 + " | " + Std.string(a) + " " + Std.string(t.a) + " same=" + (t.a == t.a);
+		});
+	}
+}
+===
+[run]
+body: [ val : [1,0,0,0] ] | [ val : [2,0,0,0] ] | [ val : [2,0,0,0] ]
+json: [raw anonymous object is ok] [raw anonymous object is ok] | [after json conversion fails] [after json conversion fails] same=true
+
+# Recorded #8314 divergence (casts notes §6.12). gencs: False, False, `[1,2,3] [1,2,3,4]`, False, `-1 -1`,
+# an empty line. Expected [run]: the hxc output casts §6.12 states.
+--- cast-4872-eq
+// Haxe issue 4872's tests (Simn 2016-03-29 and 2024-02-04). gencs: a == b false, the push is lost.
+// Recorded #8314 divergence: hxc prints true and [1,2,3,4].
+class P {
+	static function eq<T>(e1:T, e2:T)
+		return e1 == e2;
+
+	static function main() {
+		var a:Array<Dynamic> = [1, 2, 3];
+		Sys.println("prevent fusion");
+		var b:Array<Int> = cast a;
+		Sys.println("prevent fusion");
+		Sys.println(a == b);
+		Sys.println(eq(a, b));
+		b.push(4);
+		Sys.println(Std.string(a) + " " + Std.string(b));
+		var da:Dynamic = a, db:Dynamic = b;
+		Sys.println(da == db);
+		Sys.println(a.indexOf(4) + " " + [a].indexOf(cast b));
+		var m = new haxe.ds.ObjectMap<Dynamic, Int>();
+		m.set(a, 1);
+		Sys.println(m.get(b));
+	}
+}
+===
+[run]
+prevent fusion
+prevent fusion
+True
+True
+[1,2,3,4] [1,2,3,4]
+True
+3 0
+1
+
+# Recorded #8314 divergence (casts notes §6.13). gencs: `[1,2,2.5] [1,2] [1,2,2] oy3:valai1i2d2.5hg`,
+# `[1,2,2.5,x]`. Expected [run]: the hxc output casts §6.13 states.
+--- cast-array-dynamic-write
+// A wrong-typed write through Dynamic into an array a typed read has reinterpreted. gencs: the write lands
+// in the untyped original. Recorded #8314 divergence: hxc converts it as genericCast does (2.5 -> 2), and
+// the record serializes with i2 where gencs writes d2.5.
+typedef TI = {val:Array<Int>};
+
+class P {
+	static function main() {
+		var t:TI = haxe.Json.parse('{"val":[1,2]}');
+		var v = t.val;
+		var d:Dynamic = Reflect.field(t, "val");
+		d.push(2.5);
+		Sys.println(Std.string(d) + " " + Std.string(v) + " " + Std.string(t.val) + " " + haxe.Serializer.run(t));
+		try
+			d.push("x")
+		catch (e:Dynamic)
+			Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+		Sys.println(Std.string(d));
+	}
+}
+===
+[run]
+[1,2,2] [1,2,2] [1,2,2] oy3:valai1i2i2hg
+EXC System.FormatException
+[1,2,2]
+
+# Recorded #8314 divergence (casts notes §6.14). gencs: `[[1],[2]] [[1],[2]] false`, `[[1,2],[3]]`.
+# Expected [run]: the hxc output casts §6.14 states.
+--- cast-array-nested
+// Nested arrays: Array<Array<Int>> is Array<object> in gencs, so each element read copies the inner array.
+// Recorded #8314 divergence: hxc reinterprets the inner array once and keeps the pushes.
+class P {
+	static function main() {
+		var d:Dynamic = haxe.Json.parse('[[1],[2]]');
+		var r:Array<Array<Int>> = d;
+		r[0].push(5);
+		var x = r[1];
+		x.push(6);
+		Sys.println(Std.string(r) + " " + Std.string(d) + " " + (r[0] == r[0]));
+		var o:{m:Array<Array<Float>>} = haxe.Json.parse('{"m":[[1,2],[3]]}');
+		o.m[0][0] = 9;
+		Sys.println(Std.string(o.m));
+	}
+}
+===
+[run]
+[[1,5],[2,6]] [[1,5],[2,6]] true
+[[9,2],[3]]
+
+# Recorded #8314 divergence (types notes §8.17, probe nested; overlaps cast-array-nested through class
+# fields). gencs: inner write 1, same inner false, ai same false, ai push seen 1. Expected [run]: types §8.17's
+# stated lines (inner write 5, same inner true, ai push seen 2, ac/outer as gencs) and `ai same: true`, which
+# §8.17 leaves out: `h.ai == o.ai` has a Dynamic operand, so it resolves the forward (casts §2.6), as
+# cast-4872-eq's `da == db` does.
+--- nested-array-element-cast
+// Nested arrays under erasure: Array<Array<Int>> is Array<object>, so the inner cast happens at each element read.
+class C { public var x = 1; public function new() {} }
+class H {
+	public var aai:Array<Array<Int>>;
+	public var ac:Array<C>;
+	public var ai:Array<Int>;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var s = haxe.Serializer.run({aai: [[1, 2]], ac: [], ai: [1]});
+		var o:Dynamic = haxe.Unserializer.run(s);
+		var h = new H();
+		h.aai = o.aai;
+		h.ac = o.ac;
+		h.ai = o.ai;
+		h.aai[0][0] = 5;
+		Sys.println("inner write: " + h.aai[0][0]);
+		var inner = h.aai[0];
+		Sys.println("same inner: " + (inner == h.aai[0]));
+		Sys.println("outer same: " + (h.aai == o.aai));
+		Sys.println("ac same: " + (h.ac == o.ac));
+		Sys.println("ai same: " + (h.ai == o.ai));
+		h.ac.push(new C());
+		Sys.println("ac push seen: " + o.ac.length);
+		h.ai.push(2);
+		Sys.println("ai push seen: " + o.ai.length);
+		var t:{ac:Array<C>} = o;
+		t.ac.push(new C());
+		Sys.println("anon Array<C> push seen: " + o.ac.length);
+	}
+}
+===
+[run]
+inner write: 5
+same inner: true
+outer same: true
+ac same: true
+ai same: true
+ac push seen: 1
+ai push seen: 2
+anon Array<C> push seen: 2
+
+# Recorded #8314 divergence (casts notes §6.16). gencs: `[1,2] 3 | [1,2,9] 4`. Expected [run]: the hxc output
+# casts §6.16 states.
+--- cast-box-array-field
+// A generic class copied by __hx_cast whose Array<T> field holds a reinterpretable Array<object>: gencs copies
+// the array too, so the original box's array is untouched. Recorded #8314 divergence: hxc's copy holds the
+// forward target of the original's array, so the push shows in both boxes.
+class Box<T> {
+	public var arr:Array<T>;
+	public var v:T;
+
+	public function new(arr:Array<T>, v:T) {
+		this.arr = arr;
+		this.v = v;
+	}
+}
+
+class P {
+	static function main() {
+		var b = new Box<Dynamic>([1, 2], 3);
+		var d:Dynamic = b;
+		var t:Box<Int> = d;
+		t.arr.push(9);
+		t.v = 4;
+		Sys.println(Std.string(b.arr) + " " + b.v + " | " + Std.string(t.arr) + " " + t.v);
+	}
+}
+===
+[run]
+[1,2,9] 3 | [1,2,9] 4
+
+# Recorded divergence (decision: map/filter on a typed array held as Array<Dynamic> work in hxc). Types
+# notes §8.18 (probe viewmap). gencs: `map threw System.InvalidCastException`, `filter threw
+# System.InvalidCastException`. Expected [run]: gencs's run with those two lines working ([2,4,6], [2,3]);
+# `push str` still throws FormatException (genericCast<int> on the typed array, reproduced).
+--- array-dynamic-view-members
+// An Array<Int> seen as Array<Dynamic>: which inlined members still work under gencs.
+class P {
+	static function t(l:String, f:() -> Dynamic) {
+		try Sys.println(l + ": " + f()) catch (e:Dynamic) Sys.println(l + " threw " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var ai = [1, 2, 3];
+		var ad:Array<Dynamic> = ai;
+		t("length", () -> ad.length);
+		t("index", () -> ad[1]);
+		t("for", () -> { var s = 0; for (x in ad) s += x; s; });
+		t("map", () -> ad.map(x -> x * 2));
+		t("filter", () -> ad.filter(x -> x > 1));
+		t("push", () -> { ad.push(4); ai.length; });
+		t("push str", () -> { ad.push("s"); ai.length; });
+		t("set", () -> { ad[0] = 10; ai[0]; });
+		t("copy", () -> ad.copy());
+		t("join", () -> ad.join(","));
+		t("iterator", () -> { var it = ad.iterator(); it.next(); });
+		t("contains", () -> ad.contains(2));
+		t("indexOf", () -> ad.indexOf(2));
+		t("Std.string", () -> Std.string(ad));
+		t("isOfType Array", () -> Std.isOfType(ad, Array));
+		var ac:Array<String> = ["a"];
+		var adc:Array<Dynamic> = ac;
+		t("map str", () -> adc.map(x -> x));
+	}
+}
+===
+[run]
+length: 3
+index: 2
+for: 6
+map: [2,4,6]
+filter: [2,3]
+push: 4
+push str threw System.FormatException
+set: 10
+copy: [10,2,3,4]
+join: 10,2,3,4
+iterator: 10
+contains: true
+indexOf: 1
+Std.string: [10,2,3,4]
+isOfType Array: true
+map str: [a]

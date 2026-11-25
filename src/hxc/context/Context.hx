@@ -56,6 +56,8 @@ class Context {
 	public var nullSafetyReportCallbacks:Array<Array<{msg:String, pos:hxc.ast.Position}>->Void> = [];
 
 	public var classPath:Array<String>;
+	// The class paths `-lib` added, each with the library whose `haxelib path` lines gave it (Compiler.addLibs).
+	public var libraryClassPaths:Array<{classPath:String, library:String}> = [];
 
 	/** Command-line package remaps, keyed by the first package segment. */
 	public var packageRemaps:StringMap<String>;
@@ -97,8 +99,10 @@ class Context {
 		if (hostCom != null) return hxc.typing.TypeFields.macroDisplayWindow ? hostCom.displaySpec : null;
 		return displaySpec;
 	}
-	// The macro com's error hook; the interpreter marks itself as having had an error.
-	public static var onMacroWorldError:Null<Void->Void> = null;
+	// The macro com's error hook; the interpreter marks itself as having had an error. It returns how to
+	// take the mark back when this error was the one that set it (null when it was already set), so a
+	// speculative typing that rolls its diagnostics back does not leave the interpreter marked.
+	public static var onMacroWorldError:Null<Void->Null<Void->Void>> = null;
 
 	public var mainClass:Null<Path>;
 	// The loaded Java libraries. The JVM generator copies every non-std, non-extern one next to the jar
@@ -107,6 +111,22 @@ class Context {
 	// jvm was spelled directly rather than --java plus -D jvm. it as its first argument and it decides
 	// whether the output path is a jar or a directory.
 	public var jvmFlag:Bool = false;
+	// The --net-std search paths in command-line order, and the std DLLs NetSetup found under them in
+	// directory-read order.
+	public var netStd:Array<String> = [];
+	public var netStdFiles:Array<String> = [];
+	// The loaded .NET libraries in the order they were added, std ones first, and every type they
+	// define: the IL path of each Haxe path (keyed by sTypePath), the last library read winning.
+	public var netLibs:Array<hxc.codegen.dotnet.NetLibrary> = [];
+	public var netPathMap:Map<String, hxc.codegen.dotnet.IlData.IlPath> = new Map();
+	// The same types by their dotted .NET name (NetConverter.ilpathS, which joins nested types with `.`
+	// as @:native does), the first library read winning.
+	public var netDottedMap:Map<String, hxc.codegen.dotnet.IlData.IlPath> = new Map();
+	// The assemblies read to lower references outside netLibs, and what was found there (NetRefs.of).
+	public var netRefs:Null<hxc.codegen.dotnet.NetRefs> = null;
+	// The fields DCE removed, by "<sTypePath>.<name>": the .NET backend names one in its error for inline C#
+	// that uses it, which DCE never reads.
+	public var dceRemovedFields:Map<String, Bool> = new Map();
 
 	public var displaySpec:Null<String>;
 
@@ -225,7 +245,7 @@ class Context {
 	public function log(s:String):Void {
 		if (!verbose) return;
 		if (hxc.Compiler.serverPrint(s + "\n")) return;
-		var out = Sys.stdout();
+		var out = hxc.core.HostStdio.out();
 		out.writeString(s + "\n");
 		out.flush();
 	}
@@ -253,6 +273,11 @@ class Context {
 	public var initMacrosDone:Bool = false;
 
 	public var declOfType:StringMap<{decl:TypeDef, pos:Position}>;
+	// Each class made from a declaration, with the path its type patches name (an abstract's, for its
+	// implementation) and how many patches were registered when it was made. Haxe 4.3.7 patches a class
+	// when it builds, so one made before a patch was registered (a std class loaded with the core types,
+	// ahead of the init macros) still takes that patch's class metadata (ModuleLoader.applyLateClassPatches).
+	public var classPatchMarks:haxe.ds.ObjectMap<TClass, {path:Path, seen:Int}> = new haxe.ds.ObjectMap();
 
 	/**
 	 * Types whose declarations failed resolution. Skip their unbound fields and bodies to avoid
@@ -391,9 +416,11 @@ class Context {
 	public static var nextStoredTypedExprId:Int = 0;
 
 	// Increment before allocating a stored-expression ID. HXC_STE_DBG traces the allocation site.
+	static final steDbg:Bool = Sys.getEnv("HXC_STE_DBG") != null;
+
 	public static function allocStoredTypedExprId(tag:String):Int {
 		var id = ++nextStoredTypedExprId;
-		if (Sys.getEnv("HXC_STE_DBG") != null) Sys.stderr().writeString("[STE] " + id + " " + tag + "\n");
+		if (steDbg) hxc.core.HostStdio.err().writeString("[STE] " + id + " " + tag + "\n");
 		return id;
 	}
 
@@ -420,6 +447,14 @@ class Context {
 		while (idx < delayed.length && delayed[idx].pass < pass) idx++;
 		if (idx < delayed.length && delayed[idx].pass == pass) delayed[idx].fns.unshift(f);
 		else delayed.insert(idx, {pass: pass, fns: [f]});
+	}
+
+	// delay_late: a bucket of its own after every bucket of the pass, so it runs once what the pass
+	// already holds has.
+	public function delayLate(pass:Int, f:Void->Void):Void {
+		var idx = 0;
+		while (idx < delayed.length && delayed[idx].pass <= pass) idx++;
+		delayed.insert(idx, {pass: pass, fns: [f]});
 	}
 
 	public function flushPass(pass:Int):Void {
@@ -528,6 +563,7 @@ class Context {
 		resources = new StringMap();
 		resourceOrder = [];
 		declOfType = new StringMap();
+		classPatchMarks = new haxe.ds.ObjectMap();
 		declErrored = new StringMap();
 		declBuiltBeforeError = new StringMap();
 		classSlots = [];
@@ -559,7 +595,10 @@ class Context {
 	public function cloneForMacro():Context {
 		// Remove target overlays and prepend eval/_std before user and library paths. Otherwise libraries
 		// such as hxnodejs can supply incompatible macro-world sys modules.
-		var macroCp = [for (s in this.classPath) if (StringTools.replace(s, "\\", "/").indexOf("/_std/") < 0) s];
+		var macroCp = [
+			for (s in this.classPath)
+				if (StringTools.replace(s, "\\", "/").indexOf("/_std/") < 0 && !hxc.codegen.dotnet.RuntimeSources.isVirtual(s)) s
+		];
 		macroCp = [for (p in this.stdPath) p + "eval/_std/"].concat(macroCp);
 		var c = new Context(macroCp, Define.adaptToMacroContext(this.defines));
 		c.stdPath = this.stdPath.copy();
@@ -574,6 +613,9 @@ class Context {
 		c.moduleNonexistentLut = this.moduleNonexistentLut;
 		// Forward macro-world warnings to the main context; keep macro recovery diagnostics local.
 		c.forwardWarningsTo = this;
+		// The macro world is a clone of the host's settings, so -w and -D no-deprecation-warnings filter its
+		// warnings too.
+		c.warningOptions = this.warningOptions.copy();
 		// Copy debug settings while starting a fresh feature table.
 		c.debug = this.debug;
 		c.verbose = this.verbose;
@@ -683,6 +725,8 @@ class Context {
 	public var relocateNullPosTo:Null<Position> = null;
 
 	public function addDiagnostic(message:String, pos:Position, depth:Int = 0, ?severity:MessageSeverity):Void {
+		// Messages keep the order of a one-thread run: a worker leaves its unit to the main thread.
+		hxc.core.Par.mainOnly();
 		// Relocate null positions only in diagnostics. Keep AST positions unchanged for generated code.
 		if (relocateNullPosTo != null && pos != null && pos.min < 0 && pos.max < 0 && pos.file == Position.nullPos.file)
 			pos = relocateNullPosTo;
@@ -693,20 +737,68 @@ class Context {
 			throw new hxc.core.TypingError(message, pos, depth);
 		// Forward macro-world diagnostics to the host. Mark interpreter errors so later macro calls are
 		// skipped for this compilation.
-		if (isMacro && (severity == null || severity == Error) && onMacroWorldError != null) onMacroWorldError();
-		if (forwardWarningsTo != null)
+		var undoMacroWorldError = isMacro && (severity == null || severity == Error) && onMacroWorldError != null ? onMacroWorldError() : null;
+		var forwardedAt:Null<Int> = null;
+		if (forwardWarningsTo != null) {
+			forwardedAt = forwardWarningsTo.diagnostics.length;
 			forwardWarningsTo.addDiagnostic(message, pos, depth, severity);
+		}
 		// Keep a local diagnostic copy for report-once checks even when forwarding it to the host.
 		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
 			Sys.println("[diag" + (isMacro ? ":macro" : "") + " #" + diagnostics.length + (forwardWarningsTo != null ? " fwd" : "") + "] " + message.split("
 ")[0]);
-		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
+		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity,
+			forwardedAt: forwardedAt, undoMacroWorldError: undoMacroWorldError});
 		// Errors outside a macro call's span gain a Called from macro here entry one level deeper.
 		// Relocated errors inside the call do not.
 		var span = relocateNullPosTo;
 		if (span != null && (severity == null || severity == Error) && pos != null
 				&& (pos.file != span.file || pos.max < span.min || pos.min > span.max))
 			diagnostics.push({message: "... Called from macro here", pos: span, depth: depth + 1, severity: Error});
+	}
+
+	// Take back every diagnostic recorded since `mark` (an earlier diagnostics.length), with what recording
+	// them did outside this list: the copies forwarded to the host context, and the macro interpreter's
+	// error mark. Trimming the list alone would leave a macro-world speculative typing's errors in the
+	// host's output.
+	public function rollbackDiagnostics(mark:Int):Void {
+		if (diagnostics.length <= mark) return;
+		var i = diagnostics.length;
+		while (i > mark) {
+			var undo = diagnostics[--i].undoMacroWorldError;
+			if (undo != null) undo();
+		}
+		if (forwardWarningsTo != null)
+			for (i in mark...diagnostics.length) {
+				var at = diagnostics[i].forwardedAt;
+				if (at != null) {
+					forwardWarningsTo.rollbackDiagnostics(at);
+					break;
+				}
+			}
+		diagnostics.resize(mark);
+	}
+
+	// Where a speculative typing starts: the diagnostics so far, and the property deprecations queued
+	// for DeprecationCheck's walk of the final tree, which the speculation's thrown-away expression
+	// never reaches.
+	public function speculationMark():SpeculationMark {
+		return {diagnostics: diagnostics.length, properties: hxc.filters.DeprecationCheck.pendingPropertyMark()};
+	}
+
+	// Take back what a speculative typing recorded since `mark`: its queued property deprecations, and
+	// its diagnostics through rollbackDiagnostics. With `keepWarnings` (an overload attempt, a macro
+	// cast) only its errors go and its warnings stay, in order.
+	public function rollbackSpeculation(mark:SpeculationMark, keepWarnings = false):Void {
+		hxc.filters.DeprecationCheck.rollbackPendingProperties(mark.properties);
+		if (!keepWarnings) {
+			rollbackDiagnostics(mark.diagnostics);
+			return;
+		}
+		if (diagnostics.length <= mark.diagnostics) return;
+		var kept = [for (i in mark.diagnostics...diagnostics.length) if (diagnostics[i].severity != Error) diagnostics[i]];
+		diagnostics.resize(mark.diagnostics);
+		for (d in kept) diagnostics.push(d);
 	}
 
 	// Printed errors use ordinary diagnostic routing but are excluded from diagnostics-report
@@ -741,6 +833,7 @@ class Context {
 
 	// Drop disabled warnings; prefix enabled non-generic warnings with (WName).
 	public function warning(w:hxc.core.WarningList.Warning, options:Array<Array<hxc.core.WarningList.WarningOption>>, message:String, pos:Position, depth:Int = 0):Void {
+		hxc.core.Par.mainOnly();
 		switch (hxc.core.WarningList.getMode(w, options.concat(warningOptions))) {
 			case WMEnable:
 				var obj = hxc.core.WarningList.warningObj(w);
@@ -830,6 +923,9 @@ typedef UserDocEntry = {
 	var source:Null<String>;
 }
 
+// A mark for Context.rollbackSpeculation.
+typedef SpeculationMark = {diagnostics:Int, properties:Int};
+
 typedef CompilerDiagnostic = {
 	var message:String;
 	var pos:Position;
@@ -842,6 +938,10 @@ typedef CompilerDiagnostic = {
 	 * output.
 	 */
 	var ?printedOnly:Bool;
+	// The host's diagnostics length before this one was forwarded to it, and how to take back the macro
+	// interpreter error mark recording it set: what rollbackDiagnostics undoes besides the entry itself.
+	var ?forwardedAt:Int;
+	var ?undoMacroWorldError:Void->Void;
 };
 
 class ContextError {

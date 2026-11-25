@@ -89,7 +89,9 @@ class ModuleLoader {
 	static function cacheDirectory(ctx:Context, cp:String, dir:String, fDir:String):Void {
 		var platformExt = "." + (ctx.defines.rawDefined("macro") ? "macro" : hxc.core.Globals.platformName(ctx.platform));
 		var isLoadingCoreApi = ctx.defines.rawDefined("core_api");
-		var listing:Null<Array<String>> = try FileSystem.readDirectory(dir) catch (_:Dynamic) null;
+		// The .NET runtime's root lists the files embedded in hxc instead of a directory.
+		var listing:Null<Array<String>> = if (hxc.codegen.dotnet.RuntimeSources.isVirtual(cp)) hxc.codegen.dotnet.RuntimeSources.readDirectory(dir)
+			else hxc.core.HostFile.readDirectoryOpt(dir);
 		ctx.readdirCache.set(cp + "\n" + dir, listing);
 		if (listing == null) return;
 		for (fileOwnName in listing) {
@@ -104,8 +106,12 @@ class ModuleLoader {
 					representation = removeExtension(removeExtension(relativeToClasspath)) + ext;
 				}
 			}
-			if (isLoadingCoreApi || isPlatformSpecific || !ctx.fileLookupCache.exists(representation))
-				ctx.fileLookupCache.set(representation, dir == "." ? fileOwnName : dir + "/" + fileOwnName);
+			if (isLoadingCoreApi || isPlatformSpecific || !ctx.fileLookupCache.exists(representation)) {
+				var path = dir == "." ? fileOwnName : dir + "/" + fileOwnName;
+				ctx.fileLookupCache.set(representation, path);
+				// a source file this directory answers for is likely to be read soon
+				if (StringTools.endsWith(fileOwnName, ".hx")) hxc.core.ReadAhead.offer(path);
+			}
 		}
 	}
 
@@ -185,6 +191,12 @@ class ModuleLoader {
 	}
 
 	public static function moduleFileContent(ctx:Context, file:String):String {
+		// A file of the .NET runtime embedded in hxc, registered so diagnostics can quote it.
+		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(file)) {
+			var content = hxc.codegen.dotnet.RuntimeSources.content(file);
+			if (content == null) throw "no embedded file " + file;
+			return Position.registerFileContent(file, content);
+		}
 		if (ctx.fileContents.length > 0) {
 			for (fc in ctx.fileContents) {
 				if (fc.contents == null) continue;
@@ -288,12 +300,47 @@ class ModuleLoader {
 					case FProp(get, set, _, e): kind = FProp(get, set, patch.typeHint, e);
 					case FFun(f): kind = FFun({fParams: f.fParams, fArgs: f.fArgs, fType: patch.typeHint, fExpr: f.fExpr});
 				}
-				if (!patch.remove) next.push(new ClassField(field.cffName, field.cffDoc, field.cffPos, field.cffMeta.concat(patch.meta),
-					field.cffAccess, kind));
+				if (!patch.remove) {
+					var patched = new ClassField(field.cffName, field.cffDoc, field.cffPos, field.cffMeta.concat(patch.meta),
+						field.cffAccess, kind);
+					patched.cffNameOrigin = Ast.fieldNameOrigin(field);
+					next.push(patched);
+				}
 			}
 			result = next;
 		}
 		return {meta: classMeta, fields: result};
+	}
+
+	// Haxe 4.3.7 applies a class's type patches when the class builds (patch_class, after set_heritance),
+	// not when its module loads. hxc applies them at the load, so a class made before a patch was registered
+	// (StringTools, which the core types load ahead of the init macros) gets the patch's class metadata here,
+	// at the start of its build, before heritage resolution: an approximation of Haxe's timing that still
+	// comes before its @:build entries are read. A field patch still only reaches a class made after it: the
+	// field shells are registered at the load.
+	public static function applyLateClassPatches(ctx:Context, c:TClass):Void {
+		var mark = ctx.classPatchMarks.get(c);
+		if (mark == null || mark.seen >= ctx.typePatches.length) return;
+		var added:Metadata = [];
+		for (i in mark.seen...ctx.typePatches.length) {
+			var patch = ctx.typePatches[i];
+			if (patch.field == null && patch.path.name == mark.path.name && sameArray(patch.path.pack, mark.path.pack))
+				added = added.concat(patch.meta);
+		}
+		mark.seen = ctx.typePatches.length;
+		if (added.length == 0) return;
+		c.meta = c.meta.concat(added);
+		// The declaration is replaced, not written into: it may be the server's cached copy.
+		var key = Context.pathKey(c.path);
+		var entry = ctx.declOfType.get(key);
+		if (entry != null) switch (entry.decl) {
+			case EClass(d):
+				ctx.declOfType.set(key, {
+					decl: EClass({dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta.concat(added), dFlags: d.dFlags, dData: d.dData}),
+					pos: entry.pos
+				});
+			case _:
+		}
 	}
 
 	// Restore cached module imports without replacing existing types; import-only declarations append
@@ -753,6 +800,7 @@ class ModuleLoader {
 					if (patch.meta != d.dMeta || patch.fields != d.dData)
 						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: patch.meta, dFlags: d.dFlags, dData: patch.fields};
 					var c = TypeFunctions.mkClass(m, path, p, d.dName.pos);
+					ctx.classPatchMarks.set(c, {path: path, seen: ctx.typePatches.length});
 					// forceBuild initializes heritage and fields once, returning Building on reentry. Synthetic
 					// shells remain Built.
 					c.build = function():BuildState return hxc.typing.TypeResolve.forceBuild(ctx, c);
@@ -948,6 +996,7 @@ class ModuleLoader {
 						c.meta = implMeta;
 						c.isPrivate = true;
 						c.kind = KAbstractImpl(a);
+						ctx.classPatchMarks.set(c, {path: path, seen: ctx.typePatches.length});
 						TypeFunctions.addClassFlag(c, CFinal);
 						registerFields(c, implFields, ctx);
 						decls.push(TClassDecl(c));
@@ -1241,9 +1290,20 @@ class ModuleLoader {
 			// member semantics and checks.
 			var addAsStatic = isStatic || (isMacroField && ctx != null && ctx.isMacro);
 			var cf = TypeFunctions.mkField(cff.cffName.name, TypeFunctions.mkMono(), cff.cffPos, cff.cffName.pos, isPublic, addAsStatic);
+			// cf_name = fst cff.cff_name, a string a macro may have given
+			cf.nameOrigin = Ast.fieldNameOrigin(cff);
 			cf.doc = cff.cffDoc;
 			// Its own array, as the type's (createModuleTypes_): the declaration may be the cached parse.
 			cf.meta = cff.cffMeta.copy();
+			// A bodiless method's argument @:strict, which buildArgs never puts on a variable.
+			switch (cff.cffKind) {
+				case FFun(fd) if (fd.fExpr == null):
+					for (fa in fd.fArgs) for (m in fa.meta) if (m.name == ":strict") {
+						if (cf.hxcArgStrict == null) cf.hxcArgStrict = [];
+						cf.hxcArgStrict.push(m);
+					}
+				case _:
+			}
 			// Every abstract MEMBER (declared in the impl class and not static) is CfImpl, whatever its
 			// kind.
 			if (isAbstractImplMember) TypeFunctions.addClassFieldFlag(cf, CfImpl);
@@ -1449,10 +1509,9 @@ class ModuleLoader {
 						fieldError("Variable requires type-hint or initialization", cff.cffName.pos);
 					case FProp(_, _, th, e) if (th == null && e == null):
 						throw new ContextError("Property requires type-hint or initialization", cff.cffPos);
-					// Variable initializers infer their types; only functions and properties require explicit
-					// hints here.
-					case FVar(_, _):
-					case FProp(_, _, th, _): requireHint(th, cff.cffPos);
+					// Initializers infer their types, a property's too: only functions require explicit hints
+					// here.
+					case FVar(_, _) | FProp(_, _, _, _):
 				}
 			}
 			// Handle __init__ separately from ordinary extern-expression warnings.
@@ -1730,20 +1789,20 @@ class ModuleLoader {
 	// Make module, register, build types.
 	// The module types in a context of its own at PBuildModule, so a load its imports make does not flush;
 	// only the load that asked for the module, back in its own context, does.
-	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
+	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>, ?p:Position):ModuleDef {
 		var savedPass = ctx.currentPass;
 		ctx.currentPass = Context.PBuildModule;
-		var m = try typeModuleInner(ctx, mpath, file, tdecls) catch (e:Dynamic) { ctx.currentPass = savedPass; throw e; };
+		var m = try typeModuleInner(ctx, mpath, file, tdecls, p) catch (e:Dynamic) { ctx.currentPass = savedPass; throw e; };
 		ctx.currentPass = savedPass;
 		return m;
 	}
 
-	static function typeModuleInner(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
+	static function typeModuleInner(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>, ?p:Position):ModuleDef {
 		var m = makeModule(ctx, mpath, file);
 		// Here, before createModuleTypes. We add types after building.
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls), false, false, true);
 		m.hxcGlobalMetaPending = m.types.copy();
-		addModule(ctx, m);
+		addModule(ctx, m, p);
 		// Every module depends on StdTypes, and loading the core type String loads String (and through it
 		// Array) and records the dependency, before the imports are reached. The std module is still the
 		// null module while StdTypes itself types, so it does neither.
@@ -2090,7 +2149,7 @@ class ModuleLoader {
 		// The decls the loader produced are typed as an extern module.
 		if (externDecls != null) {
 			var requester0 = ctx.currentModule;
-			var loaded0 = try typeModule(ctx, m, file, externDecls) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
+			var loaded0 = try typeModule(ctx, m, file, externDecls, p) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
 			loaded0.extra.kind = MExtern;
 			addDependency(requester0, loaded0);
 			return loaded0;
@@ -2140,7 +2199,7 @@ class ModuleLoader {
 		// A forbidden package met while typing this module adds the position this module was requested at
 		// ("referenced here"), unless that is the null position.
 		var decls = sameArray(remap, m.pack) ? pkg.decls : remapDecls(pkg.decls, remap, m);
-		var loaded = try typeModule(ctx, m, file, decls) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
+		var loaded = try typeModule(ctx, m, file, decls, p) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
 		addDependency(requester, loaded);
 		return loaded;
 	}
@@ -2279,7 +2338,22 @@ class ModuleLoader {
 
 	/** (non-raising): the public sub-type named `tname` in `m`, or null. */
 	public static function findTypeInModuleOpt(m:ModuleDef, tname:String):Null<ModuleType> {
-		for (mt in m.types) {
+		var types = m.types;
+		if (types.length >= 16) {
+			var idx = m.hxcNameIndex;
+			if (idx == null || m.hxcNameIndexOf != types || m.hxcNameIndexLen != types.length) {
+				idx = new haxe.ds.StringMap();
+				for (mt in types) if (!TypeFunctions.tPrivate(mt)) {
+					var n = TypeFunctions.tPath(mt).name;
+					if (!idx.exists(n)) idx.set(n, mt);
+				}
+				m.hxcNameIndex = idx;
+				m.hxcNameIndexOf = types;
+				m.hxcNameIndexLen = types.length;
+			}
+			return idx.get(tname);
+		}
+		for (mt in types) {
 			if (!TypeFunctions.tPrivate(mt) && TypeFunctions.tPath(mt).name == tname) return mt;
 		}
 		return null;
@@ -2444,14 +2518,19 @@ class ModuleLoader {
 
 	// Wildcard imports: `import pack.*` resolves `name` as pack.name's type or pack.name module's main
 	// type.
-	public static function resolveWildcardImportType(ctx:Context, cur:ModuleDef, name:String, p:Position):Null<ModuleType> {
+	// A sub-type path `Module.Sub` looks in the same packages for the module and then the sub-type in it,
+	// moving on to the next package when the module or the type is missing.
+	public static function resolveWildcardImportType(ctx:Context, cur:ModuleDef, name:String, p:Position, ?sub:String):Null<ModuleType> {
 		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
 		if (imports == null) return null;
 		for (i in 0...imports.wildcards.length) {
 			var wp = imports.wildcards[i];
 			// Only the declarations before it, as in resolveNamedImportType.
 			if (imports.pathDisplayAt >= 0 && i < imports.wildcardImp.length && imports.wildcardImp[i] >= imports.pathDisplayAt) continue;
-			var r = tryLoadModuleMain(ctx, {pack: wp.pack.concat([wp.name]), name: name}, p);
+			var mp:Path = {pack: wp.pack.concat([wp.name]), name: name};
+			var r:Null<ModuleType> = null;
+			if (sub == null) r = tryLoadModuleMain(ctx, mp, p);
+			else r = tryLoadModuleSub(ctx, mp, sub, p);
 			if (r != null) { imports.markWildcard(wp); return r; }
 		}
 		return null;
@@ -2556,6 +2635,12 @@ class ModuleLoader {
 			case ModuleNotFound(q): q.name == mp.name && samePack(q.pack, mp.pack);
 			case _: false;
 		};
+	}
+
+	static function tryLoadModuleSub(ctx:Context, mp:Path, sub:String, p:Position):Null<ModuleType> {
+		var m = try loadModuleOpt(ctx, mp, p) catch (e:ContextError) { if (missFor(e, mp)) return null; throw e; };
+		if (m == null) return null;
+		return findTypeInModuleOpt(m, sub);
 	}
 
 	static function tryLoadModuleMain(ctx:Context, mp:Path, p:Position):Null<ModuleType> {

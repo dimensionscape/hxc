@@ -1,0 +1,116 @@
+--- abstract-over-enum-switch-is-exhaustive
+enum OrderingImpl { LT; GT; EQ; }
+abstract Ordering(OrderingImpl) from OrderingImpl to OrderingImpl {}
+class P {
+	static function f(c:Ordering):Int {
+		switch c {
+			case LT: return 1;
+			case GT: return 2;
+			case EQ: return 3;
+		}
+	}
+	static function main() { trace(f(GT)); }
+}
+
+--- abstract-over-enum-switch-missing-a-constructor
+enum OrderingImpl { LT; GT; EQ; }
+abstract Ordering(OrderingImpl) from OrderingImpl to OrderingImpl {}
+class P {
+	static function f(c:Ordering):Int {
+		switch c {
+			case LT: return 1;
+			case GT: return 2;
+		}
+	}
+	static function main() { trace(f(GT)); }
+}
+
+--- abstract-over-enum-value-switch
+enum OrderingImpl { LT; GT; EQ; }
+abstract Ordering(OrderingImpl) from OrderingImpl to OrderingImpl {}
+class P {
+	static function main() { var c:Ordering = EQ; trace(switch c { case LT: 1; case GT: 2; case EQ: 3; }); }
+}
+
+--- abstract-over-enum-abstract-switch-covering-every-value
+enum abstract Color(Int) { var Red; var Green; }
+abstract Shade(Color) from Color to Color {}
+class P {
+	static function main() {
+		var s:Shade = Green;
+		var x:Int;
+		switch s {
+			case Red: x = 1;
+			case Green: x = 2;
+		}
+		trace(x);
+	}
+}
+
+--- final-wildcard-matches-remaining-arguments
+enum E { C(a:Int, b:String, c:Float); D(a:Int); }
+class P {
+	static function f(e:E):Int {
+		return switch e {
+			case C(x, _): x;
+			case D(_): 0;
+		}
+	}
+	static function main() { trace(f(C(1, "", 2.0))); }
+}
+
+--- final-wildcard-after-every-argument
+enum E { C(a:Int, b:String); }
+class P {
+	static function main() { switch C(1, "") { case C(x, y, _): trace(x); } }
+}
+
+--- non-final-wildcard-still-needs-every-argument
+enum E { C(a:Int, b:String, c:Float); }
+class P {
+	static function main() { switch C(1, "", 2.0) { case C(_, x): trace(x); } }
+}
+
+--- too-many-arguments-before-a-final-wildcard
+enum E { C(a:Int); }
+class P {
+	static function main() { switch C(1) { case C(x, y, _): trace(x); } }
+}
+
+--- macro-world-capture-shares-its-name-with-a-field-of-the-payload-class
+class Node { public var e:Def; public function new(e:Def) this.e = e; }
+enum Def { Paren(e:Node); Leaf; }
+class P {
+	static function depth(n:Node):Int {
+		return switch n.e { case Paren(e): 1 + depth(e); case Leaf: 0; }
+	}
+	static macro function first() return macro $v{depth(new Node(Paren(new Node(Leaf))))};
+	static macro function second() return macro $v{depth(new Node(Leaf))};
+	static function main() { #if !macro trace(first()); trace(second()); #end }
+}
+
+--- capture-shares-its-name-with-a-deprecated-property
+enum Mode { Fixed(w:Int, zoom:Float); Auto(szoom:Float); None; }
+class P {
+	@:deprecated("zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	@:deprecated("szoom is deprecated") public static var szoom(get, never):Int;
+	static function get_szoom() return 1;
+	function new() {}
+	function f(m:Mode):Float {
+		return switch m { case Fixed(_, zoom): zoom; case Auto(szoom): szoom; case None: zoom; }
+	}
+	static function main() { new P().f(None); }
+}
+
+--- enum-abstract-value-shares-its-name-with-a-deprecated-property
+enum abstract M(Int) { var zoom = 1; var other = 2; }
+class P {
+	@:deprecated("zoom is deprecated") public var zoom(get, never):Int;
+	function get_zoom() return 1;
+	function new() {}
+	function g(m:M):Int {
+		return switch m { case zoom: 1; case _: 0; }
+	}
+	static function main() { new P().g(other); }
+}

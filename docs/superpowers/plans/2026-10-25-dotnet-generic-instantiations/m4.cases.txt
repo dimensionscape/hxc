@@ -1,0 +1,317 @@
+# Set aside for milestone 4 (not 3c), kept as reference. Not part of the 3c plan's cases.
+#
+
+# hxcs's Array @:classCode indexer: the get_Item/set_Item entries removed from generic-reflection,
+# resolve-generic-class and type-argument-clr-shapes, in a program of its own (its member lists follow DCE).
+--- array-companion-indexer @gencs
+// hxcs's Array has a @:classCode indexer (`T this[int]`, and `object this[int]` on the companion), which shows
+// in reflection as get_Item/set_Item. hxc ignores @:classCode until milestone 4. The member lists depend on what
+// DCE keeps, so this program uses a fixed set of Array members.
+import cs.system.reflection.BindingFlags;
+class P {
+	static function typeName(t:cs.system.Type):String return t == null ? "null" : t.ToString();
+	static function sorted(a:Array<String>) { a.sort((x, y) -> x < y ? -1 : x > y ? 1 : 0); return a.join(","); }
+	static function main() {
+		var a = [3, 1, 2];
+		a.push(4);
+		Sys.println(a.join("-") + " " + a.indexOf(2));
+		Sys.println("fields Array: " + Type.getInstanceFields(Array));
+		Sys.println("fields resolved Array: " + Type.getInstanceFields(Type.resolveClass("Array")));
+		Sys.println("instFields Array: " + sorted(Type.getInstanceFields(Array)));
+		var t = cs.system.Type._GetType("Array");
+		var flags = new cs.Flags(BindingFlags.Public) | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var ms = t.GetMethods(flags);
+		Sys.println("Array companion: " + typeName(t) + (t.IsInterface ? " interface" : ""));
+		for (i in 0...ms.Length) Sys.println("  " + Std.string(ms[i]));
+	}
+}
+===
+[run]
+3-1-2-4 2
+fields Array: [Array_cast,concat,concatNative,indexOf,lastIndexOf,join,pop,push,reverse,shift,slice,sort,quicksort,splice,spliceVoid,toString,unshift,insert,remove,map,contains,filter,copy,iterator,keyValueIterator,resize,__get,__set,__unsafe_get,__unsafe_set,get_Item,set_Item,length,__a]
+fields resolved Array: [Array_cast,concat,concatNative,indexOf,lastIndexOf,join,pop,push,reverse,shift,slice,sort,quicksort,splice,spliceVoid,toString,unshift,insert,remove,map,contains,filter,copy,iterator,keyValueIterator,resize,__get,__set,__unsafe_get,__unsafe_set,get_Item,set_Item,length,__a]
+instFields Array: Array_cast,__a,__get,__set,__unsafe_get,__unsafe_set,concat,concatNative,contains,copy,filter,get_Item,indexOf,insert,iterator,join,keyValueIterator,lastIndexOf,length,map,pop,push,quicksort,remove,resize,reverse,set_Item,shift,slice,sort,splice,spliceVoid,toString,unshift
+Array companion: Array interface
+  System.Object Array_cast[T_c]()
+  System.String join(System.String)
+  Void reverse()
+  Void spliceVoid(Int32, Int32)
+  System.String toString()
+  System.String __hx_toString()
+  Void resize(Int32)
+  System.Object get_Item(Int32)
+  Void set_Item(Int32, System.Object)
+
+# Std notes A5: EReg.matched needs .NET indexers (M4).
+--- ereg-matched @gencs
+class P {
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + (Std.isOfType(e, String) ? e : Type.getClassName(Type.getClass(e))));
+	}
+	static function main() {
+		var r = ~/(a)(b)?(c)/;
+		Sys.println(r.match("xxacyy"));
+		t(() -> r.matched(0));
+		t(() -> r.matched(1));
+		t(() -> r.matched(2));
+		t(() -> r.matched(3));
+		t(() -> r.matched(4));
+		t(() -> r.matched(-1));
+		t(() -> r.matchedLeft());
+		t(() -> r.matchedRight());
+		t(() -> r.replace("xxacyy", "[$1]"));
+		t(() -> r.map("xxacyy-ac", e -> "<" + e.matched(0) + ">"));
+		t(() -> r.split("1ac2"));
+	}
+}
+===
+[run]
+True
+ac
+a
+
+c
+
+EXC EReg::matched
+xx
+yy
+xx[a]yy
+xx<ac>yy-ac
+[1,2]
+
+# Std notes A7: chained .NET setters and value conversions (M4).
+--- socket-timeout-select @gencs
+class P {
+	static function main() {
+		var s = new sys.net.Socket();
+		s.setTimeout(1.5);
+		Sys.println("timeout set");
+		var r = sys.net.Socket.select([s], [], [], 0.01);
+		Sys.println(r.read.length);
+		var srv = new sys.net.Socket();
+		srv.bind(new sys.net.Host("127.0.0.1"), 0);
+		srv.listen(1);
+	}
+}
+===
+[run]
+timeout set
+0
+
+# Std notes A4: Thread.create needs the ThreadStart delegate conversion (M4). The second thread now
+# releases a Lock that main waits on, instead of main sleeping 0.2 s, so its line cannot be late.
+--- thread-create @gencs
+import sys.thread.Thread;
+import sys.thread.Mutex;
+import sys.thread.Lock;
+import sys.thread.Deque;
+
+class P {
+	static function main() {
+		var cur = Thread.current();
+		Sys.println(cur != null);
+		var lock = new Lock();
+		var res = new Deque<Int>();
+		var th = Thread.create(() -> {
+			res.add(42);
+			lock.release();
+		});
+		Sys.println(lock.wait(5));
+		Sys.println(res.pop(false));
+		var ms = haxe.Timer.stamp();
+		Sys.println(ms > 0);
+		Sys.println(Thread.current() == cur);
+		var lock2 = new Lock();
+		var t2 = Thread.create(() -> { Sys.println(Thread.current() != cur); lock2.release(); });
+		lock2.wait();
+		var done = false;
+		haxe.Timer.delay(() -> { done = true; Sys.println("timer"); }, 20);
+		Sys.sleep(0.2);
+		Sys.println(done);
+	}
+}
+===
+[run]
+True
+True
+42
+True
+True
+True
+False
+timer
+
+# Std notes A1: needs manifest-resource embedding in hxc and harness support for an auxiliary file
+# (`-resource res.txt@res`, res.txt = "hello res" + newline) and an EmbeddedResource in gencs.csproj.in. Not
+# @gencs: run.sh cannot build it. Expected [run]: the std researcher's probe.sh run with the resource embedded.
+--- resource-strings
+class P {
+	static function main() {
+		trace(haxe.Resource.listNames());
+		trace(haxe.Resource.getString("res"));
+		var b = haxe.Resource.getBytes("res");
+		trace(b == null ? "null" : "len " + b.length);
+		trace(haxe.Resource.getString("nope"));
+	}
+}
+===
+[run]
+P.hx:3: [res]
+P.hx:4: hello res
+
+P.hx:6: len 10
+P.hx:7: null
+
+# Recorded #8314 divergence (casts notes §6.15), set aside: starting a thread needs a delegate conversion
+# (sys.thread.Thread.create, or cs.system.threading.Thread with a ThreadStart), which hxc refuses as untyped
+# code until M4. gencs: `round 0: 0 of 7 same as the first`, `done`. Expected [run]: casts §6.15's stated hxc
+# output (one shared Array<Int> in every round, so every round prints).
+--- cast-array-threads
+// Several threads read one unserialized array through a typed field at once. gencs: every read is its own
+// copy (0 of 7 shared). Recorded #8314 divergence: hxc returns one Array<Int> to all of them (7 of 7).
+typedef TI = {val:Array<Int>};
+
+class P {
+	static function main() {
+		for (round in 0...20) {
+			var t:TI = haxe.Json.parse('{"val":[1,2,3]}');
+			var results:Array<Dynamic> = [for (i in 0...8) null];
+			var done = new sys.thread.Lock();
+			var go = new sys.thread.Lock();
+			for (i in 0...8)
+				sys.thread.Thread.create(() -> {
+					go.wait();
+					var v = t.val;
+					results[i] = v;
+					done.release();
+				});
+			for (i in 0...8)
+				go.release();
+			for (i in 0...8)
+				done.wait();
+			var same = 0;
+			for (i in 1...8)
+				if (results[i] == results[0]) same++;
+			if (round == 0 || same != 0) Sys.println("round " + round + ": " + same + " of 7 same as the first");
+		}
+		Sys.println("done");
+	}
+}
+===
+[run]
+round 0: 7 of 7 same as the first
+round 1: 7 of 7 same as the first
+round 2: 7 of 7 same as the first
+round 3: 7 of 7 same as the first
+round 4: 7 of 7 same as the first
+round 5: 7 of 7 same as the first
+round 6: 7 of 7 same as the first
+round 7: 7 of 7 same as the first
+round 8: 7 of 7 same as the first
+round 9: 7 of 7 same as the first
+round 10: 7 of 7 same as the first
+round 11: 7 of 7 same as the first
+round 12: 7 of 7 same as the first
+round 13: 7 of 7 same as the first
+round 14: 7 of 7 same as the first
+round 15: 7 of 7 same as the first
+round 16: 7 of 7 same as the first
+round 17: 7 of 7 same as the first
+round 18: 7 of 7 same as the first
+round 19: 7 of 7 same as the first
+done
+
+# Set aside from plan 3c Task 11: sys.Http.customRequest parses its URL with EReg.matched (std notes A5,
+# M4), so the case throws NotSupportedException before it reads anything. http-response-reading covers
+# readHttpResponse and getResponseHeaderValues in 3c.
+# Std notes A6 (a fake socket, no network). getResponseHeaderValues is called only where a header
+# repeats; gencs's NullReferenceException otherwise is kept as a gencs bug and not exercised. The header
+# names are sorted with a comparator that returns 0 for equal strings: with the researcher's `a < b ? -1 : 1`,
+# hxcs's quicksort gave an order that followed the StringMap's per-process key order (seen in repeated runs).
+--- http-response-parsing @gencs
+import haxe.io.Bytes;
+import haxe.io.BytesInput;
+import haxe.io.BytesOutput;
+
+class Fake extends sys.net.Socket {
+	public var sent:BytesOutput = new BytesOutput();
+	public function new(response:String) {
+		super();
+		@:privateAccess this.input = new BytesInput(Bytes.ofString(response));
+		@:privateAccess this.output = sent;
+	}
+	override public function connect(host:sys.net.Host, port:Int):Void {}
+	override public function setTimeout(t:Float):Void {}
+	override public function shutdown(r:Bool, w:Bool):Void {}
+	override public function close():Void {}
+}
+
+class P {
+	static function run(name:String, response:String, ?post:Bool = false) {
+		var h = new sys.Http("http://127.0.0.1:8080/path?x=1");
+		h.addHeader("X-A", "1");
+		var out = new BytesOutput();
+		var status = -1;
+		h.onStatus = s -> status = s;
+		h.onError = e -> Sys.println(name + " error: " + e);
+		h.onData = d -> Sys.println(name + " data: " + StringTools.replace(d, "\n", "\n"));
+		var f = new Fake(response);
+		h.customRequest(post, out, f);
+		Sys.println(name + " status " + status);
+		if (h.responseHeaders == null) { Sys.println(name + " no headers"); return; }
+		var keys = [for (k in h.responseHeaders.keys()) k];
+		keys.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		Sys.println(name + " headers " + keys.map(k -> k + "=" + h.responseHeaders.get(k)).join(";"));
+		if (name == "len") Sys.println(name + " multi " + h.getResponseHeaderValues("Set-Cookie"));
+		Sys.println(name + " body " + StringTools.replace(out.getBytes().toString(), "\n", "\n"));
+		Sys.println(name + " request " + StringTools.replace(StringTools.replace(f.sent.getBytes().toString(), "\r", "\r"), "\n", "\n"));
+	}
+	static function main() {
+		run("len", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-B: b\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n\r\nhello");
+		run("eof", "HTTP/1.1 200 OK\r\nX-C: c\r\n\r\nuntil end");
+		run("404", "HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\n\r\nno");
+		run("bad", "garbage\r\n\r\n");
+		run("post", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", true);
+	}
+}
+===
+[run]
+len status 200
+len headers Content-Length=5;Set-Cookie=b=2;X-B=b
+len multi [a=1,b=2]
+len body hello
+len request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+eof status 200
+eof headers X-C=c
+eof body until end
+eof request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+404 error: Http Error #404
+404 status 404
+404 headers Content-Length=2
+404 body no
+404 request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+bad error: Response status error
+bad status -1
+bad no headers
+post status 200
+post headers Content-Length=0
+post body
+post request POST /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1

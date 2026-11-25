@@ -1,0 +1,627 @@
+--- enum-shape @gencs @dump=Color,Color_Red,E,E_B,E_C,Opt,Opt_Some
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+enum E {
+	A;
+	B(x:Int, s:String);
+	C(f:Float, ?n:Int);
+}
+enum Opt<T> {
+	Some(v:T);
+	None;
+}
+class P {
+	static function main() {
+		var e = B(1, "z");
+		Sys.println(Green);
+		Sys.println(e);
+		Sys.println(C(1.5));
+		Sys.println(C(2, 3));
+		Sys.println(Some(3));
+		var none:Opt<String> = None;
+		Sys.println(none);
+		Sys.println(Some(Some("x")));
+		Sys.println(A);
+	}
+}
+===
+[run]
+Green
+B(1,z)
+C(1.5,null)
+C(2,3)
+Some(3)
+None
+Some(Some(x))
+A
+[dump]
+type public beforefieldinit Color extends haxe.lang.Enum
+  field public static initonly Color Red
+  field public static initonly Color Green
+  field public static initonly Color Blue
+  method family hidebysig specialname rtspecialname void .ctor(int32)
+  method private static hidebysig specialname rtspecialname void .cctor()
+type public sealed beforefieldinit Color_Red extends Color
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public virtual hidebysig string getTag()
+type public beforefieldinit E extends haxe.lang.Enum
+  field public static initonly E A
+  method family hidebysig specialname rtspecialname void .ctor(int32)
+  method public static hidebysig E B(int32, string)
+  method public static hidebysig E C(float64, haxe.lang.Null`1<int32>)
+  method private static hidebysig specialname rtspecialname void .cctor()
+type public sealed beforefieldinit E_B extends E
+  field public initonly int32 x
+  field public initonly string s
+  method public hidebysig specialname rtspecialname void .ctor(int32, string)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
+type public sealed beforefieldinit E_C extends E
+  field public initonly float64 f
+  field public initonly haxe.lang.Null`1<int32> n
+  method public hidebysig specialname rtspecialname void .ctor(float64, haxe.lang.Null`1<int32>)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
+type public beforefieldinit Opt extends haxe.lang.Enum
+  field public static initonly Opt None
+  method family hidebysig specialname rtspecialname void .ctor(int32)
+  method public static hidebysig Opt Some(object)
+  method private static hidebysig specialname rtspecialname void .cctor()
+type public sealed beforefieldinit Opt_Some extends Opt
+  field public initonly object v
+  method public hidebysig specialname rtspecialname void .ctor(object)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
+--- enum-strings @gencs
+enum Shape {
+	Dot;
+	Circle(r:Float);
+	Rect(w:Int, h:Int, ?label:String);
+	Group(items:Array<Shape>, inner:Shape);
+}
+enum Box<T> {
+	Full(v:T);
+	Empty;
+}
+class P {
+	static var fallback = Rect(1, 2, "unit");
+	static var nothing:Shape;
+	static function main() {
+		var d:Dynamic = Circle(0.5);
+		Sys.println(Std.string(d));
+		Sys.println("shape: " + Dot + " " + Rect(3, 4));
+		Sys.println(fallback);
+		Sys.println(Std.string(nothing));
+		Sys.println("n=" + nothing);
+		Sys.println(Group([Dot, Circle(2)], Rect(0, -1, null)));
+		Sys.println(Full(1.25));
+		Sys.println(Full(true));
+		Sys.println(Full(null));
+		Sys.println(Full([1, 2]));
+		Sys.println(Full(Full("deep")));
+		var b:Box<Int> = Empty;
+		Sys.println(b);
+		var maybe:Null<Shape> = null;
+		Sys.println(maybe == null);
+		maybe = Dot;
+		Sys.println(maybe);
+	}
+}
+===
+[run]
+Circle(0.5)
+shape: Dot Rect(3,4,null)
+Rect(1,2,unit)
+null
+n=null
+Group([Dot,Circle(2)],Rect(0,-1,null))
+Full(1.25)
+Full(true)
+Full(null)
+Full([1,2])
+Full(Full(deep))
+Empty
+True
+Dot
+--- enum-switch @gencs
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+enum E {
+	A;
+	B(x:Int, s:String);
+	C(f:Float);
+	D(e:E);
+}
+class P {
+	static function name(c:Color):String {
+		return switch (c) {
+			case Red: "r";
+			case Green: "g";
+			case Blue: "b";
+		}
+	}
+	static function desc(e:E):String {
+		return switch (e) {
+			case A: "a";
+			case B(x, s) if (x > 10): "big " + s;
+			case B(x, "q"): "q" + x;
+			case B(1 | 2, s): "small " + s;
+			case B(x, s): "b" + x + s;
+			case D(D(inner)): "dd " + inner;
+			case D(B(_, s)): "db " + s;
+			case D(_): "d";
+			case _: "other";
+		}
+	}
+	static function main() {
+		Sys.println(name(Red) + name(Green) + name(Blue));
+		Sys.println(desc(A));
+		Sys.println(desc(B(11, "x")));
+		Sys.println(desc(B(1, "q")));
+		Sys.println(desc(B(2, "w")));
+		Sys.println(desc(B(5, "v")));
+		Sys.println(desc(D(D(A))));
+		Sys.println(desc(D(B(0, "k"))));
+		Sys.println(desc(D(C(2))));
+		Sys.println(desc(C(0.5)));
+		var e = B(3, "t");
+		switch (e) {
+			case B(x, _):
+				Sys.println(x * 2);
+			default:
+		}
+		Sys.println(e.match(B(3, _)));
+		Sys.println(e.match(B(4, _)));
+		var n:Null<Color> = null;
+		Sys.println(switch (n) {
+			case null: "null";
+			case Red: "red";
+			case _: "other";
+		});
+		n = Red;
+		Sys.println(switch (n) {
+			case null: "null";
+			case Red: "red";
+			case _: "other";
+		});
+		Sys.println(Type.enumIndex(e) + Type.enumIndex(Blue));
+	}
+}
+===
+[run]
+rgb
+a
+big x
+q1
+small w
+b5v
+dd A
+db k
+d
+other
+6
+True
+False
+null
+red
+3
+--- enum-equality @gencs
+enum Color {
+	Red;
+	Green;
+}
+enum Num {
+	I(i:Int);
+	F(f:Float);
+	S(s:String, ?n:Int);
+	Nest(n:Num);
+}
+enum Box<T> {
+	Full(v:T);
+	Empty;
+}
+class P {
+	static function main() {
+		var c = Green;
+		Sys.println(c == Green);
+		Sys.println(c != Red);
+		var none:Color = null;
+		Sys.println(none == null);
+		Sys.println(none == Red);
+		var a = I(1), b = I(1);
+		Sys.println(Type.enumEq(a, b));
+		Sys.println(Type.enumEq(a, I(2)));
+		Sys.println(Type.enumEq(a, F(1)));
+		Sys.println(Type.enumEq(F(1), F(1.0)));
+		Sys.println(Type.enumEq(S("x"), S("x", null)));
+		Sys.println(Type.enumEq(S("x", 3), S("x", 3)));
+		Sys.println(Type.enumEq(Nest(Nest(I(5))), Nest(Nest(I(5)))));
+		Sys.println(Type.enumEq(Nest(I(5)), Nest(I(6))));
+		Sys.println(Type.enumEq(Full(Red), Full(Red)));
+		var fl:Box<Float> = Full(1);
+		Sys.println(Type.enumEq(fl, Full(1.0)));
+		var dy:Box<Dynamic> = Full(1);
+		Sys.println(Type.enumEq(dy, Full(1.0)));
+		Sys.println(Type.enumEq(Full([1]), Full([1])));
+		Sys.println(Type.enumEq(Empty, Empty));
+		Sys.println(Type.enumEq(null, a));
+		var da:Dynamic = a;
+		var db:Dynamic = b;
+		Sys.println(da == db);
+		Sys.println(da == a);
+		var r:Dynamic = Red;
+		Sys.println(r == Red);
+		Sys.println(a.equals(b));
+		var h1 = I(7), h2 = I(7);
+		var o1:Dynamic = h1, o2:Dynamic = h2;
+		Sys.println(o1.GetHashCode() == o2.GetHashCode());
+		Sys.println(o1.Equals(o2));
+	}
+}
+===
+[run]
+True
+True
+True
+False
+True
+False
+False
+True
+True
+True
+True
+False
+True
+True
+False
+False
+True
+False
+False
+True
+True
+True
+True
+True
+--- enum-generic-params @gencs
+enum Opt<T> {
+	Some(v:T);
+	None;
+}
+enum Tree<T> {
+	Leaf(v:T);
+	Node(l:Tree<T>, r:Tree<T>);
+}
+class P {
+	static function sum(t:Tree<Int>):Int {
+		return switch (t) {
+			case Leaf(v): v;
+			case Node(l, r): sum(l) + sum(r);
+		}
+	}
+	static function get<T>(o:Opt<T>, def:T):T {
+		return switch (o) {
+			case Some(v): v;
+			case None: def;
+		}
+	}
+	static function main() {
+		Sys.println(sum(Node(Leaf(1), Node(Leaf(2), Leaf(3)))));
+		var o = Some([1, 2]);
+		switch (o) {
+			case Some(a):
+				a.push(3);
+			case None:
+		}
+		switch (o) {
+			case Some(a):
+				Sys.println(a.length + " " + a);
+			case None:
+		}
+		var s:Opt<String> = Some("hi");
+		switch (s) {
+			case Some(str):
+				Sys.println(str.length);
+			case None:
+		}
+		var f:Opt<Float> = Some(2);
+		switch (f) {
+			case Some(v):
+				Sys.println(v / 4);
+			case None:
+		}
+		Sys.println(get(Some(5), 0) + get(None, 10));
+		Sys.println(get(None, "d") + get(Some("e"), "x"));
+		var t:Tree<String> = Node(Leaf("a"), Leaf(null));
+		Sys.println(t);
+	}
+}
+===
+[run]
+6
+3 [1,2,3]
+2
+0.5
+15
+de
+Node(Leaf(a),Leaf(null))
+--- enum-type-api @gencs @module=pk.Api @dump=pk.Color,pk.Kind_Val
+package pk;
+
+enum Kind {
+	Leaf;
+	Node(l:Kind, r:Kind);
+	Val(i:Int, ?tag:String);
+}
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+@:native("my.pack.Renamed") enum Renamed {
+	RA;
+	RB(i:Int);
+}
+class Api {
+	static function main() {
+		var k = Node(Leaf, Val(3, "t"));
+		var d:Dynamic = k;
+		Sys.println(Type.getEnumName(Kind));
+		Sys.println(Type.getEnumName(Renamed));
+		Sys.println(Type.getEnumName(Type.getEnum(k)));
+		Sys.println(Type.getEnumName(Type.getEnum(Blue)));
+		Sys.println(Type.enumIndex(k) + " " + Type.enumIndex(Blue) + " " + Type.enumIndex(d));
+		Sys.println(Type.enumConstructor(k) + " " + Type.enumConstructor(Leaf));
+		Sys.println(Type.enumParameters(k).length);
+		Sys.println(Type.enumParameters(Val(5)));
+		Sys.println(Type.enumParameters(Red));
+		Sys.println(Type.getEnumConstructs(Kind));
+		Sys.println(Type.getEnumConstructs(Color));
+		Sys.println(Type.allEnums(Color));
+		Sys.println(Type.allEnums(Kind));
+		Sys.println(Type.createEnum(Color, "Green") == Green);
+		Sys.println(Type.createEnum(Kind, "Val", [7, "x"]));
+		Sys.println(Type.createEnumIndex(Kind, 1, [Leaf, Leaf]));
+		Sys.println(Type.createEnumIndex(Color, 2));
+		Sys.println(Type.createEnum(Renamed, "RB", [1]));
+		Sys.println(Type.resolveEnum("pk.Kind") == Kind);
+		Sys.println(Type.resolveEnum("my.pack.Renamed") == Renamed);
+		Sys.println(Type.resolveEnum("pk.Nope") == null);
+		Sys.println(Type.resolveEnum("pk.Api") == null);
+		Sys.println(Type.typeof(k));
+		Sys.println(Type.typeof(Red));
+		Sys.println(Type.typeof(Kind));
+		switch (Type.typeof(d)) {
+			case TEnum(e):
+				Sys.println("enum " + Type.getEnumName(e));
+			default:
+				Sys.println("?");
+		}
+		Sys.println(Std.isOfType(k, Kind));
+		Sys.println(Std.isOfType(Red, Color));
+		Sys.println(Std.isOfType(Red, Kind));
+		Sys.println(Std.isOfType(d, Kind));
+		Sys.println(Std.isOfType(d, Color));
+		Sys.println(Type.getClassName(Type.getClass(k)));
+		Sys.println(Type.getClassName(Type.getClass(Red)));
+	}
+}
+===
+[run]
+pk.Kind
+my.pack.Renamed
+pk.Kind
+pk.Color
+1 2 1
+Node Leaf
+2
+[5,null]
+[]
+[Leaf,Node,Val]
+[Red,Green,Blue]
+[Red,Green,Blue]
+[Leaf]
+True
+Val(7,x)
+Node(Leaf,Leaf)
+Blue
+RB(1)
+True
+True
+True
+True
+TEnum(pk.Kind)
+TEnum(pk.Color)
+TObject
+enum pk.Kind
+True
+True
+False
+True
+False
+pk.Kind_Node
+pk.Color_Red
+[dump]
+type public beforefieldinit pk.Color extends haxe.lang.Enum
+  field public static initonly pk.Color Red
+  field public static initonly pk.Color Green
+  field public static initonly pk.Color Blue
+  field family static initonly string[] __hx_constructs
+  method family hidebysig specialname rtspecialname void .ctor(int32)
+  method private static hidebysig specialname rtspecialname void .cctor()
+type public sealed beforefieldinit pk.Kind_Val extends pk.Kind
+  field public initonly int32 i
+  field public initonly string tag
+  method public hidebysig specialname rtspecialname void .ctor(int32, string)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
+--- enum-reflect @gencs
+enum Ev {
+	Plain;
+	Msg(event:String, object:Int, ?n:Int);
+}
+class P {
+	static function main() {
+		var m = Msg("e", 1);
+		Sys.println(Reflect.isEnumValue(m));
+		Sys.println(Reflect.isEnumValue(Plain));
+		Sys.println(Reflect.isEnumValue(Ev));
+		Sys.println(Reflect.isEnumValue("Plain"));
+		Sys.println(Reflect.isObject(m));
+		Sys.println(Reflect.fields(m));
+		Sys.println(Reflect.fields(Plain));
+		Sys.println(Reflect.field(m, "event"));
+		Sys.println(Reflect.field(m, "object"));
+		Sys.println(Reflect.field(m, "n"));
+		Sys.println(Reflect.field(m, "_hx_index"));
+		Sys.println(Reflect.hasField(m, "event"));
+		Sys.println(Reflect.field(Ev, "Plain") == Plain);
+		Sys.println(Reflect.isFunction(Reflect.field(Ev, "Msg")));
+		Sys.println(Reflect.callMethod(Ev, Reflect.field(Ev, "Msg"), ["x", 2, 3]));
+		var d:Dynamic = m;
+		Sys.println(d.event + d.object);
+		Sys.println(d.getTag());
+		Sys.println(d.getParams());
+		Sys.println(d.toString());
+		Sys.println(Std.string(Reflect.compare(Plain, Plain)));
+		Sys.println(Type.getClassFields(cast Ev));
+		Sys.println(Reflect.fields(Ev));
+		Sys.println(Type.getInstanceFields(Type.getClass(m)));
+		Sys.println(Type.getClassName(Type.getSuperClass(cast Ev)));
+		Sys.println(Type.getSuperClass(Type.getClass(Plain)) == cast Ev);
+	}
+}
+===
+[run]
+True
+True
+False
+False
+False
+[event,object,n,_hx_index]
+[_hx_index]
+e
+1
+
+1
+True
+True
+True
+Msg(x,2,3)
+e1
+Msg
+[e,1,null]
+Msg(e,1,null)
+0
+[Msg,Plain]
+[Msg,Plain]
+[getParams,getTag,toString,event,object,n,_hx_index]
+haxe.lang.Enum
+True
+--- enum-serialize @gencs @module=pk.Ser
+package pk;
+
+import haxe.Serializer;
+import haxe.Unserializer;
+
+enum Kind {
+	Leaf;
+	Node(l:Kind, r:Kind);
+	Val(i:Int, ?tag:String);
+}
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+enum Opt<T> {
+	Some(v:T);
+	None;
+}
+enum Num {
+	I(i:Int);
+	F(f:Float);
+	N(?n:Int);
+}
+class Ser {
+	static function show(v:Dynamic):Void {
+		var plain = Serializer.run(v);
+		var s = new Serializer();
+		s.useEnumIndex = true;
+		s.serialize(v);
+		var indexed = s.toString();
+		var c = new Serializer();
+		c.useCache = true;
+		c.serialize(v);
+		var back:Dynamic = Unserializer.run(plain);
+		var back2:Dynamic = Unserializer.run(indexed);
+		Sys.println(plain + " | " + indexed + " | " + c.toString() + " | " + Std.string(back) + " " + Type.enumEq(back, v) + " "
+			+ Std.string(back2));
+	}
+	static function main() {
+		show(Red);
+		show(Node(Leaf, Val(3, "t")));
+		show(Val(1));
+		show(Some("s"));
+		show(None);
+		show(Some(Blue));
+		show(I(-5));
+		show(F(2.5));
+		show(F(3));
+		show(N());
+		show(N(4));
+		var arr:Array<Dynamic> = [Red, Red, Green];
+		Sys.println(Serializer.run(arr));
+		var k = Val(9, "u");
+		var c = new Serializer();
+		c.useCache = true;
+		c.serialize([k, k, Leaf, Leaf]);
+		Sys.println(c.toString());
+		var u:Dynamic = Unserializer.run(c.toString());
+		Sys.println(u[0] == u[1]);
+		Sys.println(u[2] == Leaf);
+		var col:Color = Unserializer.run("wy8:pk.Colory4:Blue:0");
+		Sys.println(col == Blue);
+		Sys.println(Std.string(Unserializer.run("wy7:pk.Kindy3:Val:2i8n")));
+		Sys.println(Std.string(Unserializer.run("jy7:pk.Kind:1:2jR0:0:0jR0:2:2i5n")));
+	}
+}
+===
+[run]
+wy8:pk.Colory3:Red:0 | jy8:pk.Color:0:0 | wy8:pk.Colory3:Red:0 | Red true Red
+wy7:pk.Kindy4:Node:2wR0y4:Leaf:0wR0y3:Val:2i3y1:t | jy7:pk.Kind:1:2jR0:0:0jR0:2:2i3y1:t | wy7:pk.Kindy4:Node:2wR0y4:Leaf:0wR0y3:Val:2i3y1:t | Node(Leaf,Val(3,t)) true Node(Leaf,Val(3,t))
+wy7:pk.Kindy3:Val:2i1n | jy7:pk.Kind:2:2i1n | wy7:pk.Kindy3:Val:2i1n | Val(1,null) true Val(1,null)
+wy6:pk.Opty4:Some:1y1:s | jy6:pk.Opt:0:1y1:s | wy6:pk.Opty4:Some:1y1:s | Some(s) true Some(s)
+wy6:pk.Opty4:None:0 | jy6:pk.Opt:1:0 | wy6:pk.Opty4:None:0 | None true None
+wy6:pk.Opty4:Some:1wy8:pk.Colory4:Blue:0 | jy6:pk.Opt:0:1jy8:pk.Color:2:0 | wy6:pk.Opty4:Some:1wy8:pk.Colory4:Blue:0 | Some(Blue) true Some(Blue)
+wy6:pk.Numy1:I:1i-5 | jy6:pk.Num:0:1i-5 | wy6:pk.Numy1:I:1i-5 | I(-5) true I(-5)
+wy6:pk.Numy1:F:1d2.5 | jy6:pk.Num:1:1d2.5 | wy6:pk.Numy1:F:1d2.5 | F(2.5) true F(2.5)
+wy6:pk.Numy1:F:1i3 | jy6:pk.Num:1:1i3 | wy6:pk.Numy1:F:1i3 | F(3) true F(3)
+wy6:pk.Numy1:N:1n | jy6:pk.Num:2:1n | wy6:pk.Numy1:N:1n | N(null) true N(null)
+wy6:pk.Numy1:N:1i4 | jy6:pk.Num:2:1i4 | wy6:pk.Numy1:N:1i4 | N(4) true N(4)
+awy8:pk.Colory3:Red:0wR0R1:0wR0y5:Green:0h
+awy7:pk.Kindy3:Val:2i9y1:ur1wR0y4:Leaf:0r2h
+True
+True
+True
+Val(8,null)
+Node(Leaf,Val(5,null))

@@ -1,0 +1,727 @@
+# Milestone 3c plan: type-argument erasure (types notes §1, §2; std notes B5, B6, L3).
+# Every case here is @gencs: hxc adopts gencs's erasure of non-basic type arguments to object.
+#
+
+# Types notes §8.1 (probe map): G<X> and Array<X> for every row of the mapping table, plus meth<U>.
+# DateTime.Now became DateTime.MinValue so the source does not read the clock (only the class is printed).
+--- type-argument-erasure @gencs
+// Mapping table: what CLR instantiation / static type gencs uses for each type argument of a generic hxgen class.
+class G<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class C { public function new() {} }
+interface I { }
+class CI implements I { public function new() {} }
+enum E { A; B(x:Int); }
+enum abstract EA(Int) { var X = 1; var Y = 2; }
+abstract AI(Int) from Int to Int {}
+abstract AC(C) from C to C {}
+abstract AS(String) from String to String {}
+typedef Anon = { a:Int };
+@:nativeGen class NG { public function new() {} }
+@:nativeGen class NGG<T> { public var v:T; public function new(v:T) this.v = v; }
+
+class H<T> {
+	public var gInt:G<Int>;
+	public var gFloat:G<Float>;
+	public var gBool:G<Bool>;
+	public var gUInt:G<UInt>;
+	public var gInt64:G<haxe.Int64>;
+	public var gCsInt64:G<cs.StdTypes.Int64>;
+	public var gSingle:G<Single>;
+	public var gNInt:G<Null<Int>>;
+	public var gNFloat:G<Null<Float>>;
+	public var gNBool:G<Null<Bool>>;
+	public var gString:G<String>;
+	public var gDyn:G<Dynamic>;
+	public var gAny:G<Any>;
+	public var gC:G<C>;
+	public var gI:G<I>;
+	public var gE:G<E>;
+	public var gEA:G<EA>;
+	public var gAI:G<AI>;
+	public var gAC:G<AC>;
+	public var gAS:G<AS>;
+	public var gAnon:G<Anon>;
+	public var gAnon2:G<{b:String}>;
+	public var gFun:G<Int->Int>;
+	public var gT:G<T>;
+	public var gNT:G<Null<T>>;
+	public var gAAI:G<Array<Array<Int>>>;
+	public var gGS:G<G<String>>;
+	public var gGD:G<G<Dynamic>>;
+	public var gGC:G<G<C>>;
+	public var gSB:G<cs.system.text.StringBuilder>;
+	public var gDT:G<cs.system.DateTime>;
+	public var gDOW:G<cs.system.DayOfWeek>;
+	public var gNG:G<NG>;
+	public var gNGG:G<NGG<Int>>;
+	public var gNDT:G<Null<cs.system.DateTime>>;
+	public var gClass:G<Class<C>>;
+	public var gEnumV:G<EnumValue>;
+
+	public var aInt:Array<Int>;
+	public var aFloat:Array<Float>;
+	public var aBool:Array<Bool>;
+	public var aUInt:Array<UInt>;
+	public var aInt64:Array<haxe.Int64>;
+	public var aSingle:Array<Single>;
+	public var aNInt:Array<Null<Int>>;
+	public var aNFloat:Array<Null<Float>>;
+	public var aNBool:Array<Null<Bool>>;
+	public var aString:Array<String>;
+	public var aDyn:Array<Dynamic>;
+	public var aAny:Array<Any>;
+	public var aC:Array<C>;
+	public var aI:Array<I>;
+	public var aE:Array<E>;
+	public var aEA:Array<EA>;
+	public var aAI:Array<AI>;
+	public var aAC:Array<AC>;
+	public var aAS:Array<AS>;
+	public var aAnon:Array<Anon>;
+	public var aFun:Array<Int->Int>;
+	public var aT:Array<T>;
+	public var aNT:Array<Null<T>>;
+	public var aAAI:Array<Array<Int>>;
+	public var aAAD:Array<Array<Dynamic>>;
+	public var aGS:Array<G<String>>;
+	public var aGD:Array<G<Dynamic>>;
+	public var aSB:Array<cs.system.text.StringBuilder>;
+	public var aDT:Array<cs.system.DateTime>;
+	public var aDOW:Array<cs.system.DayOfWeek>;
+	public var aNG:Array<NG>;
+	public var aClass:Array<Class<Dynamic>>;
+	public var mS:Map<String, Int>;
+	public var mSD:Map<String, Dynamic>;
+	public var mSC:Map<String, C>;
+	public var mI:Map<Int, String>;
+	public var mO:Map<C, Int>;
+	public var lS:List<String>;
+	public var lC:List<C>;
+	public var oC:haxe.ds.Option<C>;
+
+	public function new() {}
+
+	public function meth<U>(pU:G<U>, pAU:Array<U>, pC:G<C>, pI:G<Int>, pD:G<Dynamic>, pE:G<E>):G<U> {
+		var lU:G<U> = pU;
+		var lC:G<C> = pC;
+		var lI:G<Int> = pI;
+		var lD:G<Dynamic> = pD;
+		var lE:G<E> = pE;
+		var lAU:Array<U> = pAU;
+		return lU;
+	}
+	public function retC():G<C> return gC;
+	public function retE():G<E> return gE;
+	public function retD():G<Dynamic> return gDyn;
+	public function retI():Array<I> return aI;
+}
+
+class P {
+	static function show(label:String, x:Dynamic) {
+		var c = Type.getClass(x);
+		Sys.println(label + ": " + Type.getClassName(c) + " | " + Std.string(c));
+	}
+	static function main() {
+		var h = new H<String>();
+		h.gInt = new G(1); show("G<Int>", h.gInt);
+		h.gFloat = new G(1.5); show("G<Float>", h.gFloat);
+		h.gBool = new G(true); show("G<Bool>", h.gBool);
+		h.gUInt = new G((1:UInt)); show("G<UInt>", h.gUInt);
+		h.gInt64 = new G(haxe.Int64.make(0, 1)); show("G<haxe.Int64>", h.gInt64);
+		h.gSingle = new G((1.5:Single)); show("G<Single>", h.gSingle);
+		h.gNInt = new G((null:Null<Int>)); show("G<Null<Int>>", h.gNInt);
+		h.gNFloat = new G((2.5:Null<Float>)); show("G<Null<Float>>", h.gNFloat);
+		h.gNBool = new G((null:Null<Bool>)); show("G<Null<Bool>>", h.gNBool);
+		h.gString = new G("s"); show("G<String>", h.gString);
+		h.gDyn = new G((1:Dynamic)); show("G<Dynamic>", h.gDyn);
+		h.gAny = new G((1:Any)); show("G<Any>", h.gAny);
+		h.gC = new G(new C()); show("G<C>", h.gC);
+		h.gI = new G((new CI():I)); show("G<I>", h.gI);
+		h.gE = new G(B(2)); show("G<E>", h.gE);
+		h.gEA = new G(EA.X); show("G<EA>", h.gEA);
+		h.gAI = new G((3:AI)); show("G<AI>", h.gAI);
+		h.gAC = new G((new C():AC)); show("G<AC>", h.gAC);
+		h.gAS = new G(("x":AS)); show("G<AS>", h.gAS);
+		h.gAnon = new G({a: 1}); show("G<Anon>", h.gAnon);
+		h.gFun = new G(function(x:Int) return x + 1); show("G<Int->Int>", h.gFun);
+		h.gT = new G("t"); show("G<T=String>", h.gT);
+		h.gAAI = new G([[1]]); show("G<Array<Array<Int>>>", h.gAAI);
+		h.gGS = new G(new G("s")); show("G<G<String>>", h.gGS);
+		h.gSB = new G(new cs.system.text.StringBuilder()); show("G<StringBuilder>", h.gSB);
+		h.gDT = new G(cs.system.DateTime.MinValue); show("G<DateTime>", h.gDT);
+		h.gDOW = new G(cs.system.DayOfWeek.Monday); show("G<DayOfWeek>", h.gDOW);
+		h.gNG = new G(new NG()); show("G<NG>", h.gNG);
+		h.gNGG = new G(new NGG(1)); show("G<NGG<Int>>", h.gNGG);
+		h.gClass = new G<Class<C>>(C); show("G<Class<C>>", h.gClass);
+		h.aInt = [1]; show("Array<Int>", h.aInt);
+		h.aFloat = [1.5]; show("Array<Float>", h.aFloat);
+		h.aBool = [true]; show("Array<Bool>", h.aBool);
+		h.aUInt = [1]; show("Array<UInt>", h.aUInt);
+		h.aSingle = [1.5]; show("Array<Single>", h.aSingle);
+		h.aNInt = [1, null]; show("Array<Null<Int>>", h.aNInt);
+		h.aNFloat = [1.5, null]; show("Array<Null<Float>>", h.aNFloat);
+		h.aString = ["s"]; show("Array<String>", h.aString);
+		h.aDyn = [1, "s"]; show("Array<Dynamic>", h.aDyn);
+		h.aAny = [1]; show("Array<Any>", h.aAny);
+		h.aC = [new C()]; show("Array<C>", h.aC);
+		h.aI = [new CI()]; show("Array<I>", h.aI);
+		h.aE = [A]; show("Array<E>", h.aE);
+		h.aEA = [EA.X]; show("Array<EA>", h.aEA);
+		h.aAI = [1]; show("Array<AI>", h.aAI);
+		h.aAC = [new C()]; show("Array<AC>", h.aAC);
+		h.aAS = ["x"]; show("Array<AS>", h.aAS);
+		h.aAnon = [{a: 1}]; show("Array<Anon>", h.aAnon);
+		h.aFun = [function(x) return x]; show("Array<Int->Int>", h.aFun);
+		h.aT = ["t"]; show("Array<T=String>", h.aT);
+		h.aAAI = [[1]]; show("Array<Array<Int>>", h.aAAI);
+		h.aGS = [new G("s")]; show("Array<G<String>>", h.aGS);
+		h.aSB = [new cs.system.text.StringBuilder()]; show("Array<StringBuilder>", h.aSB);
+		h.aDT = [cs.system.DateTime.MinValue]; show("Array<DateTime>", h.aDT);
+		h.aDOW = [cs.system.DayOfWeek.Monday]; show("Array<DayOfWeek>", h.aDOW);
+		h.aNG = [new NG()]; show("Array<NG>", h.aNG);
+		h.aClass = [(C:Class<Dynamic>)]; show("Array<Class>", h.aClass);
+		h.mS = ["a" => 1]; show("Map<String,Int>", h.mS);
+		h.mSD = ["a" => 1]; show("Map<String,Dynamic>", h.mSD);
+		h.mSC = ["a" => new C()]; show("Map<String,C>", h.mSC);
+		h.mI = [1 => "a"]; show("Map<Int,String>", h.mI);
+		h.mO = [new C() => 1]; show("Map<C,Int>", h.mO);
+		h.lS = new List(); show("List<String>", h.lS);
+		h.lC = new List(); show("List<C>", h.lC);
+		var u = h.meth(new G(1), [1], h.gC, h.gInt, h.gDyn, h.gE); show("meth<Int>", u);
+		var u2 = h.meth(new G(new C()), [new C()], h.gC, h.gInt, h.gDyn, h.gE); show("meth<C>", u2);
+		var u3 = h.meth(new G(A), [A], h.gC, h.gInt, h.gDyn, h.gE); show("meth<E>", u3);
+	}
+}
+===
+[run]
+G<Int>: G | G`1[System.Int32]
+G<Float>: G | G`1[System.Double]
+G<Bool>: G | G`1[System.Boolean]
+G<UInt>: G | G`1[System.UInt32]
+G<haxe.Int64>: G | G`1[System.Int64]
+G<Single>: G | G`1[System.Single]
+G<Null<Int>>: G | G`1[System.Object]
+G<Null<Float>>: G | G`1[System.Object]
+G<Null<Bool>>: G | G`1[System.Object]
+G<String>: G | G`1[System.String]
+G<Dynamic>: G | G`1[System.Object]
+G<Any>: G | G`1[System.Object]
+G<C>: G | G`1[System.Object]
+G<I>: G | G`1[System.Object]
+G<E>: G | G`1[System.Object]
+G<EA>: G | G`1[System.Int32]
+G<AI>: G | G`1[System.Int32]
+G<AC>: G | G`1[System.Object]
+G<AS>: G | G`1[System.String]
+G<Anon>: G | G`1[System.Object]
+G<Int->Int>: G | G`1[System.Object]
+G<T=String>: G | G`1[System.String]
+G<Array<Array<Int>>>: G | G`1[System.Object]
+G<G<String>>: G | G`1[System.Object]
+G<StringBuilder>: G | G`1[System.Object]
+G<DateTime>: G | G`1[System.DateTime]
+G<DayOfWeek>: G | G`1[System.DayOfWeek]
+G<NG>: G | G`1[System.Object]
+G<NGG<Int>>: G | G`1[System.Object]
+G<Class<C>>: G | G`1[System.Object]
+Array<Int>: Array | Array`1[System.Int32]
+Array<Float>: Array | Array`1[System.Double]
+Array<Bool>: Array | Array`1[System.Boolean]
+Array<UInt>: Array | Array`1[System.UInt32]
+Array<Single>: Array | Array`1[System.Single]
+Array<Null<Int>>: Array | Array`1[System.Object]
+Array<Null<Float>>: Array | Array`1[System.Object]
+Array<String>: Array | Array`1[System.String]
+Array<Dynamic>: Array | Array`1[System.Object]
+Array<Any>: Array | Array`1[System.Object]
+Array<C>: Array | Array`1[System.Object]
+Array<I>: Array | Array`1[System.Object]
+Array<E>: Array | Array`1[System.Object]
+Array<EA>: Array | Array`1[System.Int32]
+Array<AI>: Array | Array`1[System.Int32]
+Array<AC>: Array | Array`1[System.Object]
+Array<AS>: Array | Array`1[System.String]
+Array<Anon>: Array | Array`1[System.Object]
+Array<Int->Int>: Array | Array`1[System.Object]
+Array<T=String>: Array | Array`1[System.String]
+Array<Array<Int>>: Array | Array`1[System.Object]
+Array<G<String>>: Array | Array`1[System.Object]
+Array<StringBuilder>: Array | Array`1[System.Object]
+Array<DateTime>: Array | Array`1[System.DateTime]
+Array<DayOfWeek>: Array | Array`1[System.DayOfWeek]
+Array<NG>: Array | Array`1[System.Object]
+Array<Class>: Array | Array`1[System.Object]
+Map<String,Int>: haxe.ds.StringMap | haxe.ds.StringMap`1[System.Int32]
+Map<String,Dynamic>: haxe.ds.StringMap | haxe.ds.StringMap`1[System.Object]
+Map<String,C>: haxe.ds.StringMap | haxe.ds.StringMap`1[System.Object]
+Map<Int,String>: haxe.ds.IntMap | haxe.ds.IntMap`1[System.String]
+Map<C,Int>: haxe.ds.ObjectMap | haxe.ds.ObjectMap`2[System.Object,System.Int32]
+List<String>: haxe.ds.List | haxe.ds.List`1[System.String]
+List<C>: haxe.ds.List | haxe.ds.List`1[System.Object]
+meth<Int>: G | G`1[System.Int32]
+meth<C>: G | G`1[System.Object]
+meth<E>: G | G`1[System.Object]
+
+# Types notes §8.3 (probe rules). The probe's `mDyn:Map<Dynamic,Int>` field is dropped: with StringMap
+# otherwise unused hxc stops with an internal error (probe mapdyn), which is not 3c.
+--- erasure-edge-rules @gencs
+// Edge rules of gencs's type-argument erasure and of the companion-interface static type.
+class G<T> { public var v:T; public function new(v:T) this.v = v; }
+class G2<A, B> { public var a:A; public var b:B; public function new(a:A, b:B) { this.a = a; this.b = b; } }
+class C { public function new() {} }
+class K<T:C> { public var v:T; public function new(v:T) this.v = v; }
+class KF<T:Float> { public var v:T; public function new(v:T) this.v = v; }
+class KS<T:String> { public var v:T; public function new(v:T) this.v = v; }
+abstract AF(Float) from Float to Float {}
+abstract AArr(Array<Int>) from Array<Int> to Array<Int> {}
+enum abstract ES(String) { var Sa = "a"; }
+enum Opt<T> { Some(v:T); None; }
+@:nativeGen enum NE { NA; NB; }
+typedef D = Dynamic;
+@:struct @:nativeGen class St { public var x:Int; public function new() {} }
+class F {
+	public var omCD:haxe.ds.ObjectMap<C, Dynamic>;
+	public var omDI:haxe.ds.ObjectMap<Dynamic, Int>;
+	public var g2DI:G2<Dynamic, Int>;
+	public var g2ID:G2<Int, Dynamic>;
+	public var g2CS:G2<C, String>;
+	public var gND:G<Null<Dynamic>>;
+	public var gTD:G<D>;
+	public var gDI:G<Dynamic<Int>>;
+	public var gDA:G<haxe.DynamicAccess<Int>>;
+	public var gEither:G<haxe.extern.EitherType<Int, String>>;
+	public var gI8:G<cs.StdTypes.Int8>;
+	public var gU8:G<cs.StdTypes.UInt8>;
+	public var gI16:G<cs.StdTypes.Int16>;
+	public var gCh:G<cs.StdTypes.Char16>;
+	public var gU64:G<cs.StdTypes.UInt64>;
+	public var gDec:G<cs.system.Decimal>;
+	public var gGuid:G<cs.system.Guid>;
+	public var gAF:G<AF>;
+	public var gAArr:G<AArr>;
+	public var gES:G<ES>;
+	public var gOpt:G<Opt<Int>>;
+	public var gNE:G<NE>;
+	public var gNNE:G<Null<NE>>;
+	public var gSt:G<St>;
+	public var gNA:G<cs.NativeArray<Int>>;
+	public var gI32:G<haxe.Int32>;
+	public var gBytes:G<haxe.io.Bytes>;
+	public var gEnumV:G<EnumValue>;
+	public var gClassD:G<Class<Dynamic>>;
+	public var gEnumE:G<Enum<Opt<Int>>>;
+	public var gVoidF:G<Void->Void>;
+	public var gNDT:G<Null<cs.system.DateTime>>;
+	public var gNDOW:G<Null<cs.system.DayOfWeek>>;
+	public var gNSingle:G<Null<Single>>;
+	public var gNUInt:G<Null<UInt>>;
+	public var gNI64:G<Null<haxe.Int64>>;
+	public var gNString:G<Null<String>>;
+	public var gNAI:G<Null<AI>>;
+	public var kC:K<C>;
+	public var kF:KF<Float>;
+	public var kS:KS<String>;
+	public var oI:Opt<Int>;
+	public var aAI:Array<AI>;
+	public var aND:Array<Null<Dynamic>>;
+	public var iter:Iterator<Int>;
+	public var iterD:Iterator<Dynamic>;
+	public var listD:List<Dynamic>;
+	public function new() {}
+}
+abstract AI(Int) from Int to Int {}
+class P {
+	static function main() {
+		var f = new F();
+		f.omCD = new haxe.ds.ObjectMap();
+		f.g2DI = new G2<Dynamic, Int>(1, 2);
+		f.g2ID = new G2<Int, Dynamic>(1, 2);
+		f.kC = new K(new C());
+		f.kF = new KF(1.5);
+		f.kS = new KS("s");
+		f.gOpt = new G(Some(1));
+		f.gNE = new G(NA);
+		f.gSt = new G(new St());
+		Sys.println(Type.getClass(f.g2DI));
+		Sys.println(Type.getClass(f.g2ID));
+		Sys.println(Type.getClass(f.kC));
+		Sys.println(Type.getClass(f.kF));
+		Sys.println(Type.getClass(f.kS));
+		Sys.println(Type.getClass(f.gOpt));
+		Sys.println(Type.getClass(f.gNE));
+		Sys.println(Type.getClass(f.gSt));
+		Sys.println(Type.getClass(f.omCD));
+	}
+}
+===
+[run]
+G2`2[System.Object,System.Object]
+G2`2[System.Object,System.Object]
+K`1[System.Object]
+KF`1[System.Double]
+KS`1[System.String]
+G`1[System.Object]
+G`1[NE]
+G`1[St]
+haxe.ds.ObjectMap`2[System.Object,System.Object]
+
+# Types notes §8.4 (probe native): classes gencs does not treat as hxgeneric keep their type arguments
+# and have no companion; Type.resolveClass("NL") and ("NGG") print null (two empty lines).
+--- native-generic-classes @gencs
+// Classes gencs does not treat as hxgeneric: no erasure, no companion interface.
+import cs.system.collections.generic.List_1;
+class C { public function new() {} }
+class NL<T> { public var l:List_1<T>; public var v:T; public function new(v:T) { this.v = v; l = new List_1(); } }
+@:nativeGen class NGG<T> { public var v:T; public function new(v:T) this.v = v; }
+class SubNGG<T> extends NGG<T> { public function new(v:T) super(v); }
+class NArr<T> { public var a:cs.NativeArray<T>; public function new() {} }
+class G<T> { public var v:T; public function new(v:T) this.v = v; }
+class M {
+	public function new() {}
+	public function gm<U>(u:U):Array<U> return [u];
+	public static function sm<U>(u:U):G<U> return new G(u);
+	@:nativeGen public static function ngm<U>(u:U):U return u;
+}
+class F {
+	public var nlC:NL<C>;
+	public var nlD:NL<Dynamic>;
+	public var nlI:NL<Int>;
+	public var nggC:NGG<C>;
+	public var nggD:NGG<Dynamic>;
+	public var nggNI:NGG<Null<Int>>;
+	public var subC:SubNGG<C>;
+	public var narrC:NArr<C>;
+	public var narrD:NArr<Dynamic>;
+	public var lC:List_1<C>;
+	public var lD:List_1<Dynamic>;
+	public var lNI:List_1<Null<Int>>;
+	public var lGC:List_1<G<C>>;
+	public var lGD:List_1<G<Dynamic>>;
+	public var dict:cs.system.collections.generic.Dictionary_2<String, Dynamic>;
+	public var gL:G<List_1<C>>;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var f = new F();
+		f.nlC = new NL(new C());
+		f.nggC = new NGG(new C());
+		f.nggNI = new NGG<Null<Int>>(null);
+		f.subC = new SubNGG(new C());
+		f.narrC = new NArr();
+		f.lC = new List_1();
+		f.lNI = new List_1();
+		f.lNI.Add(null);
+		Sys.println(Type.getClass(f.nlC));
+		Sys.println(Type.getClass(f.nggC));
+		Sys.println(Type.getClass(f.nggNI));
+		Sys.println(Type.getClass(f.subC));
+		Sys.println(Type.getClass(f.narrC));
+		Sys.println(Type.getClass(f.lC));
+		Sys.println(Type.getClass(f.lNI));
+		var m = new M();
+		Sys.println(Type.getClass(m.gm(new C())));
+		Sys.println(Type.getClass(M.sm(new C())));
+		Sys.println(Type.getClass(M.sm(1)));
+		Sys.println(M.ngm(new C()) != null);
+		Sys.println(Type.resolveClass("NL"));
+		Sys.println(Type.resolveClass("NGG"));
+	}
+}
+===
+[run]
+NL`1[C]
+NGG`1[C]
+NGG`1[System.Object]
+SubNGG`1[C]
+NArr`1[System.Object]
+System.Collections.Generic.List`1[C]
+System.Collections.Generic.List`1[System.Object]
+Array`1[System.Object]
+G`1[System.Object]
+G`1[System.Int32]
+True
+
+# Types notes §8.5 (probe methparams): method and local-function type arguments are erased by the same
+# rule. DateTime.Now became DateTime.MinValue (only the class is printed).
+--- method-type-argument-erasure @gencs
+// Method type parameters: which instantiations gencs gives a generic method, and how a class type parameter flows.
+class C { public function new() {} }
+enum E { A; }
+abstract AI(Int) from Int to Int {}
+class G<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function wrapT():Array<T> return [v];
+	public function pair<U>(u:U):G2<T, U> return new G2(v, u);
+}
+class G2<A, B> { public var a:A; public var b:B; public function new(a:A, b:B) { this.a = a; this.b = b; } }
+class P {
+	static function wrap<U>(u:U):Array<U> return [u];
+	static function show(l:String, x:Dynamic) Sys.println(l + ": " + Type.getClass(x));
+	static function main() {
+		show("Int", wrap(1));
+		show("Float", wrap(1.5));
+		show("String", wrap("s"));
+		show("C", wrap(new C()));
+		show("E", wrap(A));
+		show("AI", wrap((1:AI)));
+		var ni:Null<Int> = 3;
+		show("Null<Int>", wrap(ni));
+		var d:Dynamic = 1;
+		show("Dynamic", wrap(d));
+		show("Array<Int>", wrap([1]));
+		show("Fn", wrap(function() {}));
+		show("Anon", wrap({a: 1}));
+		show("DateTime", wrap(cs.system.DateTime.MinValue));
+		var g = new G<C>(new C());
+		show("G<C>.wrapT", g.wrapT());
+		show("G<C>.pair<Int>", g.pair(1));
+		show("G<C>.pair<C>", g.pair(new C()));
+		var gi = new G<Int>(1);
+		show("G<Int>.pair<String>", gi.pair("s"));
+		show("G<Int>.pair<Dyn>", gi.pair(d));
+		function local<V>(v:V):Array<V> return [v];
+		show("local<Int>", local(1));
+		show("local<C>", local(new C()));
+	}
+}
+===
+[run]
+Int: Array`1[System.Int32]
+Float: Array`1[System.Double]
+String: Array`1[System.String]
+C: Array`1[System.Object]
+E: Array`1[System.Object]
+AI: Array`1[System.Int32]
+Null<Int>: Array`1[System.Object]
+Dynamic: Array`1[System.Object]
+Array<Int>: Array`1[System.Object]
+Fn: Array`1[System.Object]
+Anon: Array`1[System.Object]
+DateTime: Array`1[System.DateTime]
+G<C>.wrapT: Array`1[System.Object]
+G<C>.pair<Int>: G2`2[System.Object,System.Int32]
+G<C>.pair<C>: G2`2[System.Object,System.Object]
+G<Int>.pair<String>: G2`2[System.Int32,System.String]
+G<Int>.pair<Dyn>: G2`2[System.Int32,System.Object]
+local<Int>: Array`1[System.Int32]
+local<C>: Array`1[System.Object]
+
+# Std notes §3.6, B5: Type.getClass / getClassName / typeof / getSuperClass of 21 generic instances.
+--- generic-instance-class-names @gencs
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class Sub extends Box<Int> {
+	public var z:Int = 3;
+	public function new() super(1);
+}
+class Pt {
+	public var x:Int = 0;
+	public function new() {}
+}
+class Pair<A, B> {
+	public var a:A; public var b:B;
+	public function new(a:A, b:B) { this.a = a; this.b = b; }
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function main() {
+		var ai:Dynamic = [1, 2];
+		var as:Dynamic = ["a"];
+		var an:Dynamic = ([1, null]:Array<Null<Int>>);
+		var af:Dynamic = ([1.5]:Array<Float>);
+		var ad:Dynamic = ([]:Array<Dynamic>);
+		var ap:Dynamic = [new Pt()];
+		var aa:Dynamic = [[1]];
+		var sm:Dynamic = new haxe.ds.StringMap<String>();
+		var smi:Dynamic = new haxe.ds.StringMap<Int>();
+		var smd:Dynamic = new haxe.ds.StringMap<Dynamic>();
+		var im:Dynamic = new haxe.ds.IntMap<Int>();
+		var om:Dynamic = new haxe.ds.ObjectMap<Pt, Int>();
+		var li:Dynamic = new List<Int>();
+		var lp:Dynamic = new List<Pt>();
+		var bx:Dynamic = new Box<Int>(1);
+		var bs:Dynamic = new Box<String>("s");
+		var bn:Dynamic = new Box<Null<Int>>(null);
+		var bd:Dynamic = new Box<Dynamic>(null);
+		var bp:Dynamic = new Box<Pt>(new Pt());
+		var sb:Dynamic = new Sub();
+		var pr:Dynamic = new Pair<Int, String>(1, "x");
+		var vs:Dynamic = [ai, as, an, af, ad, ap, aa, sm, smi, smd, im, om, li, lp, bx, bs, bn, bd, bp, sb, pr];
+		var names = ["ai", "as", "an", "af", "ad", "ap", "aa", "sm", "smi", "smd", "im", "om", "li", "lp", "bx", "bs", "bn", "bd", "bp", "sb", "pr"];
+		var arr:Array<Dynamic> = vs;
+		for (i in 0...arr.length) {
+			var v = arr[i];
+			t("getClass " + names[i], () -> Std.string(Type.getClass(v)));
+			t("className " + names[i], () -> Type.getClassName(Type.getClass(v)));
+			t("typeof " + names[i], () -> Type.typeof(v));
+			t("superClass " + names[i], () -> Std.string(Type.getSuperClass(Type.getClass(v))));
+		}
+	}
+}
+===
+[run]
+getClass ai Array`1[System.Object]
+className ai Array
+typeof ai TClass(Array`1[System.Object])
+superClass ai null
+getClass as Array`1[System.Object]
+className as Array
+typeof as TClass(Array`1[System.Object])
+superClass as null
+getClass an Array`1[System.Object]
+className an Array
+typeof an TClass(Array`1[System.Object])
+superClass an null
+getClass af Array`1[System.Double]
+className af Array
+typeof af TClass(Array`1[System.Double])
+superClass af null
+getClass ad Array`1[System.Object]
+className ad Array
+typeof ad TClass(Array`1[System.Object])
+superClass ad null
+getClass ap Array`1[System.Object]
+className ap Array
+typeof ap TClass(Array`1[System.Object])
+superClass ap null
+getClass aa Array`1[System.Object]
+className aa Array
+typeof aa TClass(Array`1[System.Object])
+superClass aa null
+getClass sm haxe.ds.StringMap`1[System.String]
+className sm haxe.ds.StringMap
+typeof sm TClass(haxe.ds.StringMap`1[System.String])
+superClass sm null
+getClass smi haxe.ds.StringMap`1[System.Int32]
+className smi haxe.ds.StringMap
+typeof smi TClass(haxe.ds.StringMap`1[System.Int32])
+superClass smi null
+getClass smd haxe.ds.StringMap`1[System.Object]
+className smd haxe.ds.StringMap
+typeof smd TClass(haxe.ds.StringMap`1[System.Object])
+superClass smd null
+getClass im haxe.ds.IntMap`1[System.Int32]
+className im haxe.ds.IntMap
+typeof im TClass(haxe.ds.IntMap`1[System.Int32])
+superClass im null
+getClass om haxe.ds.ObjectMap`2[System.Object,System.Int32]
+className om haxe.ds.ObjectMap
+typeof om TClass(haxe.ds.ObjectMap`2[System.Object,System.Int32])
+superClass om null
+getClass li haxe.ds.List`1[System.Int32]
+className li haxe.ds.List
+typeof li TClass(haxe.ds.List`1[System.Int32])
+superClass li null
+getClass lp haxe.ds.List`1[System.Object]
+className lp haxe.ds.List
+typeof lp TClass(haxe.ds.List`1[System.Object])
+superClass lp null
+getClass bx Box`1[System.Int32]
+className bx Box
+typeof bx TClass(Box`1[System.Int32])
+superClass bx null
+getClass bs Box`1[System.String]
+className bs Box
+typeof bs TClass(Box`1[System.String])
+superClass bs null
+getClass bn Box`1[System.Object]
+className bn Box
+typeof bn TClass(Box`1[System.Object])
+superClass bn null
+getClass bd Box`1[System.Object]
+className bd Box
+typeof bd TClass(Box`1[System.Object])
+superClass bd null
+getClass bp Box`1[System.Object]
+className bp Box
+typeof bp TClass(Box`1[System.Object])
+superClass bp null
+getClass sb Sub
+className sb Sub
+typeof sb TClass(Sub)
+superClass sb Box`1[System.Int32]
+getClass pr Pair`2[System.Int32,System.String]
+className pr Pair
+typeof pr TClass(Pair`2[System.Int32,System.String])
+superClass pr null
+
+# Std notes L6: Type.allEnums returns Array`1[System.Object] (T erased); the 3b runtime patch reverts.
+--- all-enums-type @gencs
+enum Col { Red; Green; Blue; }
+enum Opt { None; Some(v:Int); }
+class P {
+	static function main() {
+		var a = Type.allEnums(Col);
+		Sys.println(a);
+		Sys.println(Std.string(Type.getClass(a)));
+		Sys.println(Type.typeof(a));
+		Sys.println(a[1] == Green);
+		var b = Type.allEnums(Opt);
+		Sys.println(b);
+		Sys.println(Std.string(Type.getClass(b)));
+		var d:Dynamic = a;
+		Sys.println(haxe.Serializer.run(a));
+		var c:Array<Col> = Type.allEnums(Col);
+		Sys.println(c.length);
+		c.push(Red);
+		Sys.println(c.length + " " + a.length);
+	}
+}
+===
+[run]
+[Red,Green,Blue]
+Array`1[System.Object]
+TClass(Array`1[System.Object])
+True
+[None]
+Array`1[System.Object]
+awy3:Coly3:Red:0wR0y5:Green:0wR0y4:Blue:0h
+3
+4 3
+
+# Std notes L3: Array<Null<T>> returns need no instantiation cast once Null<T> arguments are erased.
+# Flips the existing null-type-parameter-binding-refusal and null-type-parameter-binding-local-refusal.
+--- null-binding-casts-ret @gencs
+class P {
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+	static function retNullArr<T>(x:T):Array<Null<T>> return [x];
+	static function retNested<T>(x:T):Array<Array<Null<T>>> return [[x]];
+	static function retMap<T>(x:T):Map<String, Null<T>> {
+		var m = new Map<String, Null<T>>();
+		m.set("a", x);
+		return m;
+	}
+	static function main() {
+		var nn:Null<Int> = null;
+		t(() -> retNullArr(nn)[0] == null);
+		t(() -> retNullArr(nn));
+		t(() -> retNullArr(5)[0]);
+		t(() -> retNested(nn)[0][0] == null);
+		t(() -> retMap(nn).get("a"));
+		function lw2<T>(x:T):Array<Null<T>> return [x];
+		t(() -> lw2(nn)[0] == null);
+		t(() -> lw2(5)[0]);
+	}
+}
+===
+[run]
+True
+[null]
+5
+True
+
+True
+5

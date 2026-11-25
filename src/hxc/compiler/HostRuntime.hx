@@ -160,12 +160,33 @@ static void hxc_thread_uncaught(const char* msg) {
 ')
 #end
 class HostRuntime {
+	#if cs
+	// The thread identities and the preemption tick on .NET, as the C++ above keeps them: identifiers
+	// start at 1 with the main thread 0, serials at 1, and a background thread asks for a preemption every
+	// 50 ms once a thread has been created.
+	@:meta(System.ThreadStaticAttribute) static var netIdent:Int;
+	@:meta(System.ThreadStaticAttribute) static var netSerial:Int;
+	static final netLock = new NetLock();
+	static var netNextIdent = 1;
+	static var netNextSerial = 1;
+	static var netAlive = 0;
+	static var netPreempt = false;
+	static var netTick = false;
+
+	static function netTickLoop():Void {
+		while (true) {
+			cs.system.threading.Thread.Sleep(50);
+			netPreempt = true;
+		}
+	}
+	#end
+
 	public static function stderrWrite(b:haxe.io.Bytes, pos:Int, len:Int):Void {
 		if (len <= 0) return;
 		#if cpp
 		untyped __cpp__("hxc_err_write((const unsigned char*){0}->b->GetBase() + {1}, {2})", b, pos, len);
 		#else
-		Sys.stderr().writeBytes(b, pos, len);
+		hxc.core.HostStdio.err().writeBytes(b, pos, len);
 		#end
 	}
 
@@ -178,7 +199,7 @@ class HostRuntime {
 		#if cpp
 		untyped __cpp__("hxc_err_flush()");
 		#else
-		Sys.stderr().flush();
+		hxc.core.HostStdio.err().flush();
 		#end
 	}
 
@@ -192,6 +213,20 @@ class HostRuntime {
 	public static function threadCreated():Int {
 		#if cpp
 		return untyped __cpp__("hxc_thread_created()");
+		#elseif cs
+		var ident = 0;
+		var start = false;
+		cs.Lib.lock(netLock, {
+			ident = netNextIdent++;
+			start = !netTick;
+			netTick = true;
+		});
+		if (start) {
+			var t = new cs.system.threading.Thread(new cs.system.threading.ThreadStart(netTickLoop));
+			t.IsBackground = true;
+			t.Start();
+		}
+		return ident;
 		#else
 		return 0;
 		#end
@@ -201,6 +236,9 @@ class HostRuntime {
 	public static function threadSerial():Int {
 		#if cpp
 		return untyped __cpp__("hxc_thread_serial_get()");
+		#elseif cs
+		if (netSerial == 0) cs.Lib.lock(netLock, netSerial = netNextSerial++);
+		return netSerial;
 		#else
 		return 0;
 		#end
@@ -210,6 +248,8 @@ class HostRuntime {
 	public static function currentIdent():Int {
 		#if cpp
 		return untyped __cpp__("hxc_thread_ident");
+		#elseif cs
+		return netIdent;
 		#else
 		return 0;
 		#end
@@ -218,18 +258,25 @@ class HostRuntime {
 	public static function threadStarted(ident:Int):Void {
 		#if cpp
 		untyped __cpp__("hxc_thread_started({0})", ident);
+		#elseif cs
+		netIdent = ident;
+		cs.Lib.lock(netLock, netAlive++);
 		#end
 	}
 
 	public static function threadEnded():Void {
 		#if cpp
 		untyped __cpp__("hxc_thread_ended()");
+		#elseif cs
+		cs.Lib.lock(netLock, netAlive--);
 		#end
 	}
 
 	public static function preemptPending():Bool {
 		#if cpp
 		return untyped __cpp__("hxc_preempt_pending.load(std::memory_order_relaxed) != 0");
+		#elseif cs
+		return netPreempt;
 		#else
 		return false;
 		#end
@@ -238,18 +285,25 @@ class HostRuntime {
 	public static function preemptClear():Void {
 		#if cpp
 		untyped __cpp__("hxc_preempt_pending.store(0)");
+		#elseif cs
+		netPreempt = false;
 		#end
 	}
 
 	public static function sleepZero():Void {
 		#if cpp
 		untyped __cpp__("hxc_sleep_zero()");
+		#elseif cs
+		cs.system.threading.Thread.Sleep(0);
 		#end
 	}
 
 	public static function mainThreadExit():Void {
 		#if cpp
 		untyped __cpp__("hxc_main_thread_exit()");
+		#elseif cs
+		while (netAlive > 0) cs.system.threading.Thread.Sleep(1);
+		Sys.exit(0);
 		#else
 		Sys.exit(0);
 		#end
@@ -267,7 +321,7 @@ class HostRuntime {
 		#if cpp
 		untyped __cpp__("hxc_thread_uncaught({0}.utf8_str())", text);
 		#else
-		Sys.stderr().writeString("Thread " + currentIdent() + " killed on uncaught exception " + text + "\n");
+		hxc.core.HostStdio.err().writeString("Thread " + currentIdent() + " killed on uncaught exception " + text + "\n");
 		#end
 	}
 
@@ -306,3 +360,10 @@ class HostStderrOutput extends haxe.io.Output {
 		HostRuntime.stderrFlush();
 	}
 }
+
+#if cs
+// What the .NET thread counters are locked on.
+class NetLock {
+	public function new() {}
+}
+#end

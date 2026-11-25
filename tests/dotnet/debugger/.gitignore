@@ -1,0 +1,3 @@
+out/
+# The repo ignores .vscode/; this launch.json is part of the sample.
+!.vscode/

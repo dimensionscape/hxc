@@ -1,0 +1,17 @@
+--- null-default-makes-the-argument-nullable
+class P {
+	static function main() {
+		function f(r:Int, display:String = "", num:Float = null) { $type(num); }
+		f(1);
+		function g(num:Int = null) {}
+		$type(g);
+	}
+}
+
+--- other-default-keeps-the-type
+class P {
+	static function main() {
+		function f(num:Float = 1.5) { $type(num); }
+		$type(f);
+	}
+}

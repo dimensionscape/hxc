@@ -1,0 +1,392 @@
+--- a-second-call-starts-with-null-locals
+class P {
+	static function f(set:Bool):Null<Int> {
+		var x:Null<Int> = null;
+		var y:Null<String>;
+		if (set) {
+			x = 7;
+			y = "set";
+		} else y = null;
+		var z = x == null ? -1 : x;
+		return z + (y == null ? 0 : y.length);
+	}
+
+	static function main() {
+		trace(f(true));
+		trace(f(false));
+		trace(f(true));
+		trace(f(false));
+	}
+}
+
+--- a-closure-keeps-the-frame-it-was-made-in
+class P {
+	static function counter(start:Int):() -> Int {
+		var n = start;
+		return function() {
+			n++;
+			return n;
+		};
+	}
+
+	static function plain(a:Int, b:Int):Int {
+		var c = a * b;
+		return c + 1;
+	}
+
+	static function main() {
+		var a = counter(10);
+		var b = counter(100);
+		trace(plain(2, 3));
+		trace(a());
+		trace(b());
+		var c = counter(1000);
+		trace(plain(4, 5));
+		trace(a());
+		trace(b());
+		trace(c());
+		var fs = [for (i in 0...4) counter(i * 10)];
+		for (f in fs) trace(f());
+		for (f in fs) trace(f());
+	}
+}
+
+--- a-closure-made-below-keeps-its-callers-apart
+class P {
+	var name:String;
+
+	function new(name:String) {
+		this.name = name;
+	}
+
+	function greeter(times:Int):String -> String {
+		var prefix = name + ":";
+		return inner(prefix, times);
+	}
+
+	function inner(prefix:String, times:Int):String -> String {
+		var count = 0;
+		return function(s) {
+			count += times;
+			return prefix + s + count + name;
+		};
+	}
+
+	static function main() {
+		var x = new P("x").greeter(1);
+		var y = new P("y").greeter(2);
+		trace(x("a"));
+		trace(y("b"));
+		trace(x("c"));
+		trace(new P("z").greeter(3)("d"));
+		trace(y("e"));
+	}
+}
+
+--- recursion-keeps-each-level-its-own-locals
+class P {
+	static function fib(n:Int):Int {
+		if (n < 2) return n;
+		var a = fib(n - 1);
+		var b = fib(n - 2);
+		return a + b;
+	}
+
+	static function even(n:Int):Bool {
+		var m = n;
+		return m == 0 ? true : odd(m - 1);
+	}
+
+	static function odd(n:Int):Bool {
+		var m = n;
+		return m == 0 ? false : even(m - 1);
+	}
+
+	static function walk(depth:Int, acc:Array<Int>):Array<Int> {
+		var mine = depth * depth;
+		if (depth > 0) walk(depth - 1, acc);
+		acc.push(mine);
+		return acc;
+	}
+
+	static function main() {
+		trace(fib(15));
+		trace(even(10));
+		trace(odd(7));
+		trace(walk(5, []));
+		trace(walk(3, []));
+	}
+}
+
+--- a-caught-exception-keeps-its-stack
+import haxe.CallStack;
+
+class P {
+	static function thrower(n:Int):Int {
+		var local = n * 2;
+		if (n == 0) throw "deep";
+		return thrower(n - 1) + local;
+	}
+
+	static function busy(n:Int):Int {
+		var t = 0;
+		for (i in 0...n) t += helper(i);
+		return t;
+	}
+
+	static function helper(i:Int):Int {
+		var j = i + 1;
+		return j * 2;
+	}
+
+	static function main() {
+		var stack:Array<StackItem> = null;
+		try {
+			thrower(3);
+		} catch (e:String) {
+			stack = CallStack.exceptionStack();
+			trace(e);
+		}
+		trace(busy(10));
+		try {
+			trace(thrower(2));
+		} catch (e:String) {
+			trace("again " + e);
+		}
+		trace(busy(5));
+		trace(stack.length);
+		for (item in stack) switch (item) {
+			case FilePos(s, file, line, _): trace(line + " " + (s == null ? "" : switch (s) { case Method(c, m): c + "." + m; case _: "?"; }));
+			case _: trace("other");
+		}
+	}
+}
+
+--- a-saved-call-stack-keeps-its-positions
+import haxe.CallStack;
+
+class P {
+	static var saved:Array<StackItem>;
+
+	static function outer(n:Int, again:Bool):Int {
+		var a = n + 1;
+		if (again) {
+			var r = middle(a, true);
+			return r - a;
+		}
+		return middle(a, false) + a;
+	}
+
+	static function middle(n:Int, again:Bool):Int {
+		var b = n * 2;
+		if (again) {
+			var r = other(b);
+			return r + leaf(b, false);
+		}
+		return leaf(b, true) + b;
+	}
+
+	static function leaf(n:Int, save:Bool):Int {
+		if (save) saved = CallStack.callStack();
+		var m = other(n);
+		return m - 1;
+	}
+
+	static function other(n:Int):Int {
+		var k = n + 3;
+		return k;
+	}
+
+	static function show() {
+		for (item in saved) switch (item) {
+			case FilePos(s, file, line, _): trace(line + " " + (s == null ? "" : switch (s) { case Method(c, m): c + "." + m; case _: "?"; }));
+			case _: trace("other");
+		}
+	}
+
+	static function main() {
+		trace(outer(1, false));
+		var first = saved;
+		show();
+		trace(outer(2, true));
+		trace(middle(3, true));
+		trace(leaf(4, false));
+		trace(other(5));
+		saved = first;
+		show();
+	}
+}
+
+--- defaults-and-finally-across-reused-frames
+class P {
+	static function pad(s:String, width:Int = 6, fill:String = "."):String {
+		var out = s;
+		while (out.length < width) out += fill;
+		return out;
+	}
+
+	static function guarded(n:Int):String {
+		var log = "";
+		try {
+			if (n % 2 == 0) throw n;
+			log += "ok" + n;
+		} catch (e:Int) {
+			log += "caught" + e;
+		}
+		return pad(log, 10, n % 3 == 0 ? "-" : null);
+	}
+
+	static function main() {
+		trace(pad("a"));
+		trace(pad("b", 3));
+		trace(pad("c", 4, "*"));
+		trace(pad("d"));
+		for (i in 0...5) trace(guarded(i));
+	}
+}
+
+--- a-macros-date-now-is-in-whole-seconds
+class P {
+	macro static function ms() return macro $v{Date.now().getTime() % 1000};
+	static function main() { trace(ms()); }
+}
+
+--- a-regex-that-finds-nothing-answers-without-a-match
+class P {
+	static function main() {
+		var re = ~/b(\d)?/;
+		trace(re.match("abc"), re.matched(0), re.matched(1));
+		trace(re.match("xyz"));
+		trace(try re.matched(0) catch (e:Dynamic) "no match: " + e);
+		trace(re.match("ab7"), re.matched(1), re.matchedLeft(), re.matchedRight());
+		trace(re.matchSub("ab7b8", 3), re.matched(1));
+		trace(re.matchSub("ab7b8", 5));
+		trace(re.split("abc"), re.split("xyz"), ~/b/g.split("abcbd"), ~/b/g.split("xyz"), ~/,/g.split("a,,b,"));
+		trace(re.replace("abc", "-"), re.replace("xyz", "-"), ~/(b)/g.replace("abcb", "[$1]"), ~/b/g.replace("xyz", "-"));
+		trace(re.map("abc", r -> "<" + r.matched(0) + ">"), re.map("xyz", r -> "!"), ~/b/g.map("abcb", r -> "B"), ~/x*/g.map("ab", r -> "."));
+		var n = 0;
+		for (i in 0...2000) if (~/^k(\d+)$/.match(i % 3 == 0 ? "k" + i : "j" + i)) n++;
+		trace(n);
+	}
+}
+
+--- zlib-streams-give-the-same-bytes-and-errors
+import haxe.io.Bytes;
+import haxe.zip.Compress;
+import haxe.zip.Uncompress;
+import haxe.zip.FlushMode;
+
+class P {
+	static function sample():Bytes {
+		var b = new haxe.io.BytesBuffer();
+		var x = 12345;
+		for (i in 0...6000) {
+			x = (x * 1103515245 + 12345) & 0x7fffffff;
+			b.addByte(i % 7 == 0 ? (x >> 16) & 255 : 65 + (i >> 4) % 26);
+		}
+		return b.getBytes();
+	}
+
+	// The interpreter's own result type spells this field "wriet".
+	static function wrote(r:Dynamic):Int {
+		var w:Null<Int> = Reflect.field(r, "write");
+		return w == null ? Reflect.field(r, "wriet") : w;
+	}
+
+	static function sum(b:Bytes):String return b.length + ":" + haxe.crypto.Md5.make(b).toHex();
+
+	static function main() {
+		var src = sample();
+		trace(sum(src));
+		for (level in [0, 1, 6, 9]) {
+			var c = Compress.run(src, level);
+			trace(level, sum(c), Uncompress.run(c).compare(src) == 0, Uncompress.run(c, 100).compare(src) == 0);
+		}
+		// a stream fed in pieces, into a small buffer, flushed three ways
+		for (mode in [SYNC, FULL, NO]) {
+			var c = new Compress(6);
+			var out = new haxe.io.BytesBuffer();
+			var tmp = Bytes.alloc(300);
+			var pos = 0, calls = 0;
+			while (pos < src.length) {
+				var n = src.length - pos < 1000 ? src.length - pos : 1000;
+				c.setFlushMode(mode);
+				var piece = src.sub(pos, n);
+				var at = 0;
+				while (true) {
+					var r:Dynamic = c.execute(piece, at, tmp, 0);
+					out.addBytes(tmp, 0, wrote(r));
+					at += r.read;
+					calls++;
+					if (at == n && wrote(r) < tmp.length) break;
+				}
+				pos += n;
+			}
+			c.setFlushMode(FINISH);
+			while (true) {
+				var r:Dynamic = c.execute(src, src.length, tmp, 0);
+				out.addBytes(tmp, 0, wrote(r));
+				calls++;
+				if (r.done) break;
+			}
+			c.close();
+			var z = out.getBytes();
+			trace(Std.string(mode), calls, sum(z), Uncompress.run(z).compare(src) == 0);
+		}
+		// inflating by hand, a few bytes of input at a time
+		var z = Compress.run(src, 9);
+		var u = new Uncompress();
+		u.setFlushMode(SYNC);
+		var back = new haxe.io.BytesBuffer();
+		var tmp = Bytes.alloc(512);
+		var pos = 0, done = false, calls = 0;
+		while (!done) {
+			var n = z.length - pos < 37 ? z.length - pos : 37;
+			var r:Dynamic = u.execute(z.sub(pos, n), 0, tmp, 0);
+			back.addBytes(tmp, 0, wrote(r));
+			pos += r.read;
+			done = r.done;
+			calls++;
+		}
+		u.close();
+		trace(calls, pos == z.length, back.getBytes().compare(src) == 0);
+		// what is not a stream
+		trace(try sum(Uncompress.run(Bytes.ofString("this is not zlib data"))) catch (e:Dynamic) "refused");
+		trace(try sum(Uncompress.run(z.sub(0, z.length - 9))) catch (e:Dynamic) "refused");
+		trace(sum(Compress.run(Bytes.alloc(0), 9)), sum(Uncompress.run(Compress.run(Bytes.alloc(0), 9))));
+	}
+}
+
+--- reflect-copy-gives-an-object-its-own-fields
+typedef D = {to:String, text:String};
+
+class C {
+	public var a:Int;
+
+	public function new(a:Int) {
+		this.a = a;
+	}
+}
+
+class P {
+	static function make():D
+		return {to: "a", text: "x"};
+
+	static function main() {
+		var start = make();
+		var now = Reflect.copy(start);
+		now.text = "changed";
+		trace(start.text + "," + now.text + "," + (now == start));
+		var lit:D = {to: "a", text: "x"};
+		var c = Reflect.copy(lit);
+		c.to = "b";
+		Reflect.setField(c, "extra", 1);
+		trace(lit.to + "," + c.to + "," + Reflect.hasField(lit, "extra") + "," + Reflect.hasField(c, "extra"));
+		Reflect.deleteField(c, "text");
+		trace(lit.text + "," + Reflect.hasField(c, "text"));
+		var i = new C(1);
+		var j = Reflect.copy(i);
+		j.a = 2;
+		trace(i.a + "," + j.a);
+	}
+}

@@ -1,0 +1,786 @@
+--- cs-flags-operators @gencs
+import cs.Flags;
+import cs.system.reflection.BindingFlags;
+import cs.system.AttributeTargets;
+class P {
+	static function main() {
+		var f = new Flags(BindingFlags.Public) | BindingFlags.Static;
+		Sys.println(f);
+		Sys.println(f.has(BindingFlags.Static) + " " + f.has(BindingFlags.Instance));
+		Sys.println(f.hasAll(new Flags(BindingFlags.Public) | BindingFlags.Static) + " " + f.hasAny(new Flags(BindingFlags.Instance) | BindingFlags.Public));
+		var g = f.remove(BindingFlags.Public);
+		Sys.println(g);
+		Sys.println(f & BindingFlags.Public);
+		var all = new Flags(AttributeTargets.Class) | AttributeTargets.Method | AttributeTargets.Field;
+		Sys.println(all);
+		Sys.println(~new Flags(AttributeTargets.All));
+		var none = new Flags<BindingFlags>();
+		Sys.println(none);
+		var fields = cs.Lib.toNativeType(Version).GetFields(new Flags(BindingFlags.Public) | BindingFlags.Static);
+		Sys.println(fields.Length);
+	}
+}
+class Version {
+	public static var a = 1;
+	public static var b = 2;
+	public var c = 3;
+}
+===
+[run]
+Static, Public
+true false
+true true
+Static
+Public
+Class, Method, Field
+-32768
+Default
+2
+--- type-fields-and-class-equality @gencs
+class Shape {
+	public var name:String;
+	var secret:Int = 1;
+	public final id:Int = 7;
+	@:isVar public var w(get, set):Float = 0;
+	public var ro(default, null):Int = 0;
+	public static var count:Int = 0;
+	static var hiddenStatic:Int = 0;
+	public static inline var K = 3;
+	function get_w() return w;
+	function set_w(v) return w = v;
+	public function new(n:String) {
+		name = n;
+		count++;
+	}
+	public function area():Float return 0;
+	function priv() return 2;
+	public static function make() return new Shape("s");
+}
+class Square extends Shape {
+	public var side:Float = 2;
+	public function new() super("sq");
+	override public function area():Float return side * side;
+	public function extra() return priv();
+}
+class P {
+	static function main() {
+		var s:Shape = new Square();
+		s.w = 1;
+		cast(s, Square).extra();
+		Shape.make();
+		Sys.println(Type.getInstanceFields(Shape).join(","));
+		Sys.println(Type.getInstanceFields(Square).join(","));
+		Sys.println(Type.getClassFields(Shape).join(","));
+		Sys.println(Type.getClassFields(Square).length);
+		Sys.println(Type.getInstanceFields(String).join(","));
+		Sys.println(Type.getClassFields(String).join(","));
+		Sys.println(Reflect.fields(Shape).join(","));
+		Sys.println(Reflect.fields("abc").length);
+		Sys.println(Reflect.fields(new cs.system.Version(1, 2)).length);
+		Sys.println(Type.getClass(s) == Square);
+		Sys.println(Type.getClass(s) != Shape);
+		Sys.println(Type.getSuperClass(Square) == Shape);
+		Sys.println(Type.getSuperClass(Shape) == null);
+		Sys.println(Type.resolveClass("Square") == Square);
+		Sys.println(Type.resolveClass("Nope") == null);
+		var c:Class<Dynamic> = Type.getClass(s);
+		Sys.println(c == Square && c != null);
+	}
+}
+===
+[run]
+get_w,set_w,area,priv,name,secret,id,w,ro
+area,extra,get_w,set_w,priv,side,name,secret,id,w,ro
+make,count,hiddenStatic,K
+0
+length,toUpperCase,toLowerCase,charAt,charCodeAt,indexOf,lastIndexOf,split,substr,substring
+fromCharCode
+make,count,hiddenStatic,K
+0
+0
+True
+True
+True
+True
+True
+True
+True
+--- reflect-api @gencs
+class C {
+	public var x:Int = 1;
+	public var s:String = "s";
+	public var p(get, set):Int;
+	var hidden:Int = 9;
+	function get_p() return x * 10;
+	function set_p(v) return x = v;
+	public static var st:Int = 4;
+	public static function sm(a:Int) return a + 1;
+	public function new() {}
+	public function m(a:Int, b:Int) return a + b + x;
+}
+class P {
+	static function main() {
+		var c = new C();
+		var o:Dynamic = {a: 1, b: "two"};
+		Sys.println(Reflect.fields(c).join(",") + " / " + Reflect.fields(o).join(","));
+		Sys.println(Reflect.hasField(c, "x") + " " + Reflect.hasField(c, "m") + " " + Reflect.hasField(c, "p") + " " + Reflect.hasField(c, "hidden") + " " + Reflect.hasField(c, "zz") + " " + Reflect.hasField(o, "a") + " " + Reflect.hasField(o, "zz"));
+		Sys.println(Reflect.getProperty(c, "p") + " " + Reflect.field(c, "p"));
+		Reflect.setProperty(c, "p", 3);
+		Reflect.setProperty(o, "a", 5);
+		Sys.println(c.x + " " + Reflect.getProperty(o, "a"));
+		Sys.println(Reflect.deleteField(o, "a") + " " + Reflect.deleteField(o, "a") + " " + Reflect.fields(o).join(",") + " " + Reflect.deleteField(c, "x"));
+		var cp = Reflect.copy(o);
+		cp.b = "changed";
+		Sys.println(o.b + " " + cp.b);
+		var cc:Dynamic = Reflect.copy((c : Dynamic));
+		Sys.println(Std.string(cc) + " " + Std.isOfType(cc, C));
+		Sys.println(Reflect.copy(null));
+		Sys.println(Reflect.isObject(c) + " " + Reflect.isObject(o) + " " + Reflect.isObject("s") + " " + Reflect.isObject(1) + " " + Reflect.isObject(C) + " " + Reflect.isObject([1]) + " " + Reflect.isObject(true));
+		var nothing:Dynamic = null;
+		Sys.println(Reflect.isObject(nothing) + " " + Reflect.isFunction(1) + " " + Reflect.isFunction(o) + " " + Reflect.isFunction(nothing) + " " + Reflect.isEnumValue(1) + " " + Reflect.isEnumValue(cs.system.DayOfWeek.Monday));
+		Sys.println(Reflect.compare(1, 2) + " " + Reflect.compare(2, 1) + " " + Reflect.compare(1, 1) + " " + Reflect.compare("a", "b") + " " + Reflect.compare("b", "a") + " " + Reflect.compare(1.5, 1) + " " + Reflect.compare(nothing, nothing) + " " + Reflect.compare(nothing, 1));
+		Sys.println(Reflect.field(C, "st") + " " + Reflect.callMethod(C, Reflect.field(C, "sm"), [4]) + " " + Reflect.callMethod(c, Reflect.field(c, "m"), [1, 2]));
+		Reflect.setField(C, "st", 8);
+		Sys.println(C.st);
+		Sys.println(Reflect.fields(C).join(","));
+		Sys.println(Reflect.field("abc", "length") + " " + Reflect.field([1, 2, 3], "length") + " " + Reflect.fields([1, 2]).join(","));
+		Sys.println(Reflect.fields("abc").length + " " + Reflect.hasField("abc", "length"));
+		Sys.println(Reflect.field(new cs.system.text.StringBuilder("abcd"), "Length"));
+		var v = new cs.system.Version(1, 2);
+		Sys.println(Reflect.fields(v).length + " " + Reflect.hasField(v, "Major") + " " + Reflect.getProperty(v, "Minor") + " " + Reflect.field(v, "Major"));
+	}
+}
+===
+[run]
+hidden,p,s,x / b,a
+true true true true false true false
+10 10
+3 5
+true false b false
+two changed
+[ p : 30, s : s, x : 3, hidden : 9 ] false
+
+true true true false true true false
+false false false false false true
+-1 1 0 -1 1 1 0 -1
+4 5 6
+8
+sm,st
+3 3 __a,length
+0 true
+4
+0 true 2 1
+--- std-isoftype-and-create-instance @gencs
+interface I {}
+class A implements I {
+	public var k = 5;
+	public function new() {}
+}
+class B extends A {
+	public function new() super();
+}
+class Opt {
+	public var x = 0;
+	public function new(?a:Int) if (a != null) x = a;
+}
+class Two {
+	public var s:String;
+	public function new(a:String, b:Float) s = a + b;
+}
+class P {
+	static function check(v:Dynamic, t:Dynamic):String return Std.isOfType(v, t) ? "y" : "n";
+	static function main() {
+		var vals:Array<Dynamic> = [1, 1.5, 2.0, -0.0, 2147483648.0, Math.NaN, "s", true, null, new A(), new B(), {x: 1}, new cs.system.Version(1, 2)];
+		var types:Array<Dynamic> = [Int, Float, Bool, String, Dynamic, A, B, I, null, cs.system.Object, cs.system.ValueType, cs.system.Version];
+		for (v in vals) Sys.println(Std.string(v) + ": " + [for (t in types) check(v, t)].join(""));
+		var dc:Dynamic = A;
+		var e:A = Type.createEmptyInstance(dc);
+		Sys.println(e.k);
+		var b:B = Type.createEmptyInstance(B);
+		Sys.println(b.k + " " + Std.isOfType(b, A));
+		var es:String = Type.createEmptyInstance(String);
+		Sys.println("[" + es + "]");
+		var n:A = Type.createInstance(A, []);
+		Sys.println(n.k);
+		var t:Two = Type.createInstance(Two, ["a", 2]);
+		Sys.println(t.s);
+		var s:String = Type.createInstance(String, ["str"]);
+		Sys.println(s);
+		var v = Type.createInstance(cs.system.Version, [1, 2]);
+		Sys.println(v.Major + " " + v.Minor);
+		// hxcs's Runtime.callMethod picks the constructor taking haxe.lang.EmptyObject for these.
+		try {
+			var o:Opt = Type.createInstance(Opt, [3]);
+			Sys.println("opt " + o.x);
+		} catch (e:Dynamic) Sys.println("Opt [3] throws " + Type.getClassName(Type.getClass(e)));
+		try {
+			var o:Opt = Type.createInstance(Opt, []);
+			Sys.println("opt " + o.x);
+		} catch (e:Dynamic) Sys.println("Opt [] throws " + Type.getClassName(Type.getClass(e)));
+	}
+}
+===
+[run]
+1: yynnynnnnyyn
+1.5: nynnynnnnyyn
+2: yynnynnnnyyn
+-0: yynnynnnnyyn
+2147483648: nynnynnnnyyn
+NaN: nynnynnnnyyn
+s: nnnyynnnnynn
+true: nnynynnnnyyn
+null: nnnnnnnnnnnn
+A: nnnnyynynynn
+B: nnnnyyyynynn
+[ x : 1 ]: nnnnynnnnynn
+1.2: nnnnynnnnyny
+0
+0 true
+[]
+5
+a2
+str
+1 2
+Opt [3] throws System.InvalidCastException
+Opt [] throws String
+--- std-string-formatting @gencs
+class WithStr {
+	public function new() {}
+	public function toString() return "WS";
+}
+class NoStr {
+	public var a = 1;
+	public function new() {}
+}
+class G<T> {
+	public function new() {}
+}
+class P {
+	static function main() {
+		var floats:Array<Float> = [0.0, -0.0, 1.0, 1.5, -2.25, 0.1, 1 / 3, 1e15, 1e16, 1e20, 1e21, 123456789012345680000.0, 1e-5, 0.000123, 1.7976931348623157e308, 5e-324, 0.30000000000000004, Math.PI, Math.NaN];
+		for (x in floats) Sys.println(Std.string(x) + " | " + x);
+		Sys.println(floats);
+		Sys.println([0, -1, 2147483647, -2147483648]);
+		Sys.println(Std.string(null) + " " + Std.string(true) + " " + Std.string(false));
+		var b:Dynamic = true;
+		Sys.println(Std.string(b));
+		Sys.println(Std.string({a: 1, b: "x", c: 1.5, d: null, e: [1, 2], f: {g: true}}));
+		Sys.println(Std.string({}));
+		Sys.println(Std.string(new WithStr()) + " " + Std.string(new NoStr()) + " " + Std.string(new G<Int>()) + " " + Std.string(new G<String>()));
+		Sys.println(Std.string([new WithStr(), null]) + " " + Std.string(["a", null, "b"]) + " " + Std.string([[1, 2], [3]]) + " " + Std.string([1.5, 2.0]) + " " + Std.string([true, false]));
+		var dyn:Array<Dynamic> = [1, 1.5, "s", null, true, {x: 1}];
+		Sys.println(Std.string(dyn));
+		var n:Null<Int> = null;
+		Sys.println(Std.string(n));
+		n = 5;
+		var nf:Null<Float> = 2.5;
+		Sys.println(Std.string(n) + " " + Std.string(nf));
+		var m = new Map<String, Int>();
+		m.set("k", 1);
+		var im = new Map<Int, String>();
+		im.set(1, "v");
+		var l = new List<Int>();
+		l.add(1);
+		l.add(2);
+		Sys.println(Std.string(m) + " " + Std.string(im) + " " + Std.string(l));
+		var sb = new StringBuf();
+		sb.add(1.5);
+		sb.add(true);
+		sb.add(null);
+		sb.addChar(65);
+		sb.add([1]);
+		sb.addSub("hello", 1, 3);
+		Sys.println(sb.toString() + " " + sb.length);
+		var d:Dynamic = 1;
+		d += 0.5;
+		var dd:Dynamic = 3.0;
+		Sys.println(Std.string(d) + " " + Std.string(dd) + " " + Std.string(Date.fromString("2001-02-03 04:05:06")));
+		Sys.println(Std.string((65 : cs.StdTypes.Char16)) + " " + Std.string((1.5 : Single)) + " " + Std.string(cs.system.Decimal.One) + " " + Std.string(cs.system.DayOfWeek.Friday));
+	}
+}
+===
+[run]
+0 | 0
+-0 | -0
+1 | 1
+1.5 | 1.5
+-2.25 | -2.25
+0.1 | 0.1
+0.3333333333333333 | 0.3333333333333333
+1000000000000000 | 1000000000000000
+10000000000000000 | 10000000000000000
+1E+20 | 1E+20
+1E+21 | 1E+21
+1.2345678901234568E+20 | 1.2345678901234568E+20
+1E-05 | 1E-05
+0.000123 | 0.000123
+1.7976931348623157E+308 | 1.7976931348623157E+308
+5E-324 | 5E-324
+0.30000000000000004 | 0.30000000000000004
+3.141592653589793 | 3.141592653589793
+NaN | NaN
+[0,-0,1,1.5,-2.25,0.1,0.3333333333333333,1000000000000000,10000000000000000,1E+20,1E+21,1.2345678901234568E+20,1E-05,0.000123,1.7976931348623157E+308,5E-324,0.30000000000000004,3.141592653589793,NaN]
+[0,-1,2147483647,-2147483648]
+null true false
+true
+[ b : x, d : null, e : [1,2], f : [ g : true ], a : 1, c : 1.5 ]
+[]
+WS NoStr G`1[System.Int32] G`1[System.String]
+[WS,null] [a,null,b] [[1,2],[3]] [1.5,2] [true,false]
+[1,1.5,s,null,true,[ x : 1 ]]
+null
+5 2.5
+[k => 1] [1 => v] {1, 2}
+1.5truenullA[1]ell 18
+1.5 3 2001-02-03 04:05:06
+65 1.5 1 Friday
+--- std-parse-and-int @gencs
+class P {
+	static function esc(s:String) return s.split("\t").join("\\t").split("\n").join("\\n");
+	static function main() {
+		var ins = ["0", "12", "-12", "+12", "  42", "\t\n7", "12abc", "abc", "", " ", "-", "+", "0x1F", "0X1f", "-0x10", "0x", "0xG", "2147483647", "2147483648", "-2147483648", "99999999999", "0xFFFFFFFF", "0x80000000", "1.9", "1e3", " -0", "00012"];
+		for (s in ins) {
+			var r = try Std.string(Std.parseInt(s)) catch (e:cs.system.OverflowException) "OverflowException";
+			Sys.println("parseInt('" + esc(s) + "') = " + r);
+		}
+		Sys.println(Std.parseInt(null));
+		var fs = ["0", "1.5", "-1.5", "+1.5", "  2.5", "1e3", "1E-3", "1e", "1e+", "1e-", "1.5e3x", ".5", "5.", "-.5", "abc", "", "1.2.3", "--1", "+-1", "1,5", "Infinity", "NaN", "0x10", "1e-400", "12abc", "\t3", " .", "e5", "-", "1_000"];
+		for (s in fs) Sys.println("parseFloat('" + esc(s) + "') = " + Std.parseFloat(s));
+		Sys.println(Std.parseFloat(null));
+		var xs:Array<Float> = [0.0, 2.5, -2.5, 2.9999, -2.9999, 2147483647.0, 2147483648.0, -2147483649.0, 1e20, -1e20, Math.NaN];
+		for (x in xs) Sys.println("int(" + x + ") = " + Std.int(x));
+		var ok = true;
+		for (i in 0...1000) {
+			var r = Std.random(10);
+			if (r < 0 || r >= 10) ok = false;
+			var f = Math.random();
+			if (f < 0 || f >= 1) ok = false;
+		}
+		Sys.println(ok + " " + Std.random(0) + " " + Std.random(-5) + " " + Std.random(1));
+	}
+}
+===
+[run]
+parseInt('0') = 0
+parseInt('12') = 12
+parseInt('-12') = -12
+parseInt('+12') = 12
+parseInt('  42') = 42
+parseInt('\t\n7') = 7
+parseInt('12abc') = 12
+parseInt('abc') = null
+parseInt('') = null
+parseInt(' ') = null
+parseInt('-') = null
+parseInt('+') = null
+parseInt('0x1F') = 31
+parseInt('0X1f') = 31
+parseInt('-0x10') = -16
+parseInt('0x') = null
+parseInt('0xG') = null
+parseInt('2147483647') = 2147483647
+parseInt('2147483648') = OverflowException
+parseInt('-2147483648') = OverflowException
+parseInt('99999999999') = OverflowException
+parseInt('0xFFFFFFFF') = -1
+parseInt('0x80000000') = -2147483648
+parseInt('1.9') = 1
+parseInt('1e3') = 1
+parseInt(' -0') = 0
+parseInt('00012') = 12
+
+parseFloat('0') = 0
+parseFloat('1.5') = 1.5
+parseFloat('-1.5') = -1.5
+parseFloat('+1.5') = 1.5
+parseFloat('  2.5') = 2.5
+parseFloat('1e3') = 1000
+parseFloat('1E-3') = 0.001
+parseFloat('1e') = 1
+parseFloat('1e+') = 1
+parseFloat('1e-') = 1
+parseFloat('1.5e3x') = 1500
+parseFloat('.5') = 0.5
+parseFloat('5.') = 5
+parseFloat('-.5') = -0.5
+parseFloat('abc') = NaN
+parseFloat('') = NaN
+parseFloat('1.2.3') = 1.2
+parseFloat('--1') = NaN
+parseFloat('+-1') = NaN
+parseFloat('1,5') = 1
+parseFloat('Infinity') = NaN
+parseFloat('NaN') = NaN
+parseFloat('0x10') = 0
+parseFloat('1e-400') = 0
+parseFloat('12abc') = 12
+parseFloat('\t3') = 3
+parseFloat(' .') = NaN
+parseFloat('e5') = NaN
+parseFloat('-') = NaN
+parseFloat('1_000') = 1
+NaN
+int(0) = 0
+int(2.5) = 2
+int(-2.5) = -2
+int(2.9999) = 2
+int(-2.9999) = -2
+int(2147483647) = 2147483647
+int(2147483648) = 2147483647
+int(-2147483649) = -2147483648
+int(1E+20) = 2147483647
+int(-1E+20) = -2147483648
+int(NaN) = 0
+true 0 0 0
+--- int64-arithmetic @gencs
+import cs.StdTypes.Int64;
+import cs.StdTypes.UInt64;
+class P {
+	static function main() {
+		var a:Int64 = 5000000000;
+		var b:Int64 = 3;
+		var i = 7;
+		Sys.println(a + b);
+		Sys.println(a - b);
+		Sys.println(a * b);
+		Sys.println(a / b);
+		Sys.println(a % b);
+		Sys.println(-a);
+		Sys.println((a | b) + " " + (a & b) + " " + (a ^ b) + " " + ~b);
+		Sys.println((a << 2) + " " + (a >> 1) + " " + (-a >> 1));
+		Sys.println(a + i);
+		Sys.println(i * a);
+		Sys.println(cast(a, Float) / 2.0);
+		var f = 1.5e10;
+		// gencs drops a checked cast to Int64/Int here: the Float (and the Int64) print unchanged.
+		Sys.println(cast(f, Int64));
+		Sys.println(cast(-2.7, Int64));
+		Sys.println(cast(a, Int));
+		var c = a;
+		c += b;
+		c++;
+		c *= 2;
+		Sys.println(c);
+		Sys.println((a > b) + " " + (a == 5000000000) + " " + (b < i));
+		var u:UInt64 = 18446744073709551615;
+		Sys.println(u);
+		// UInt64 / Int is C#'s integer division under gencs, though Haxe types it Float.
+		Sys.println(u / 2);
+		var max:Int64 = 9223372036854775807;
+		Sys.println(max + 1);
+		var h = haxe.Int64.make(1, 2);
+		Sys.println(h + " " + haxe.Int64.toStr(h) + " " + h.high + " " + h.low);
+		var x = haxe.Int64.ofInt(-7);
+		Sys.println(haxe.Int64.toStr(x * h + 1) + " " + haxe.Int64.div(h, 3) + " " + haxe.Int64.mod(h, 3) + " " + haxe.Int64.compare(x, h));
+		Sys.println(haxe.Int64.toInt(haxe.Int64.ofInt(42)) + " " + haxe.Int64.isNeg(x) + " " + haxe.Int64.isZero(x - x));
+		Sys.println(haxe.Int64.parseString("-9223372036854775808") + " " + haxe.Int64.fromFloat(1e15));
+		try haxe.Int64.toInt(h) catch (e:Dynamic) Sys.println("overflow: " + e);
+		var d:Dynamic = a;
+		Sys.println(Std.string(d) + " " + Std.isOfType(d, Int) + " " + Std.isOfType(d, Float));
+	}
+}
+===
+[run]
+5000000003
+4999999997
+15000000000
+1666666666
+2
+-5000000000
+5000000003 0 5000000003 -4
+20000000000 2500000000 -2500000000
+5000000007
+35000000000
+2500000000
+15000000000
+-2.7
+5000000000
+10000000008
+true true true
+18446744073709551615
+9223372036854775807
+-9223372036854775808
+4294967298 4294967298 1 2
+-30064771085 1431655766 0 -1
+42 true true
+-9223372036854775808 1000000000000000
+overflow: Overflow
+5000000000 false false
+--- date-time @gencs
+class P {
+	// The same wall-clock time as milliseconds since 1970 in UTC, whatever the machine's time zone.
+	static function wall(d:Date):Float return d.getTime() - d.getTimezoneOffset() * 60000.0;
+	static function main() {
+		var d = new Date(2000, 0, 1, 0, 0, 0);
+		Sys.println(wall(d));
+		Sys.println(wall(new Date(2020, 1, 29, 13, 45, 30)));
+		var t = 1234567890123.0;
+		var u = Date.fromTime(t);
+		Sys.println(u.getTime() == t);
+		Sys.println(u.getUTCFullYear() + "-" + u.getUTCMonth() + "-" + u.getUTCDate() + " " + u.getUTCHours() + ":" + u.getUTCMinutes() + ":" + u.getUTCSeconds() + " day " + u.getUTCDay());
+		Sys.println(Date.fromTime(0).getUTCFullYear() + " " + Date.fromTime(-86400000.0).getUTCDate() + " " + Date.fromTime(0.5).getTime());
+		var s = Date.fromString("2001-02-03 04:05:06");
+		Sys.println(s.toString() + " " + wall(s));
+		Sys.println(Date.fromString("10:20:30").getTime());
+		Sys.println(wall(Date.fromString("2001-02-03")));
+		Sys.println(DateTools.format(s, "%Y-%m-%d %H:%M:%S"));
+		Sys.println(DateTools.format(s, "%d/%m/%y %I %p %e"));
+		Sys.println(wall(DateTools.delta(s, DateTools.days(1.5))));
+		Sys.println(DateTools.getMonthDays(new Date(2024, 1, 1, 0, 0, 0)) + " " + DateTools.getMonthDays(new Date(2023, 1, 1, 0, 0, 0)));
+		Sys.println(Date.now().getTime() > t);
+		try Date.fromString("bad") catch (e:String) Sys.println(e);
+	}
+}
+===
+[run]
+946684800000
+1582983930000
+True
+2009-1-13 23:31:30 day 5
+1970 31 0.5
+2001-02-03 04:05:06 981173106000
+37230000
+981158400000
+2001-02-03 04:05:06
+03/02/01 04 AM 3
+981302706000
+29 28
+True
+Invalid date format : bad
+--- type-typeof @gencs
+enum E {
+	A;
+	B(x:Int);
+}
+class C {
+	public function new() {}
+	public function m() {}
+}
+class G<T> {
+	public function new() {}
+}
+class P {
+	static function f() {}
+	static function main() {
+		var vals:Array<Dynamic> = [null, 0, -5, 1.5, 2.0, 1e10, -0.0, Math.NaN, 2147483647.0, 2147483648.0, -2147483648.0, -2147483649.0, true, "s", {a: 1}, {}, new C(), new G<Int>(), C, E, A, B(1), new haxe.ds.StringMap<Int>(), new cs.system.Version(1, 2), cs.system.DayOfWeek.Monday, (1 : cs.StdTypes.Int64), (1 : UInt), (65 : cs.StdTypes.Char16), (1 : cs.StdTypes.UInt8), (1.5 : Single), cs.system.Decimal.One, Int, String];
+		for (v in vals) Sys.println(Std.string(v) + " => " + Std.string(Type.typeof(v)));
+		var ints:Array<Int> = [1];
+		Sys.println(Type.typeof(ints));
+		var d:Dynamic = 3;
+		d += 0.5;
+		Sys.println(Type.typeof(d));
+		d -= 0.5;
+		Sys.println(Type.typeof(d) + " " + Std.string(d));
+		Sys.println(Type.typeof(1) == TInt);
+		Sys.println(Type.enumEq(Type.typeof(new C()), TClass(C)));
+		Sys.println(Type.enumEq(Type.typeof(new C()), TClass(G)));
+		switch (Type.typeof(new C())) {
+			case TClass(c): Sys.println(Type.getClassName(c));
+			default: Sys.println("no");
+		}
+		switch (Type.typeof(B(2))) {
+			case TEnum(e): Sys.println(Type.getEnumName(e));
+			default: Sys.println("no");
+		}
+		var nums:Array<Dynamic> = [1, 1.0, 2.5, -0.0, 1e10, 2147483648.0, Math.NaN, Math.POSITIVE_INFINITY, Math.NEGATIVE_INFINITY, d];
+		Sys.println(haxe.Serializer.run(nums));
+	}
+}
+===
+[run]
+null => TNull
+0 => TInt
+-5 => TInt
+1.5 => TFloat
+2 => TInt
+10000000000 => TFloat
+-0 => TInt
+NaN => TFloat
+2147483647 => TInt
+2147483648 => TFloat
+-2147483648 => TInt
+-2147483649 => TFloat
+true => TBool
+s => TClass(System.String)
+[ a : 1 ] => TObject
+[] => TObject
+C => TClass(C)
+G`1[System.Int32] => TClass(G`1[System.Int32])
+C => TObject
+E => TObject
+A => TEnum(E)
+B(1) => TEnum(E)
+haxe.ds.StringMap`1[System.Int32] => TClass(haxe.ds.StringMap`1[System.Int32])
+1.2 => TClass(System.Version)
+Monday => TEnum(System.DayOfWeek)
+1 => TClass(System.Int64)
+1 => TClass(System.UInt32)
+A => TClass(System.Char)
+1 => TClass(System.Byte)
+1.5 => TClass(System.Single)
+1 => TClass(System.Decimal)
+System.Int32 => TObject
+System.String => TObject
+TClass(Array`1[System.Int32])
+TFloat
+TInt 3
+True
+True
+False
+C
+E
+ai1i1d2.5zd10000000000d2147483648kpmi3h
+--- exception-stack-and-details @gencs
+import haxe.CallStack;
+class P {
+	// Long enough that the JIT does not inline it, so its frame shows in both builds.
+	static function thrower(n:Int):Int {
+		var acc = 0;
+		for (i in 0...n) {
+			acc += i * 31 + (acc >> 3);
+			if (acc > 1000000) acc = acc % 977;
+		}
+		if (n > 0) throw new haxe.Exception("boom " + n + " " + acc);
+		return acc;
+	}
+	static function main() {
+		try thrower(3) catch (e:haxe.Exception) {
+			Sys.println(e.details());
+			Sys.println("--");
+			for (item in e.stack) Sys.println(Std.string(item));
+			Sys.println("--");
+			Sys.println(CallStack.toString(e.stack));
+			Sys.println("--");
+			switch (e.stack[0]) {
+				case FilePos(Method(cls, meth), file, line, _): Sys.println(cls + "." + meth + " " + file + " " + line);
+				case _: Sys.println("other");
+			}
+		}
+		try throw "v" catch (e:haxe.Exception) Sys.println(e.details());
+		Sys.println("--");
+		Sys.println(CallStack.toString(CallStack.callStack()));
+		Sys.println(CallStack.exceptionStack().length);
+		var inner = new haxe.Exception("inner");
+		var outer = new haxe.Exception("outer", inner);
+		Sys.println(outer.details());
+		Sys.println(outer.previous == inner);
+	}
+}
+===
+[run]
+Exception: boom 3 96
+Called from P.thrower (null line 0)
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+--
+FilePos(Method(P,thrower),null,0,null)
+FilePos(Method(P,main),null,0,null)
+FilePos(Method(P,Main),null,0,null)
+--
+
+Called from P.thrower (null line 0)
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+--
+P.thrower null 0
+Exception: v
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+--
+
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+0
+Exception: inner
+
+Next Exception: outer
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+True
+--- haxe-exceptions @gencs
+import haxe.exceptions.*;
+class MyErr extends haxe.Exception {
+	public var code:Int;
+	public function new(code:Int, ?prev:haxe.Exception) {
+		super("my " + code, prev);
+		this.code = code;
+	}
+	override function toString() return "MyErr(" + message + ")";
+}
+class P {
+	static function name(v:Dynamic) return Type.getClassName(Type.getClass(v));
+	static function main() {
+		try throw "str" catch (e:String) Sys.println("String " + e);
+		try throw 42 catch (e:Int) Sys.println("Int " + e);
+		try throw 7 catch (e:Float) Sys.println("Int as Float " + e);
+		try throw true catch (e:Bool) Sys.println("Bool " + e);
+		try throw "dyn" catch (e:Dynamic) Sys.println("Dynamic " + e + " " + name(e));
+		try throw null catch (e:Dynamic) Sys.println("null " + (e == null));
+		try throw null catch (e:haxe.Exception) Sys.println("null as Exception " + e.message + " " + (e.unwrap() == null) + " " + name(e));
+		try throw new MyErr(3) catch (e:MyErr) Sys.println("MyErr " + e.code + " " + e.message + " " + e);
+		try throw new MyErr(4) catch (e:haxe.Exception) Sys.println("as Exception " + Std.string(e) + " " + Std.isOfType(e, MyErr));
+		try throw new MyErr(5, new haxe.Exception("root")) catch (e:Dynamic) Sys.println("as Dynamic " + Std.string(e) + " <- " + (e : haxe.Exception).previous.message);
+		try throw "val" catch (e:haxe.Exception) Sys.println("wrapped " + e.message + " " + name(e) + " " + Std.string((cast e : haxe.ValueException).value));
+		try throw {x: 2} catch (e:haxe.ValueException) Sys.println("ValueException " + Std.string(e.value) + " " + e.message);
+		try throw 1.5 catch (e:haxe.Exception) Sys.println(e.toString() + " " + Std.isOfType(e.unwrap(), Float));
+		try throw new cs.system.ArgumentException("native") catch (e:haxe.Exception) Sys.println("native as Exception " + e.message + " " + name(e) + " " + name(e.native) + " " + (e.unwrap() == e.native));
+		try throw new cs.system.ArgumentException("arg") catch (e:Dynamic) Sys.println("native as Dynamic " + name(e));
+		try throw new MyErr(6) catch (e:cs.system.Exception) Sys.println("haxe as native " + e.Message);
+		try throw "x" catch (e:cs.system.Exception) Sys.println("value as native " + e.Message + " " + name(e));
+		try throw new cs.system.InvalidOperationException("io") catch (e:String) Sys.println("no") catch (e:haxe.Exception) Sys.println("second catch " + e.message);
+		var a:Array<Int> = null;
+		try a.push(1) catch (e:haxe.Exception) Sys.println("npe " + name(e.native));
+		try {
+			var d:Dynamic = {};
+			d.foo();
+		} catch (e:Dynamic) Sys.println("missing method: " + e);
+		try {
+			try throw new MyErr(7) catch (e:haxe.Exception) {
+				Sys.println("inner");
+				throw e;
+			}
+		} catch (e:MyErr) Sys.println("rethrown " + e.code);
+		try {
+			try throw "first" catch (e:String) throw e + "+second";
+		} catch (e:String) Sys.println(e);
+		try throw new NotImplementedException() catch (e:haxe.Exception) Sys.println(name(e) + ": " + e.message);
+		try throw new ArgumentException("arg1", "bad arg") catch (e:ArgumentException) Sys.println(e.argument + " " + e.message);
+		try throw new PosException("pos") catch (e:PosException) Sys.println(e.message + " / " + e.posInfos.methodName + " / " + e);
+		var caught = haxe.Exception.caught("s");
+		Sys.println(name(caught) + " " + caught.message);
+		Sys.println(name(haxe.Exception.thrown("t")) + " " + name(haxe.Exception.thrown(new MyErr(8))) + " " + name(haxe.Exception.thrown(new cs.system.ArgumentException("a"))));
+		var e = new haxe.Exception("plain");
+		Sys.println(Std.string(e) + " " + (e.native == e) + " " + (e.unwrap() == e) + " " + (e.previous == null));
+	}
+}
+===
+[run]
+String str
+Int 42
+Int as Float 7
+Bool true
+Dynamic dyn String
+null true
+null as Exception null true haxe.ValueException
+MyErr 3 my 3 MyErr(my 3)
+as Exception MyErr(my 4) true
+as Dynamic MyErr(my 5) <- root
+wrapped val haxe.ValueException val
+ValueException [ x : 2 ] [ x : 2 ]
+1.5 true
+native as Exception native haxe.Exception System.ArgumentException true
+native as Dynamic System.ArgumentException
+haxe as native my 6
+value as native x haxe.ValueException
+second catch io
+npe System.NullReferenceException
+missing method: Cannot invoke field foo: It does not exist
+inner
+rethrown 7
+first+second
+haxe.exceptions.NotImplementedException: Not implemented
+arg1 bad arg
+pos / main / pos in P.main at P.hx:48
+haxe.ValueException s
+haxe.ValueException MyErr System.ArgumentException
+plain true true true

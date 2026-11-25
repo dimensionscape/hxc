@@ -136,4 +136,11 @@ class Setup {
 		var overlay = [for (p in std) p + dir + "/_std/"];
 		ctx.classPath = nonStd.concat(overlay).concat(std);
 	}
+
+	// With -D dotnet, the root of hxc's own copy of the hxcs runtime (RuntimeSources) is the first class
+	// path, in front of the user's: the runtime's internals are not overridden through the class path.
+	public static function addDotnetRuntime(ctx:Context):Void {
+		var root = hxc.codegen.dotnet.RuntimeSources.ROOT;
+		ctx.classPath = [root].concat([for (s in ctx.classPath) if (s != root) s]);
+	}
 }

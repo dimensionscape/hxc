@@ -1,0 +1,8 @@
+{
+	"name": "warning-options",
+	"oracle": "haxe",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": ["-cp", ".", "$module", "--interp"]
+}

@@ -41,7 +41,7 @@ class Calls {
 		}
 	}
 
-	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position, forceInline = false, forcePos:Null<Position> = null):TExpr {
+	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position, forceInline = false, forcePos:Null<Position> = null, extensionCall = false):TExpr {
 		var inlinePos = forcePos == null ? p : forcePos;
 		if (forceInline) switch (e.expr) {
 			case TField(base, FInstance(c, _, cf)):
@@ -70,7 +70,7 @@ class Calls {
 			case _:
 		}
 		// A call to an inline function expands in place; on any unhandled construct it falls back here.
-		var inlined = Inline.tryInline(ctx, e, params, t, p, forceInline);
+		var inlined = Inline.tryInline(ctx, e, params, t, p, forceInline, true, extensionCall);
 		if (inlined != null) return inlined;
 		return TypeFunctions.mk(TCall(e, params), t, p);
 	}
@@ -798,7 +798,32 @@ class Calls {
 				Typer.checkDisplayOnAccess(ctx, acc, callee.pos);
 			case _:
 		}
-		return buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);
+		var built = buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);
+		return ctx.com.platform == Cs && ctx.com.defines.rawDefined("dotnet") ? liftInlineCs(ctx, built) : built;
+	}
+
+	// For .NET, the Haxe names in an inline C# call's constant text (`untyped __cs__`, `cs.Syntax.code`) become
+	// placeholders (CsLift). The call keeps its shape, so `untyped __cs__` stays an unbound identifier to the
+	// analyzer.
+	static function liftInlineCs(ctx:TyperContext, acc:AccessKind):AccessKind {
+		switch (acc) {
+			case AKExpr(e = {expr: TCall(callee, args)}) if (args.length >= 1):
+				var inlineCs = switch (callee.expr) {
+					case TIdent("__cs__"): true;
+					case TField(_, FStatic(c, cf)): hxc.codegen.dotnet.CsToIl.isSyntaxClass(c) && cf.name == "code";
+					case _: false;
+				}
+				var text = switch (args[0].expr) {
+					case TConst(TString(s)) if (inlineCs): s;
+					case _: return acc;
+				}
+				var l = hxc.codegen.dotnet.CsLift.lift(ctx, text, args.slice(1), args[0].pos);
+				if (l == null) return acc;
+				var code = TypeFunctions.mk(TConst(TString(l.code)), args[0].type, args[0].pos);
+				return AKExpr(TypeFunctions.mk(TCall(callee, [code].concat(l.args)), e.type, e.pos));
+			case _:
+				return acc;
+		}
 	}
 
 	// Only a compound expression must be bound to a temp so the null guard evaluates it once; a
@@ -900,7 +925,8 @@ class Calls {
 	// keep file verbatim.
 	public static function posInfosFile(ctx:TyperContext, pfile:String):String {
 		if (ctx.com.isMacro) return pfile;
-		if (ctx.com.defines.rawDefined("absolute_path")) return StringTools.replace(sys.FileSystem.absolutePath(pfile), "\\", "/");
+		// typecore.ml: Path.get_full_path (GetFullPathName on Windows)
+		if (ctx.com.defines.rawDefined("absolute_path")) return hxc.core.PathKey.fullPath(pfile);
 		// The answer depends on the directory and the class path: kept per file while both stay.
 		var com = ctx.com;
 		if (com.posInfosCwd != hxc.core.Cwd.generation || com.posInfosClassPath != com.classPath || com.posInfosClassPathLength != com.classPath.length) {
@@ -917,6 +943,8 @@ class Calls {
 	}
 
 	static function relativePosInfosFile(ctx:TyperContext, pfile:String):String {
+		// A file of the .NET runtime embedded in hxc, relative to its root.
+		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(pfile)) return pfile.substr(hxc.codegen.dotnet.RuntimeSources.ROOT.length);
 		var fpath = StringTools.replace(sys.FileSystem.absolutePath(pfile), "\\", "/");
 		var fpathLower = fpath.toLowerCase();
 		for (cp in ctx.com.classPath) {
@@ -1147,7 +1175,7 @@ class Calls {
 						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, p, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
-						var call = makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline, forcePos);
+						var call = makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline, forcePos, true);
 						// With transforms off an abstract's XXXImpl.field(this, args) reads back as
 						// this.field(args),
 						// the field typed Dynamic.
@@ -1264,6 +1292,14 @@ class Calls {
 	}
 
 	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false, forcePos:Null<Position> = null, ?elTyped:Array<TExpr>):TExpr {
+		return resolveFieldCall(ctx, fa, el, p, withType, forceInline, forcePos, elTyped).call();
+	}
+
+	// Resolves a call over the field's candidates and answers the one it keeps: the call to make, the
+	// callee's type, the unified arguments and the candidate. A constructor call takes the arguments and
+	// leaves the call alone (`forCtor`); a recovered call has no arguments to hand over, so it never
+	// recovers.
+	public static function resolveFieldCall(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false, forcePos:Null<Position> = null, ?elTyped:Array<TExpr>, forCtor = false):{call:Void->TExpr, tf:Null<T>, args:Null<Array<TExpr>>, cf:Null<TClassField>} {
 		if (elTyped == null) elTyped = [];
 		// An unhinted parameter's type is inferred from the body; force the body before argument
 		// unification so the signature is complete. Only an open signature forces it, which keeps
@@ -1320,8 +1356,8 @@ class Calls {
 		}
 		// A single `overload` candidate is checked before it is tried.
 		if (!multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload)) maybeCheckAccess(candidates[0]);
-		var successes:Array<Overloads.OverloadCandidate<{expr:Void->TExpr, hover:Null<Dynamic>}>> = [];
-		var chosen:Null<Void->TExpr> = null;
+		var successes:Array<Overloads.OverloadCandidate<{expr:Void->TExpr, hover:Null<Dynamic>, props:Array<hxc.filters.DeprecationCheck.PendingPropertyUse>}>> = [];
+		var chosen:Null<{call:Void->TExpr, tf:T, args:Array<TExpr>, cf:TClassField}> = null;
 		// While overload candidates are being tried, a display answer is not raised - it is STORED per
 		// candidate and only the one belonging to the candidate resolution PICKS is committed.
 		// Otherwise a candidate that goes on to fail on its argument count still gets to name the
@@ -1334,21 +1370,17 @@ class Calls {
 			// A call attempt follows the candidate's type: its lazy - and the body behind it - runs as the
 			// candidate is tried.
 			switch (cf.type) { case TLazy(_): TypeFunctions.follow(cf.type); case _: }
-			var diagBefore = ctx.com.diagnostics.length;
+			var specBefore = ctx.com.speculationMark();
 			if (multi) hxc.typing.Typer.hoverFound = outerHover;
 			var oldRaise = ctx.com.raiseTypingErrors;
 			if (multi) ctx.com.raiseTypingErrors = true;
 			inline function restore() {
 				if (multi) {
 					ctx.com.raiseTypingErrors = oldRaise;
-					if (ctx.com.diagnostics.length > diagBefore) {
-						// A failed attempt's WARNINGS stay (a $type inside a lambda reports once per typing
-						// attempt);
-						// only trial ERRORS roll back.
-						var kept = [for (i in diagBefore...ctx.com.diagnostics.length) if (ctx.com.diagnostics[i].severity != hxc.core.Globals.MessageSeverity.Error) ctx.com.diagnostics[i]];
-						ctx.com.diagnostics.resize(diagBefore);
-						for (d in kept) ctx.com.diagnostics.push(d);
-					}
+					// A failed attempt's WARNINGS stay (a $type inside a lambda reports once per typing
+					// attempt); only trial ERRORS roll back, with the property deprecations its arguments
+					// queued, since Haxe never sees those arguments in the final tree.
+					ctx.com.rollbackSpeculation(specBefore, true);
 				}
 			}
 			try {
@@ -1396,10 +1428,13 @@ class Calls {
 				if (multi) ctx.com.raiseTypingErrors = oldRaise;
 				if (!overloadProper) {
 					hxc.typing.Typer.augmentHoverArgDoc(cf, outerHover);
-					chosen = r.call;
+					chosen = {call: r.call, tf: r.tf, args: r.args, cf: cf};
 					break;
 				}
-				successes.push({cf: cf, tf: r.tf, args: r.args, payload: {expr: r.call, hover: hxc.typing.Typer.hoverFound}});
+				// The property deprecations this candidate's arguments queued wait out the resolution: only
+				// the candidate it keeps reaches the final tree.
+				var props = hxc.filters.DeprecationCheck.takePendingProperties(specBefore.properties);
+				successes.push({cf: cf, tf: r.tf, args: r.args, payload: {expr: r.call, hover: hxc.typing.Typer.hoverFound, props: props}});
 			} catch (e:UnifyError) {
 				restore();
 				if (multi) {
@@ -1442,7 +1477,7 @@ class Calls {
 			}
 		}
 		if (multi) hxc.typing.Typer.overloadArgsDepth--;
-		if (chosen != null) return chosen();
+		if (chosen != null) return chosen;
 		// The chosen candidate's stored answer is the one that is committed, augmented with the candidate
 		// it
 		// came from.
@@ -1454,10 +1489,11 @@ class Calls {
 		// (Overloads.reduceCompatible); with several equally good, each is reported and the first is
 		// kept.
 		var reduced = Overloads.reduceCompatible(successes);
+		if (reduced.length > 0) hxc.filters.DeprecationCheck.restorePendingProperties(reduced[0].payload.props);
 		if (reduced.length == 1) {
 			maybeCheckAccess(reduced[0].cf);
 			commit(reduced[0].payload.hover, reduced[0].cf);
-			return reduced[0].payload.expr();
+			return {call: reduced[0].payload.expr, tf: reduced[0].tf, args: reduced[0].args, cf: reduced[0].cf};
 		}
 		if (reduced.length > 1) {
 			ctx.com.addDiagnostic("Ambiguous overload, candidates follow", p);
@@ -1465,7 +1501,7 @@ class Calls {
 			for (s in reduced)
 				ctx.com.addDiagnostic("... " + hxc.core.TPrinting.sType(pctx, s.tf), s.cf.namePos, 1);
 			commit(reduced[0].payload.hover, reduced[0].cf);
-			return reduced[0].payload.expr();
+			return {call: reduced[0].payload.expr, tf: reduced[0].tf, args: reduced[0].args, cf: reduced[0].cf};
 		}
 		// Nothing resolved: the answer a candidate reached is still the only one there is.
 		commit(firstFailHover, firstFailCf);
@@ -1483,7 +1519,7 @@ class Calls {
 		// call to the same field with no arguments, the field typed as (Dynamic...) -> Dynamic over the
 		// arguments written, and the call itself Dynamic at the call's own position. A display file
 		// holding one bad call still answers the request, and the block around it types Dynamic.
-		if (!multi && ctx.com.ignoreError()) return failFun(fa, p);
+		if (!multi && !forCtor && ctx.com.ignoreError()) return {call: function() return failFun(fa, p), tf: null, args: null, cf: null};
 		if (distinct.length == 1) {
 			// The one candidate's error is raised as it came, chain included: a macro's uncaught exception
 			// in
@@ -1518,9 +1554,12 @@ class Calls {
 		if (cf.params.length == 0) return {expr: ce, monos: []};
 		var hostMap = hostParamMap(fa);
 		var monos:TParams = TypeUnification.spawnConstrainedMonos(hostMap, cf.params);
-		// The signature gets the same host mapping as the constraints, so a class parameter appearing in
-		// both stays one type (host params apply first, then field params).
-		return {expr: TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, hostMap(ce.type)), ce.pos), monos: monos};
+		// The field's own params become the monos first and the host mapping applies after, as in Haxe's
+		// unify_field_call: the callee expression is already host-mapped, and mapping it again is wrong
+		// when the host's arguments name the host's own params (`e.map(..)` on a K<A, R->R0> inside K).
+		var t = fa == null ? TypeFunctions.applyParams(cf.params, monos, ce.type)
+			: FieldAccessTools.getMapFunction(fa)(TypeFunctions.applyParams(cf.params, monos, TypeFields.fieldCallType(cf)));
+		return {expr: TypeFunctions.mk(ce.expr, t, ce.pos), monos: monos};
 	}
 
 	static function monomorphizeParams(ctx:TyperContext, cf:TClassField, ce:TExpr, ?fa:FieldAccess):TExpr {

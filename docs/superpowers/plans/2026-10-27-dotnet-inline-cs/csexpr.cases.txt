@@ -1,0 +1,692 @@
+# Candidate tests/dotnet cases for milestone 4b's inline C# (untyped __cs__, cs.Syntax.code) and its first-class
+# alternatives, from D:/_hxc4b/csexpr (NOTES.md there). Every @gencs case's [run] is Haxe 4.3.7 gencs's real
+# output (built for net10.0 with gencs.csproj.in); where hxc is to differ, a [gencs] section gives gencs's.
+# Cases that gencs's C# does not compile give the C# error in a comment and the behaviour hxc should have.
+# [compile] texts marked "proposed" are wording for the plan to settle; their positions are the spans hxc
+# reports for these expressions today. @netlib cases use the existing ValLib fixture (Cells and Grid have
+# two-argument indexers); no new fixture is needed.
+# A bare `throw` in inline C# is IL `rethrow`, which keeps the stack trace: in the catch, after a try/catch
+# nested in it (Roslyn's `rethrow` inside a try within the handler verifies), after an if, in a loop, and in
+# the cs.system.Exception catch the exceptions filter makes of a haxe.Exception catch (haxeui-core's
+# ComponentBase/ValidationManager shape). gencs writes `throw;` for each.
+--- inline-cs-rethrow-bare @gencs
+// A bare `throw` in inline C# (untyped __cs__ or cs.Syntax.code) rethrows the caught exception and keeps its
+// stack trace: directly in the catch, after a try/catch nested in it, after an if, in a loop, and in the catch
+// a haxe.Exception catch becomes. The trace still names the method that threw.
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function hxThrower():Void {
+		throw new haxe.Exception("hx");
+	}
+	static function report(tag:String, e:cs.system.Exception) {
+		Sys.println(tag + ": " + cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+	static function direct() {
+		try thrower() catch (e:cs.system.Exception) untyped __cs__("throw");
+	}
+	static function syntax() {
+		try thrower() catch (e:cs.system.Exception) cs.Syntax.code("throw");
+	}
+	static function afterNestedTry() {
+		try thrower() catch (e:cs.system.Exception) {
+			try throw "inner" catch (e2:Dynamic) {}
+			untyped __cs__("throw");
+		}
+	}
+	static function afterIf(n:Int) {
+		var log = [];
+		try thrower() catch (e:cs.system.Exception) {
+			if (n > 0) log.push("cleanup");
+			untyped __cs__("throw");
+		}
+	}
+	static function inLoop(n:Int) {
+		try thrower() catch (e:cs.system.Exception) {
+			var i = 0;
+			while (i < n) {
+				if (i == 1) untyped __cs__("throw");
+				i++;
+			}
+		}
+	}
+	static function haxeCatch() {
+		try hxThrower() catch (e:haxe.Exception) {
+			Sys.println("caught " + e.message);
+			cs.Syntax.code("throw");
+		}
+	}
+	static function main() {
+		try direct() catch (e:cs.system.Exception) report("direct", e);
+		try syntax() catch (e:cs.system.Exception) report("syntax", e);
+		try afterNestedTry() catch (e:cs.system.Exception) report("after nested try", e);
+		try afterIf(1) catch (e:cs.system.Exception) report("after if", e);
+		try inLoop(3) catch (e:cs.system.Exception) report("in loop", e);
+		try haxeCatch() catch (e:cs.system.Exception) report("haxe.Exception catch", e);
+	}
+}
+===
+[run]
+direct: InvalidOperationException, thrower in trace true
+syntax: InvalidOperationException, thrower in trace true
+after nested try: InvalidOperationException, thrower in trace true
+after if: InvalidOperationException, thrower in trace true
+in loop: InvalidOperationException, thrower in trace true
+caught hx
+haxe.Exception catch: Exception, thrower in trace true
+# hxcs's own first-class rethrow: cs.Lib.rethrow(e) is `throw untyped __rethrow__`, which gencs writes as
+# `throw;`. hxc today: "untyped code is not supported yet" (TexprFlow.throwExpr lowers the TIdent).
+--- inline-cs-rethrow-lib @gencs
+// hxcs's cs.Lib.rethrow(e) is `throw untyped __rethrow__`, which gencs writes as C#'s `throw;`: it rethrows
+// and keeps the stack trace.
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function viaLib() {
+		try thrower() catch (e:cs.system.Exception) {
+			Sys.println("cleanup");
+			cs.Lib.rethrow(e);
+		}
+	}
+	static function main() {
+		try viaLib() catch (e:cs.system.Exception) Sys.println(cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+}
+===
+[run]
+cleanup
+InvalidOperationException, thrower in trace true
+# The exceptions filter's `throw _g` (its own catch variable, VGenerated, when no catch matches) is C#'s
+# `throw;` in gencs and keeps the stack trace. hxc today emits `throw`, so the trace loses the thrower
+# (both lines print false): an existing divergence that 4b's rethrow fixes.
+--- rethrow-unmatched-catch @gencs
+// A catch that does not match rethrows what it caught. The exceptions filter leaves `throw _g` of its own
+// catch variable, which gencs writes as C#'s `throw;`, keeping the stack trace.
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function strThrower():Void {
+		throw "str";
+	}
+	static function report(tag:String, e:cs.system.Exception) {
+		Sys.println(tag + ": " + cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+	static function intCatch() {
+		try strThrower() catch (e:Int) Sys.println("no");
+	}
+	static function stringCatchNative() {
+		try thrower() catch (e:String) Sys.println("no");
+	}
+	static function main() {
+		try intCatch() catch (e:cs.system.Exception) report("Int catch", e);
+		try stringCatchNative() catch (e:cs.system.Exception) report("String catch", e);
+	}
+}
+===
+[run]
+Int catch: ValueException, thrower in trace true
+String catch: InvalidOperationException, thrower in trace true
+# The spec's first-class rethrow: `throw e` of an unchanged catch variable, directly in its own catch, is
+# `rethrow` in hxc. gencs writes `throw e;`, which resets the trace (the [gencs] section). A reassigned e, a
+# `throw e` inside a nested catch (rethrow would throw e2) and the haxe.Exception and Dynamic catches (the
+# filter throws Exception.thrown(e), a call's result) stay plain throws, as in gencs.
+--- rethrow-throw-caught-value @gencs
+// `throw e` of the caught value, unchanged, directly in its catch: hxc emits `rethrow`, which keeps the stack
+// trace (the spec's first-class rethrow); gencs writes `throw e;`, which resets it. Reassigned, thrown from a
+// nested catch, or caught as haxe.Exception or Dynamic (the filter wraps those), it stays a plain throw.
+class MyErr extends haxe.Exception {}
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function hxThrower():Void {
+		throw new MyErr("hx");
+	}
+	static function report(tag:String, e:cs.system.Exception) {
+		Sys.println(tag + ": " + cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+	static function native() {
+		try thrower() catch (e:cs.system.Exception) { Sys.println("cleanup"); throw e; }
+	}
+	static function haxeSubclass() {
+		try hxThrower() catch (e:MyErr) throw e;
+	}
+	static function reassigned() {
+		try thrower() catch (e:cs.system.Exception) { e = new cs.system.Exception("other"); throw e; }
+	}
+	static function fromNestedCatch() {
+		try thrower() catch (e:cs.system.Exception) {
+			try throw "inner" catch (e2:Dynamic) throw e;
+		}
+	}
+	static function haxeException() {
+		try thrower() catch (e:haxe.Exception) throw e;
+	}
+	static function dynamicCatch() {
+		try thrower() catch (e:Dynamic) throw e;
+	}
+	static function main() {
+		try native() catch (e:cs.system.Exception) report("native", e);
+		try haxeSubclass() catch (e:cs.system.Exception) report("haxe subclass", e);
+		try reassigned() catch (e:cs.system.Exception) report("reassigned", e);
+		try fromNestedCatch() catch (e:cs.system.Exception) report("from nested catch", e);
+		try haxeException() catch (e:cs.system.Exception) report("haxe.Exception", e);
+		try dynamicCatch() catch (e:cs.system.Exception) report("Dynamic", e);
+	}
+}
+===
+[run]
+cleanup
+native: InvalidOperationException, thrower in trace true
+haxe subclass: MyErr, thrower in trace true
+reassigned: Exception, thrower in trace false
+from nested catch: InvalidOperationException, thrower in trace false
+haxe.Exception: InvalidOperationException, thrower in trace false
+Dynamic: InvalidOperationException, thrower in trace false
+[gencs]
+cleanup
+native: InvalidOperationException, thrower in trace false
+haxe subclass: MyErr, thrower in trace false
+reassigned: Exception, thrower in trace false
+from nested catch: InvalidOperationException, thrower in trace false
+haxe.Exception: InvalidOperationException, thrower in trace false
+Dynamic: InvalidOperationException, thrower in trace false
+# Placeholder substitution and result conversion as gencs does them (NOTES section 2).
+--- inline-cs-placeholders @gencs
+// cs.Syntax.code and untyped __cs__ placeholders: each {N} is its argument's value as a unit (`(i + 1) * 3`),
+// in the argument's own type (an Int stays an int, so `{0} * 2` is int arithmetic). A placeholder used twice
+// evaluates its argument twice, as gencs's text substitution does. cs.Syntax.code's result is Dynamic,
+// converted to where it goes (Runtime.toInt, toDouble, toString, toBool); untyped __cs__'s takes the type
+// it is used as, with no conversion.
+class P {
+	var fld:Int = 7;
+	static var sfld:String = "s";
+	public function new() {}
+	static function take(i:Int):Int return i * 2;
+	static function side():Int { Sys.println("side"); return 3; }
+	function inst():Void {
+		var a:Int = untyped __cs__("{0} + 1", fld);
+		var b:Int = cs.Syntax.code("{0} + 1", this.fld);
+		Sys.println(a + " " + b);
+		var c:String = cs.Syntax.code("{0}.ToUpper()", sfld);
+		Sys.println(c);
+	}
+	static function main() {
+		var i = 5;
+		var f = 2.5;
+		var s = "hi";
+		var d:Dynamic = 4;
+		var r1:Int = cs.Syntax.code("{0} * 2", i);
+		var r2:Float = cs.Syntax.code("{0} * 2", f);
+		var r3:String = cs.Syntax.code("{0} + \"!\"", s);
+		var r4:Int = cs.Syntax.code("(int){0} + 1", d);
+		var r7:Int = cs.Syntax.code("{0} + {0}", side());
+		var r8 = take(cs.Syntax.code("{0}", 21));
+		var r9:Int = cs.Syntax.code("{0} * 3", i + 1);
+		var r10 = cs.Syntax.code("{0}", "lit");
+		var r11:Int = cs.Syntax.code("{1} - {0}", 1, 10);
+		Sys.println(r1 + "," + r2 + "," + r3 + "," + r4 + "," + r7 + "," + r8 + "," + r9 + "," + r10 + "," + r11);
+		if (cs.Syntax.code("{0} > 3", i)) Sys.println("gt");
+		var u:Int = untyped __cs__("i + 10");
+		Sys.println(u);
+		new P().inst();
+	}
+}
+===
+[run]
+side
+side
+10,5,hi!,5,6,42,18,lit,9
+gt
+15
+8 8
+S
+# Names that resolve the same in gencs's C# and in the Haxe scope.
+--- inline-cs-names @gencs
+// Names in inline C# that gencs's C# resolves as the Haxe code means them: locals, `this`, the class's own
+// fields and statics unqualified, inherited fields, a static through its class's name, a method call, a local
+// read in nested loops (the server app's `cells[row, col]` shape), and a private field of another class
+// reached through a field (haxe-strings' `this.sb.b`).
+class Base {
+	public var inherited:Int = 40;
+	public function new() {}
+}
+class Buf {
+	var sb = new StringBuf();
+	public function new() {}
+	public function add(s:String):Buf { sb.add(s); return this; }
+	public function clear():Buf { untyped __cs__("this.sb.b.Clear()"); return this; }
+	public function insert(pos:Int, item:String):Buf { untyped __cs__("this.sb.b.Insert(pos, item)"); return this; }
+	public function insertChar(pos:Int, ch:Int):Buf { untyped __cs__("this.sb.b.Insert(pos, (System.Char)ch)"); return this; }
+	public function toString() return sb.toString();
+}
+class P extends Base {
+	var fld:Int = 7;
+	static var sfld:Int = 8;
+	static function hello(x:Int) return "hello" + x;
+	function inst():Void {
+		Sys.println(untyped __cs__("fld + sfld + inherited"));
+		Sys.println(untyped __cs__("this.fld + P.sfld"));
+		Sys.println(untyped __cs__("hello(fld)"));
+	}
+	static function hashOf(str:String):Bool return untyped __cs__("str.GetHashCode() == {0}", (str : cs.system.String).GetHashCode());
+	static function main() {
+		var row = 0;
+		var total = 0;
+		var items = [1, 2, 3];
+		for (item in items) {
+			row++;
+			var col = 0;
+			while (col < item) {
+				col++;
+				total += untyped __cs__("row * 10 + col");
+			}
+		}
+		Sys.println(total);
+		new P().inst();
+		var b = new Buf().add("held");
+		b.insert(1, "XY").insertChar(0, 65);
+		Sys.println(b.toString());
+		Sys.println(b.clear().add("z").toString());
+		Sys.println(hashOf("abc"));
+	}
+}
+===
+[run]
+150
+55
+15
+hello7
+AhXYeld
+z
+True
+# hxc resolves a name by the Haxe scope at the inline C#; gencs's C# reads what its renamed output has under
+# that name (each [gencs] line is a silent wrong value).
+--- inline-cs-names-haxe-scope @gencs
+// A name in inline C# means the Haxe local of that name in scope, where gencs's C# can mean something else:
+// a shadowing local that gencs renamed (`sh1`), so the text reads the outer one; a local captured and written
+// by a closure, which gencs boxes in an array, so the text reads the array; and an inline function's
+// argument, which the inliner replaced by its value, so the text reads the caller's local of that name.
+class P {
+	static inline function lengthOf(str:String):Int {
+		return untyped __cs__("str.Length");
+	}
+	static function main() {
+		var sh = 5;
+		{
+			var sh = 6;
+			Sys.println(untyped __cs__("sh"));
+		}
+		var w = 4;
+		var g = () -> w++;
+		g();
+		Sys.println(untyped __cs__("w"));
+		var str = "outer!";
+		Sys.println(lengthOf("abc"));
+	}
+}
+===
+[run]
+6
+5
+3
+[gencs]
+5
+System.Int32[]
+6
+# Not @gencs: gencs's C# does not compile (CS0103 for `prop`, `col`, `i` and `outer`, NOTES section 2.3). The
+# [run] is what hxc should print, resolving each name in the Haxe scope where the typer met the inline C#.
+--- inline-cs-names-gencs-cannot-resolve
+// Names gencs's C# cannot resolve, which hxc resolves in the Haxe scope: a local declared in a loop the typer
+// unrolls (each copy's local is renamed, `col1`, `col2`), a loop variable the unrolling replaces by its
+// values, an outer local only the C# text of a closure names (so the closure does not capture it), and a
+// Haxe property, which has no C# member of its name. gencs: CS0103.
+class P {
+	var _p = 9;
+	var prop(get, never):Int;
+	function get_prop() return _p;
+	public function new() {}
+	function readProp():Int return untyped __cs__("prop");
+	static function main() {
+		var total = 0;
+		for (r in 0...3) {
+			var col = r * 10;
+			total += untyped __cs__("col");
+		}
+		Sys.println(total);
+		for (i in 0...2) Sys.println(untyped __cs__("i"));
+		var outer = 11;
+		var h = () -> Sys.println(untyped __cs__("outer"));
+		h();
+		Sys.println(new P().readProp());
+	}
+}
+===
+[run]
+30
+0
+1
+11
+9
+# The desktop app's and haxeui's forms beyond the spec's first list: `is`, keyword/array types, chained
+# casts, comparisons and &&, int.MinValue, `new`, enum members, a property chain, a call on a cast, a call
+# on a struct a method returns (needs a temporary and ldloca), and ZLibStream (a type no --net-std of the
+# server app defines; hxc finds it through NetRefs, from the reference pack).
+--- inline-cs-forms @gencs
+// The other inline C# forms the desktop app and its libraries use: type tests (`is` with a dotted, keyword
+// and array type), casts to keyword and array types and chained casts, comparisons and && on a long against
+// int.MinValue/int.MaxValue with a placeholder used twice, `new` of a .NET class, enum members as arguments,
+// a static property chain, a cast receiver with a chained call, and a call on a struct a method returns.
+import haxe.io.Bytes;
+class P {
+	static function toHaxe(v:Dynamic):Dynamic {
+		if (cs.Syntax.code("{0} is System.DBNull", v))
+			return null;
+		if (cs.Syntax.code("{0} is long", v)) {
+			var l:cs.StdTypes.Int64 = cs.Syntax.code("(long){0}", v);
+			if (cs.Syntax.code("({0} >= int.MinValue && {0} <= int.MaxValue)", l))
+				return (cs.Syntax.code("(int){0}", l) : Int);
+			return (cs.Syntax.code("(double){0}", l) : Float);
+		}
+		if (cs.Syntax.code("{0} is byte[]", v))
+			return Bytes.ofData(cs.Syntax.code("(byte[]){0}", v));
+		return v;
+	}
+	static var client:Dynamic = null;
+	static function main() {
+		var boxedLong:Dynamic = cs.system.Convert.ToInt64(5);
+		var bigLong:Dynamic = cs.system.Convert.ToInt64(5000000000.0);
+		var bytes:Dynamic = Bytes.ofString("ab").getData();
+		Sys.println([toHaxe(cs.system.DBNull.Value), toHaxe(boxedLong), toHaxe(bigLong), (toHaxe(bytes) : Bytes).length, toHaxe("s")]);
+		var id:Int = cs.Syntax.code("(int)(long){0}", boxedLong);
+		Sys.println(id);
+		Sys.println(cs.Syntax.code("global::System.Globalization.CultureInfo.InvariantCulture.Name") == "");
+		var s = "Hello";
+		Sys.println(cs.Syntax.code("{0}.StartsWith({1}, global::System.StringComparison.Ordinal)", s, "He"));
+		Sys.println(cs.Syntax.code("{0}.EndsWith({1}, global::System.StringComparison.Ordinal)", "abc\u00AD", "abc"));
+		client = cs.Syntax.code("new System.Text.StringBuilder()");
+		var chained:String = cs.Syntax.code("((System.Text.StringBuilder){0}).Append({1}).ToString()", client, "chain");
+		Sys.println(chained);
+		var list = new cs.system.collections.generic.List_1<String>();
+		list.Add("done");
+		var moved:Bool = cs.Syntax.code("((System.Collections.Generic.List<string>){0}).GetEnumerator().MoveNext()", list);
+		Sys.println(moved);
+		var ms = new cs.system.io.MemoryStream();
+		var z:cs.system.io.Stream = untyped __cs__("new global::System.IO.Compression.ZLibStream({0}, global::System.IO.Compression.CompressionLevel.Optimal, true)", ms);
+		z.Write(Bytes.ofString("aaaaaaaaaa").getData(), 0, 10);
+		z.Dispose();
+		Sys.println(ms.ToArray().Length > 0);
+	}
+}
+===
+[run]
+[null,5,5000000000,2,s]
+5
+True
+True
+False
+chain
+True
+True
+# A two-argument .NET indexer in inline C# is get_Item(int, int); the explicit get_Item/set_Item calls are
+# the first-class form (Haxe 4.3.7 gives a multi-argument indexer no array access).
+--- inline-cs-indexer-multi-arg @gencs @netlib
+// A multi-argument .NET indexer in inline C# (`cells[row, col]` with locals, and through placeholders), and
+// the explicit get_Item/set_Item calls that already compile under both compilers.
+class P {
+	static function main() {
+		var cells = new vallib.Cells();
+		var row = 3, col = 4;
+		var a:Int = untyped __cs__("cells[row, col]");
+		var b:Int = cs.Syntax.code("{0}[{1}, {2}]", cells, 1, 2);
+		Sys.println(a + " " + b + " " + cells.get_Item(5, 6));
+		cells.set_Item(7, 8, 9);
+		var g = new vallib.Grid();
+		var gi:Int = untyped __cs__("g[2, 3]");
+		Sys.println(gi + " " + g.get_Item(2, 3) + " " + g.get_Item(1));
+	}
+}
+===
+[run]
+304 102 506
+set 7,8=9
+23 23 b
+# `(decimal){0}` folds a constant as C# does (0 -> Decimal.Zero, 7 -> Decimal(int32), 2.5 -> the five-part
+# constructor with scale 1) and calls op_Implicit(int32)/op_Explicit(float64) on a variable; `1.0m` keeps
+# its scale. new Decimal(x) is the double constructor in both compilers (it already passes in hxc).
+--- inline-cs-decimal @gencs
+// `(decimal){0}` in inline C# (the server app's form) and decimal literals, against the Haxe forms that
+// compile under both compilers: `new Decimal(x)` takes the double constructor (Haxe's overload choice), so a
+// Float is rounded to 15 significant digits and 1.0 has scale 0, where the literal 1.0m has scale 1.
+import cs.system.Decimal;
+@:nativeGen
+class Model {
+	@:property
+	public var value:Decimal = untyped __cs__("(decimal){0}", 0);
+	public function new() {}
+}
+class P {
+	static function scale(d:Decimal):Int return (Decimal.GetBits(d)[3] >> 16) & 0xFF;
+	static function show(tag:String, d:Decimal) Sys.println(tag + " " + d + " scale " + scale(d));
+	static function main() {
+		show("model", new Model().value);
+		var i = 7, f = 2.5;
+		show("(decimal)0", untyped __cs__("(decimal){0}", 0));
+		show("(decimal)2.5", untyped __cs__("(decimal){0}", 2.5));
+		show("(decimal)int", untyped __cs__("(decimal){0}", i));
+		show("(decimal)double", untyped __cs__("(decimal){0}", f));
+		show("1.0m", untyped __cs__("1.0m"));
+		show("123456789.123456789m", untyped __cs__("123456789.123456789m"));
+		show("new Decimal(0)", new Decimal(0));
+		show("new Decimal(1.0)", new Decimal(1.0));
+		show("new Decimal(123456789.123456789)", new Decimal(123456789.123456789));
+		show("new Decimal(10, 0, 0, false, 1)", new Decimal(10, 0, 0, false, 1));
+	}
+}
+===
+[run]
+model 0 scale 0
+(decimal)0 0 scale 0
+(decimal)2.5 2.5 scale 1
+(decimal)int 7 scale 0
+(decimal)double 2.5 scale 1
+1.0m 1.0 scale 1
+123456789.123456789m 123456789.123456789 scale 9
+new Decimal(0) 0 scale 0
+new Decimal(1.0) 1 scale 0
+new Decimal(123456789.123456789) 123456789.123457 scale 6
+new Decimal(10, 0, 0, false, 1) 1.0 scale 1
+# The server app's four reachable patterns, as written there.
+--- inline-cs-serverapp-patterns @gencs @netlib
+// The server app's inline C# shapes, unchanged: a bare `throw` after cleanup in a catch of cs.system.Exception,
+// `cells[row, col]` on locals in nested loops (ValLib.Cells stands in for EPPlus's ExcelRange), `(decimal){0}`
+// as a @:property var's initializer, and `new` of a .NET class with an enum member, as Zlib's stream does.
+import cs.system.Decimal;
+@:nativeGen
+class CostBenefit {
+	@:property
+	public var value:Decimal = untyped __cs__("(decimal){0}", 0);
+	public function new() {}
+}
+class Transaction {
+	public function new() {}
+	public function release() Sys.println("released");
+}
+class P {
+	static function work(t:Transaction):Void {
+		throw new cs.system.InvalidOperationException("failed");
+	}
+	static function handle() {
+		var transaction:Transaction = null;
+		try {
+			transaction = new Transaction();
+			work(transaction);
+		} catch (e:cs.system.Exception) {
+			if (transaction != null) transaction.release();
+			untyped __cs__("throw"); // Throw the original exception to avoid lost stack trace
+		}
+	}
+	static function sheet(rows:Array<Array<String>>):Int {
+		var cells = new vallib.Cells();
+		var sum = 0;
+		var row = 0;
+		for (r in rows) {
+			row++;
+			var col = 0;
+			for (c in r) {
+				col++;
+				var cell:Int = untyped __cs__('cells[row, col]');
+				sum += cell;
+			}
+		}
+		return sum;
+	}
+	static function main() {
+		try handle() catch (e:cs.system.Exception) Sys.println(e.Message + ", work in trace " + (e.StackTrace.indexOf("work") >= 0));
+		Sys.println(sheet([["a", "b"], ["c"]]));
+		Sys.println(new CostBenefit().value);
+		var ms = new cs.system.io.MemoryStream();
+		var z:cs.system.io.Stream = untyped __cs__("new global::System.IO.Compression.ZLibStream({0}, global::System.IO.Compression.CompressionLevel.Optimal, true)", ms);
+		var data = haxe.io.Bytes.ofString("aaaaaaaaaaaaaaaaaaaa").getData();
+		z.Write(data, 0, data.Length);
+		z.Dispose();
+		var out = ms.ToArray();
+		Sys.println(out.Length + " bytes, header " + StringTools.hex(out[0], 2));
+	}
+}
+===
+[run]
+released
+failed, work in trace true
+404
+0
+11 bytes, header 78
+# Constructs outside the subset. gencs's C# compiles and runs every one of these but the last (CS1061 for
+# `{0}?.Length` on an object; c/outside in the research folder shows their gencs output). hxc refuses each,
+# naming the replacement (proposed texts).
+--- inline-cs-outside-subset-is-an-error @netlib
+class P {
+	static function main() {
+		var cells = new vallib.Cells();
+		var i = 3;
+		var o:Dynamic = "str";
+		untyped __cs__("{0}[1, 2] = {1}", cells, 5);
+		Sys.println(cs.Syntax.code("new System.Func<int, int>(x => x + 1)(1)"));
+		Sys.println(cs.Syntax.code("typeof(string).Name"));
+		Sys.println(cs.Syntax.code("{0} as string", o));
+		Sys.println(cs.Syntax.code("{0} > 2 ? \"big\" : \"small\"", i));
+		untyped __cs__("System.Threading.Interlocked.Increment(ref i)");
+		untyped __cs__("int t = 1; t++");
+		untyped __cs__("throw new System.Exception(\"x\")");
+		Sys.println(cs.Syntax.code("System.Array.Empty<int>().Length"));
+		Sys.println(cs.Syntax.code("new int[]{1, 2, 3}.Length"));
+		Sys.println(cs.Syntax.code("\"<{0}>\"", 42));
+		Sys.println(cs.Syntax.code("default(int)"));
+		Sys.println(cs.Syntax.code("{0}?.Length", o));
+	}
+}
+===
+[compile]
+P.hx:6: characters 11-46 : dotnet: assignment is not part of the inline C# subset; write it in Haxe (a .NET indexer's setter is x.set_Item(a, b, value))
+P.hx:7: characters 15-73 : dotnet: a lambda is not part of the inline C# subset; write a Haxe function, which converts to the .NET delegate type
+P.hx:8: characters 15-52 : dotnet: typeof is not part of the inline C# subset; use cs.Lib.toNativeType(T)
+P.hx:9: characters 15-49 : dotnet: `as` is not part of the inline C# subset; use Std.downcast(e, T)
+P.hx:10: characters 15-65 : dotnet: ?: is not part of the inline C# subset; use Haxe's if expression
+P.hx:11: characters 11-66 : dotnet: ref and out arguments are not part of the inline C# subset; call the method from Haxe with a cs.Ref<T> or cs.Out<T> argument
+P.hx:12: characters 11-35 : dotnet: inline C# must be one expression or a bare `throw`; write statements in Haxe
+P.hx:13: characters 11-54 : dotnet: `throw` with a value is not part of the inline C# subset; use Haxe's throw (a bare `throw` or cs.Lib.rethrow(e) rethrows)
+P.hx:14: characters 15-65 : dotnet: explicit type arguments are not part of the inline C# subset; call the method from Haxe
+P.hx:15: characters 15-58 : dotnet: array creation is not part of the inline C# subset; use new cs.NativeArray<T>(n)
+P.hx:16: characters 15-46 : dotnet: a placeholder inside a C# string literal is not part of the inline C# subset; build the string in Haxe
+P.hx:17: characters 15-45 : dotnet: default(T) is not part of the inline C# subset; write it in Haxe
+P.hx:18: characters 15-47 : dotnet: ?. is not part of the inline C# subset; write it in Haxe
+# gencs: CS0156 at each of the three ("A throw statement with no arguments is not allowed outside of a catch
+# clause"); a local function inside a catch is its own method (closure class), outside the catch. Proposed
+# texts; the order is the one hxc reports in today (the local function's body last).
+--- inline-cs-bare-throw-outside-catch-is-an-error
+class P {
+	static function thrower():Void throw new cs.system.Exception("x");
+	static function outside() {
+		untyped __cs__("throw");
+	}
+	static function inLocalFunction() {
+		try thrower() catch (e:cs.system.Exception) {
+			function rethrow():Void { cs.Syntax.code("throw"); }
+			rethrow();
+		}
+	}
+	static function libOutside(e:cs.system.Exception) {
+		cs.Lib.rethrow(e);
+	}
+	static function main() {
+		outside();
+		inLocalFunction();
+		libOutside(null);
+	}
+}
+===
+[compile]
+P.hx:4: characters 11-26 : dotnet: a bare `throw` in inline C# must be inside a catch (C# error CS0156)
+P.hx:13: characters 3-20 : dotnet: cs.Lib.rethrow must be inside a catch (C# error CS0156)
+P.hx:8: characters 30-53 : dotnet: a bare `throw` in inline C# inside a local function is outside the catch around the function (C# error CS0156); rethrow in the catch itself
+# gencs: CS0103 for `missing`, CS0117 for P.onlyFromCs (DCE removed it: only the C# text names it), CS0234
+# for System.NoSuchType. Proposed texts; with the typer lifting unqualified members (NOTES section 6), only a
+# qualified name can meet a member DCE removed.
+--- inline-cs-unknown-name-is-an-error + -dce full
+class P {
+	static function onlyFromCs():Int return 99;
+	static function main() {
+		Sys.println(untyped __cs__("missing + 1"));
+		Sys.println(untyped __cs__("P.onlyFromCs()"));
+		Sys.println(untyped __cs__("System.NoSuchType.Value"));
+	}
+}
+===
+[compile]
+P.hx:4: characters 23-44 : dotnet: the inline C# name missing is no local, member or type here (C# error CS0103)
+P.hx:5: characters 23-47 : dotnet: the inline C# member P.onlyFromCs was removed by DCE, as only C# text uses it; add @:keep to it
+P.hx:6: characters 23-56 : dotnet: the inline C# name System.NoSuchType is no local, member or type here (C# error CS0234)
+# untyped __cs__ takes the type it is used as with no conversion, so C#'s implicit conversions apply.
+# gencs: CS0266 (long to int), CS0029 (int to string), CS0029 (void to int). Proposed texts.
+--- inline-cs-untyped-result-conversion-is-an-error
+class P {
+	static function main() {
+		var l:cs.StdTypes.Int64 = 3;
+		var n:Int = untyped __cs__("{0}", l);
+		var s:String = untyped __cs__("1 + 2");
+		var v:Int = untyped __cs__("System.Console.WriteLine()");
+		Sys.println(n + s + v);
+	}
+}
+===
+[compile]
+P.hx:4: characters 23-39 : dotnet: the inline C# expression is a long, which does not convert to Int implicitly (C# error CS0266); add a cast in the C# text
+P.hx:5: characters 26-41 : dotnet: the inline C# expression is an int, which does not convert to String implicitly (C# error CS0029)
+P.hx:6: characters 23-59 : dotnet: the inline C# expression has no value (C# error CS0029)
+# gencs's own errors, which hxc repeats word for word (Haxe raises them when gencs generates the class, so
+# only for code that survives DCE). gencs's positions: the `s` argument, and the {1} inside the string.
+--- inline-cs-code-not-constant-is-an-error
+class P {
+	static function main() {
+		var s = "x";
+		var a:Dynamic = cs.Syntax.code(s, 1);
+		Sys.println(a);
+	}
+}
+===
+[compile]
+P.hx:4: characters 34-35 : The `code` argument for cs.Syntax.code must be a string constant
+--- inline-cs-placeholder-out-of-bounds-is-an-error
+class P {
+	static function main() {
+		var s = "x";
+		var b:Dynamic = cs.Syntax.code("{0} + {1}", 1);
+		Sys.println(b);
+	}
+}
+===
+[compile]
+P.hx:4: characters 40-45 : Out-of-bounds special parameter: 1

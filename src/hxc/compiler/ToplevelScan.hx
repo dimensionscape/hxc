@@ -105,7 +105,7 @@ class ToplevelScan {
 	public static function explore(ctx:Context):Void {
 		var checked = new haxe.ds.StringMap<Bool>();
 		for (cp in ctx.classPath) {
-			if (cp == "") continue;
+			if (cp == "" || hxc.codegen.dotnet.RuntimeSources.isVirtual(cp)) continue;
 			exploreDir(ctx, StringTools.endsWith(cp, "/") || StringTools.endsWith(cp, "\\") ? cp : cp + "/", [], checked);
 		}
 	}

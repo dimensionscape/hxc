@@ -1,0 +1,987 @@
+# The files Haxe writes for --hl out/main.c, as one line each: relative path, length and MD5 (HlcDigest).
+--- empty-main
+class P { static function main() {} }
+===
+
+--- trace-hello
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
+
+--- hlc-long-strings
+// String constants of 63, 64 and 200 bytes: USTR below string_data_limit, string$<digest> with its UTF-16
+// bytes and `// ...` comment from 64. The 200-byte one has a quote, a backslash and a tab (String.escaped in
+// the comment), an e-acute at bytes 59-60 (the comment's 60-byte cut splits it), a euro sign and an emoji
+// (a UTF-16 surrogate pair).
+class P {
+	static function main() {
+		var a = ["012345678901234567890123456789012345678901234567890123456789abc", "012345678901234567890123456789012345678901234567890123456789abcd",
+			"He said \"hi\" \\ then a tab\tand more, 0123456789abcdefghijkxxé euro € grin 😀 defghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqr"];
+		for (s in a) Sys.println(s.length + " " + s);
+	}
+}
+===
+
+--- hlc-bytes + --macro P.addResources()
+// hl.Bytes constants (code.bytes, which only resources reach): 10 bytes inline in globals.c, and 1200 bytes
+// in hl/bytes_<md5>.h with its #include.
+class P {
+	#if macro
+	static function addResources() {
+		haxe.macro.Context.addResource("small", haxe.io.Bytes.ofString("123456789"));
+		var big = haxe.io.Bytes.alloc(1200);
+		for (i in 0...big.length) big.set(i, (i * 7) & 255);
+		haxe.macro.Context.addResource("big", big);
+	}
+	#end
+
+	static function main() {
+		Sys.println(haxe.Resource.getString("small"));
+		Sys.println(haxe.Resource.getBytes("big").length);
+	}
+}
+===
+
+--- hlc-global-names
+// String globals: "a b", "a_b" and "a-b" share the identifier a_b, so each gets short_digest; "_" and a
+// 40-character constant get short_digest too.
+class P {
+	static function main() {
+		var a = ["a b", "a_b", "a-b", "_", "0123456789012345678901234567890123456789"];
+		Sys.println(a.join("|"));
+	}
+}
+===
+
+--- hlc-type-names
+// Type names (make_types_idents): repeated Null<Int> arguments, a recursive anonymous type, nested anonymous
+// types with the same field names, a closure context (t$ctx_) used by one module, and the abstract probe:
+// one hl.Abstract used three times through a typedef (one name string in genhl), three separately written
+// hints (three strings), and the two mixed.
+typedef R = {next:Null<R>, v:Int};
+typedef X = hl.Abstract<"hlc_x">;
+
+class P {
+	static function nulls(a:Null<Int>, b:Null<Int>):Int {
+		return a == null ? (b == null ? 0 : b) : a;
+	}
+
+	static function chain(r:R):Int {
+		return r.next == null ? r.v : r.v + chain(r.next);
+	}
+
+	static function nested(o:{a:{a:Int}}):Int {
+		return o.a.a;
+	}
+
+	static function direct(a:hl.Abstract<"hlc_d">, b:hl.Abstract<"hlc_d">):hl.Abstract<"hlc_d"> {
+		return a;
+	}
+
+	static function viaTypedef(a:X, b:X):X {
+		return b;
+	}
+
+	static function mixedDecl(a:X, b:hl.Abstract<"hlc_x">):Void {}
+
+	static function main() {
+		var x = Std.random(5), y = Std.random(3) * 0.5;
+		var f = () -> x + y;
+		Sys.println(nulls(x, null) + chain({next: {next: null, v: 2}, v: 1}) + nested({a: {a: 3}}) + f());
+		direct(null, null);
+		viaTypedef(null, null);
+		mixedDecl(null, null);
+	}
+}
+===
+
+--- hlc-ctx-modules
+// One closure context type, the tuple (Int, Float), taken by closures of two modules (P and Q): hl2c puts it
+// in its own module, hl/ctx/<digest>.
+class Q {
+	public static function adder(a:Int, b:Float):Void->Float {
+		return () -> a + b;
+	}
+}
+
+class P {
+	static function main() {
+		var x = Std.random(5), y = Std.random(3) * 0.5;
+		var f = () -> x * y;
+		Sys.println(f() + Q.adder(x, y)());
+	}
+}
+===
+
+--- hlc-floats
+// OFloat text: %.19g as msvcrt prints it, and hl2c's special cases (-0., inf., -inf.).
+class P {
+	static function main() {
+		var a:Array<Float> = [0.1, 1e300, 5e-324, -0.0, 1e999, -1e999, 1.0, 100.0, 1e21, 1e-7, 1e18, 1e19, 0.3, 2.0 / 3.0, 1e-5, 0.0001, 2.5e-310,
+			1.7976931348623157e308, 3.0e15, 123456789012345678901234.0, 100000000000000.125, 100000000000000.375, 1000000000000000.75,
+			1152921504606846976.0, 0.99999999999999999, 0.9999999999999999, 2.2250738585072009e-308];
+		Sys.println(a);
+	}
+}
+===
+
+--- hlc-dynamic-fields
+// Dynamic field reads, writes and calls on Dynamic and on anonymous objects: hl/hashes.c, and the hash
+// collision loop (fcbzlgd and fhnmljx have the same hl_hash).
+class P {
+	static function make():Dynamic {
+		return {fcbzlgd: 1, fhnmljx: 2, call: (s:String) -> s + "!"};
+	}
+
+	static function main() {
+		var d = make();
+		d.fcbzlgd = d.fhnmljx + 1;
+		d.extra = 3.5;
+		Sys.println(d.fcbzlgd + d.extra);
+		Sys.println(d.call("hey"));
+		var o:{fhnmljx:Int, fcbzlgd:Int, call:String->String} = d;
+		o.fhnmljx = o.fcbzlgd * 2;
+		Sys.println(o.call("o") + o.fhnmljx);
+		var od:Dynamic = {name: "x", f: (i:Int) -> i * 2};
+		od.name = "y";
+		Sys.println(od.f(od.name.length));
+	}
+}
+===
+
+--- hlc-locals
+// One function whose locals have 37 C types (each class is its own), more than the 32 that the
+// local-declaration table (Hashtbl.create 0: 16 buckets, resized past twice that) holds before it resizes.
+class C {
+	public function new() {}
+}
+
+class K0 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K1 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K2 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K3 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K4 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K5 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K6 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K7 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K8 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K9 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K10 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K11 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K12 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K13 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K14 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class K15 {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+enum E {
+	A;
+	B(i:Int);
+}
+
+class P {
+	static function main() {
+		var i = Std.random(3);
+		var f = i * 1.5;
+		var s:Single = f;
+		var b = i > 1;
+		var u8:hl.UI8 = i;
+		var u16:hl.UI16 = i;
+		var l:hl.I64 = i;
+		var by = new hl.Bytes(4);
+		var dy:Dynamic = i;
+		var str = "s" + i;
+		var e = i > 0 ? B(i) : A;
+		var na = new hl.NativeArray<Int>(2);
+		var fn = (x:Int) -> x + i;
+		var c = i > 1 ? new C() : null;
+		var n:Null<Int> = i > 0 ? i : null;
+		var arr = [i];
+		var t = hl.Type.getDynamic(dy);
+		var m = new Map<String, Int>();
+		var k0 = new K0(i + 0);
+		var k1 = new K1(i + 1);
+		var k2 = new K2(i + 2);
+		var k3 = new K3(i + 3);
+		var k4 = new K4(i + 4);
+		var k5 = new K5(i + 5);
+		var k6 = new K6(i + 6);
+		var k7 = new K7(i + 7);
+		var k8 = new K8(i + 8);
+		var k9 = new K9(i + 9);
+		var k10 = new K10(i + 10);
+		var k11 = new K11(i + 11);
+		var k12 = new K12(i + 12);
+		var k13 = new K13(i + 13);
+		var k14 = new K14(i + 14);
+		var k15 = new K15(i + 15);
+		Sys.println([f, s, b, u8, u16, l.toInt(), by != null, dy, str, e, na.length, fn(1), c != null, n, arr, t != null, m]);
+		Sys.println(k0.v + k1.v + k2.v + k3.v + k4.v + k5.v + k6.v + k7.v + k8.v + k9.v + k10.v + k11.v + k12.v + k13.v + k14.v + k15.v);
+	}
+}
+===
+
+--- hlc-source-header + -D "source-header=custom header"
+// trace-hello with a source header of its own: the first line of every file.
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
+
+--- hlc-long-path @ hlc.deep.AVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleName
+// A class whose module name is longer than 128 characters: hl2c names its folder entry by the name's MD5.
+package hlc.deep;
+
+class AVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleNameAVeryLongModuleName {
+	static function main() {
+		trace("long");
+	}
+}
+===
+
+--- hlc-hl-ver + -D hl-ver=1.13.0
+// trace-hello with hl-ver given.
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
+
+--- hlc-ops
+// generate_function arms the HL cases don't reach. Each operation is a function of its own, so the analyzer
+// can't fold it into main: integer OSDiv (I32 and I64), OUMod, OUShr (I32 and I64), OXor, OToUFloat, fmod and
+// fmodf, OJNotLt and OJNotGte, HNull CNeq, dynamic CGt and CGte, virtual against virtual and against an
+// object (both ways round), OVirtualClosure on an object, virtual field reads and ODynGet of F64, F32 and
+// I64 (through a type parameter constrained to an anonymous type).
+typedef V = {x:Int};
+
+class C {
+	public var x:Int;
+
+	public function new(x:Int) {
+		this.x = x;
+	}
+
+	public function m():Int {
+		return x;
+	}
+}
+
+class D extends C {
+	override public function m():Int {
+		return x + 1;
+	}
+}
+
+class P {
+	static function sdiv(a:Int, b:Int):Int return Std.int(a / b);
+	static function umod(a:UInt, b:UInt):UInt return a % b;
+	static function ushr(a:Int, b:Int):Int return a >>> b;
+	static function xor(a:Int, b:Int):Int return a ^ b;
+	static function ufloat(a:UInt):Float return a;
+	static function fmod(a:Float, b:Float):Float return a % b;
+	static function fmodf(a:Single, b:Single):Single return a % b;
+	static function ldiv(a:hl.I64, b:hl.I64):hl.I64 return a / b;
+	static function lushr(a:hl.I64, b:Int):hl.I64 return a >>> b;
+	static function notLt(a:Float, b:Float):Int {
+		if (a < b) return 1;
+		return 0;
+	}
+	static function notGte(a:Float, b:Float):Int {
+		if (a >= b) return 1;
+		return 0;
+	}
+	static function nullNe(a:Null<Int>, b:Null<Int>):Bool return a != b;
+	static function dynGt(a:Dynamic, b:Dynamic):Bool return a > b;
+	static function dynGte(a:Dynamic, b:Dynamic):Int {
+		if (a > b) return 1;
+		return 0;
+	}
+	static function virtEq(a:V, b:V):Bool return a == b;
+	static function virtNe(a:V, b:V):Bool return a != b;
+	static function virtOther(a:V, b:{x:Int, y:Int}):Bool return a == b;
+	static function virtObjEq(a:V, b:C):Bool return a == b;
+	static function virtObjNe(a:V, b:C):Bool return a != b;
+	static function objVirtEq(a:C, b:V):Bool return a == b;
+	static function objVirtNe(a:C, b:V):Bool return a != b;
+	static function method(c:C):Void->Int return c.m;
+	static function virtFields(o:{f:Float, s:Single, l:hl.I64}):Float return o.f + o.s + o.l.toInt();
+	static function getF<T:{p:Float}>(t:T):Float return t.p;
+	static function getS<T:{p:Single}>(t:T):Single return t.p;
+	static function getL<T:{p:hl.I64}>(t:T):hl.I64 return t.p;
+
+	static function main() {
+		var a = Std.random(100) + 1, b = Std.random(7) + 1;
+		var fa = a * 0.5, fb = b * 0.25;
+		var la:hl.I64 = a, lb:hl.I64 = b;
+		var sa:Single = fa, sb:Single = fb;
+		var c = a > 50 ? new C(a) : new D(b);
+		var v:V = {x: a};
+		Sys.println([sdiv(a, b), umod(a, b), ushr(a, b), xor(a, b), ldiv(la, lb).toInt(), lushr(la, b).toInt(), notLt(fa, fb), notGte(fa, fb), dynGte(fa, fb)]);
+		Sys.println([ufloat(a), fmod(fa, fb), fmodf(sa, sb), virtFields({f: fa, s: sa, l: la}), getF({p: fa}), getS({p: sa}), getL({p: la}).toInt()]);
+		Sys.println([nullNe(a, null), dynGt(fa, fb), virtEq(v, {x: b}), virtNe(v, v), virtOther(v, {x: a, y: b}), virtObjEq(v, c), virtObjNe(v, c), objVirtEq(c, v), objVirtNe(c, v)]);
+		Sys.println(method(c)());
+	}
+}
+===
+
+--- hlc-virtual-index
+// Two function types whose first arguments are separately written anonymous types with the same fields:
+// genhl gives each its own virtual proto, so make_types_idents' PMap compares the two protos field by
+// field, finds the vfields equal and goes on to vindex, the (name -> index) PMap built from them.
+class P {
+	static function f(o:{x:Int}):Int {
+		return o.x;
+	}
+
+	static function g(o:{x:Int}):Float {
+		return o.x * 0.5;
+	}
+
+	static function main() {
+		Sys.println(f({x: Std.random(5)}) + g({x: Std.random(7)}));
+	}
+}
+===
+
+--- hlc-shared-interface-names
+// A field name string that two virtuals share. genhl names a vfield by cf_name itself, and an interface's
+// virtual takes its parents' fields as the very class fields: IB's virtual holds IA's f, and so does IA's own
+// virtual, g's argument. Marshal writes the second "f" as a back-reference, which changes IB's t$vrt_ digest.
+// IC extends IA twice over (through IB and directly), so its virtual holds f twice.
+interface IA {
+	function f():Int;
+}
+
+interface IB extends IA {
+	function g(a:IA):Int;
+}
+
+interface IC extends IB extends IA {
+	function h():Int;
+}
+
+class Impl implements IC {
+	public function new() {}
+
+	public function f():Int
+		return 1;
+
+	public function g(a:IA):Int
+		return a.f() + 1;
+
+	public function h():Int
+		return 3;
+}
+
+class P {
+	static function main() {
+		var i = new Impl();
+		var b:IB = i;
+		var c:IC = i;
+		Sys.println(b.g(i) + c.h());
+	}
+}
+===
+
+--- hlc-shared-typedef-names
+// Field name strings shared through cf copies: Box<Int> and Box<String> are apply_params copies of Box's
+// anonymous type ({cf with cf_type}), so their two virtuals share the one "value" string, and `two`'s
+// t$fun_ digest has a back-reference. Ext's virtual takes Base's x as the same field (structure extension),
+// and so does the intersection Base & {y:String}.
+typedef Box<T> = {value:T};
+typedef Base = {x:Int};
+typedef Ext = {> Base, y:Int};
+
+class P {
+	static function two(a:Box<Int>, b:Box<String>):Int {
+		return a.value + b.value.length;
+	}
+
+	static function ext(a:Base, b:Ext):Int {
+		return a.x + b.x + b.y;
+	}
+
+	static function inter(a:Base, b:Base & {y:String}):Int {
+		return a.x + b.x + b.y.length;
+	}
+
+	static function main() {
+		var n = Std.random(5);
+		Sys.println(two({value: n}, {value: "ab"}) + ext({x: n}, {x: 1, y: 2}) + inter({x: n}, {x: 1, y: "c"}));
+	}
+}
+===
+
+--- hlc-separate-field-names
+// The control for the shared-name cases: two separately written anonymous types {value:Int} and
+// {value:String} have their own "value" strings, so `two`'s digest has no back-reference.
+class P {
+	static function two(a:{value:Int}, b:{value:String}):Int {
+		return a.value + b.value.length;
+	}
+
+	static function main() {
+		Sys.println(two({value: Std.random(5)}, {value: "ab"}));
+	}
+}
+===
+
+--- hlc-digest-collision
+// Two function types whose type_desc digests share their first 7 hex digits, f8d4f18: make_sign gives
+// the one PMap.mapi visits second the full 32-digit digest. Declared a then b, b's type is visited first
+// and keeps t$fun_f8d4f18, a's gets t$fun_f8d4f18090985197954432adf9fb76cc. hl.Ref<Float->Bool> signs
+// (f64):bool a second time, through desc_string on DSimple (HRef t), so the ref is
+// t$ref_t$fun_<full digest>.
+class P {
+	static function a(i:Int, f:Float, s:String, b:Bool):Int {
+		return b ? i + s.length : Std.int(f);
+	}
+
+	static function b(x:Bool, d:Dynamic, y:Bool, f:Float, i:Int):String {
+		return "" + x + d + y + f + i;
+	}
+
+	static function call(r:hl.Ref<Float->Bool>):Bool {
+		return r.get()(1.5);
+	}
+
+	static function main() {
+		Sys.println(a(1, 2.5, "s", true));
+		Sys.println(b(false, null, true, 1.5, 2));
+		var f = (x:Float) -> x > 1;
+		Sys.println(call(f));
+	}
+}
+===
+
+--- hlc-digest-collision-reversed
+// hlc-digest-collision's pair declared b then a: the gather order changes the PMap's AVL tree, so a's
+// type is visited first and keeps t$fun_f8d4f18, and b's gets t$fun_f8d4f1891ec96b1ed214e7240a057de3.
+class P {
+	static function b(x:Bool, d:Dynamic, y:Bool, f:Float, i:Int):String {
+		return "" + x + d + y + f + i;
+	}
+
+	static function a(i:Int, f:Float, s:String, b:Bool):Int {
+		return b ? i + s.length : Std.int(f);
+	}
+
+	static function main() {
+		Sys.println(b(false, null, true, 1.5, 2));
+		Sys.println(a(1, 2.5, "s", true));
+	}
+}
+===
+
+--- hlc-ref-enum
+// hl.Ref of enums: a type description marshals the ttype under HRef whole, here enum protos and no PMap.
+// Constructors with basic arguments, a recursive enum (its proto reached again inside itself), an enum
+// argument, and Option's type parameter (dyn). hl.Ref of a class or an anonymous type reaches a PMap's
+// compare closure, which Haxe writes with the MD5 of its own code as loaded; see tests/hl/README.md.
+enum E { A; B(i:Int); C(x:Float, y:Bool, z:Int); }
+enum L { Nil; Cons(v:Int, next:L); }
+enum W { Wrap(e:E, l:L); }
+
+class P {
+	static function one(r:hl.Ref<E>):Void {}
+
+	static function two(a:hl.Ref<L>, b:hl.Ref<W>):Int {
+		return 0;
+	}
+
+	static function opt(r:hl.Ref<haxe.ds.Option<Int>>, e:hl.Ref<E>):Void {}
+
+	static function main() {
+		var e = B(1);
+		var l = Cons(1, Nil);
+		var w = Wrap(C(1.5, true, 2), l);
+		var o = haxe.ds.Option.Some(3);
+		one(e);
+		Sys.println(two(l, w));
+		opt(o, e);
+		Sys.println(Std.string(e) + " " + Std.string(w));
+	}
+}
+===
+
+--- hlc-macro-literal-names + --macro P.init()
+// Field names a macro gives from string literals. An onTypeNotFound macro builds Built and Built2, two
+// structures, on separate calls: eval's value of a literal is the literal's own string, and decode_string
+// hands it to the field, so both structures' "x" and "y" are one string each, and mac's t$fun_ digest has
+// back-references. hlc-macro-separate-names is the control.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name == "Built" || name == "Built2") return build(name);
+			return null;
+		});
+	}
+
+	static function build(name:String):TypeDefinition {
+		var t:ComplexType = name == "Built" ? (macro :Int) : (macro :String);
+		var p = Context.currentPos();
+		return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous([
+			{name: "x", kind: FVar(t), pos: p},
+			{name: "y", kind: FVar(macro :Int), pos: p}
+		]))};
+	}
+	#else
+	static function mac(a:Built, b:Built2):Int
+		return a.y + b.y;
+
+	static function main() {
+		Sys.println(mac({x: 1, y: 2}, {x: "a", y: 3}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-variable-names + --macro P.init()
+// hlc-macro-literal-names with "x" held in a variable first: the variable holds the literal's string.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name == "Built" || name == "Built2") return build(name);
+			return null;
+		});
+	}
+
+	static function build(name:String):TypeDefinition {
+		var n = "x";
+		var t:ComplexType = name == "Built" ? (macro :Int) : (macro :String);
+		var p = Context.currentPos();
+		return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous([
+			{name: n, kind: FVar(t), pos: p},
+			{name: "y", kind: FVar(macro :Int), pos: p}
+		]))};
+	}
+	#else
+	static function mac(a:Built, b:Built2):Int
+		return a.y + b.y;
+
+	static function main() {
+		Sys.println(mac({x: 1, y: 2}, {x: "a", y: 3}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-separate-names + --macro P.init()
+// The control for the macro-given names: Built's and Built2's "x" come from two literals of the same text,
+// and their "y" from concatenations made on each call, so every name is a string of its own and mac's
+// t$fun_ digest has no back-reference.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name == "Built" || name == "Built2") return build(name);
+			return null;
+		});
+	}
+
+	static function build(name:String):TypeDefinition {
+		var p = Context.currentPos();
+		var x:Field = name == "Built" ? {name: "x", kind: FVar(macro :Int), pos: p} : {name: "x", kind: FVar(macro :String), pos: p};
+		return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous([
+			x,
+			{name: "y" + name.substr(0, 0), kind: FVar(macro :Int), pos: p}
+		]))};
+	}
+	#else
+	static function mac(a:Built, b:Built2):Int
+		return a.y + b.y;
+
+	static function main() {
+		Sys.println(mac({x: 1, y: 2}, {x: "a", y: 3}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-field-names + --macro P.init()
+// Field names a macro takes out of a typed field: Built's fields are named after Src's (Context.getType),
+// and encode_string and decode_string hand back Src's own name strings, so mac's two virtuals share them.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+typedef Src = {x:Int, y:Int};
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name != "Built") return null;
+			var p = Context.currentPos();
+			var fields:Array<Field> = switch (Context.follow(Context.getType("P.Src"))) {
+				case TAnonymous(a): [for (f in a.get().fields) {name: f.name, kind: FVar(macro :String), pos: p}];
+				case _: throw "no";
+			}
+			return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous(fields))};
+		});
+	}
+	#else
+	static function mac(a:Src, b:Built):Int
+		return a.y + b.y.length;
+
+	static function main() {
+		Sys.println(mac({x: 1, y: 2}, {x: "a", y: "b"}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-build-field-names
+// Field names a build macro takes out of the parsed fields it leaves as they are: Mirror's field is named
+// after IA's f (Context.getBuildFields), the very string IA's class field holds, so `two`'s digest has a
+// back-reference.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+#if !macro
+@:build(P.mirror()) interface IA {
+	function f():Int;
+}
+
+class Impl implements IA {
+	public function new() {}
+
+	public function f():Int
+		return 1;
+}
+#end
+
+class P {
+	#if macro
+	static function mirror():Null<Array<Field>> {
+		var p = Context.currentPos();
+		var fields = [for (f in Context.getBuildFields()) ({name: f.name, kind: FVar(macro :String), pos: p} : Field)];
+		Context.defineType({pack: [], name: "Mirror", pos: p, fields: [], kind: TDAlias(TAnonymous(fields))});
+		return null;
+	}
+	#else
+	static function main() {
+		function two(a:IA, b:Mirror):Int
+			return a.f() + b.f.length;
+		Sys.println(two(new Impl(), {f: "ab"}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-interface-names
+// Class fields a build macro adds from one literal: IA and IB each get an f named by the literal, so IB's
+// virtual (which holds g's argument, IA's virtual) has f twice as one string.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+#if !macro
+@:build(P.addF()) interface IA {}
+
+@:build(P.addF()) interface IB {
+	function g(a:IA):Int;
+}
+
+class Impl implements IA implements IB {
+	public function new() {}
+
+	public function f():Int
+		return 1;
+
+	public function g(a:IA):Int
+		return a.f();
+}
+#end
+
+class P {
+	#if macro
+	static function addF():Array<Field> {
+		var fields = Context.getBuildFields();
+		fields.push({name: "f", kind: FFun({args: [], ret: macro :Int, expr: null}), pos: Context.currentPos()});
+		return fields;
+	}
+	#else
+	static function two(a:IA, b:IB):Int
+		return a.f() + b.g(a);
+
+	static function main() {
+		var i = new Impl();
+		Sys.println(two(i, i));
+	}
+	#end
+}
+===
+
+--- hlc-macro-object-names
+// Object declarations a macro returns on two calls: the reified `{x: 1, y: $e}` names its fields with
+// literals in the macro's code, so a's and b's structures share "x" and "y", and h's digest has
+// back-references.
+import haxe.macro.Expr;
+
+class P {
+	macro static function obj(e:Expr):Expr
+		return macro {x: 1, y: $e};
+
+	#if !macro
+	static function main() {
+		var a = obj(2);
+		var b = obj("s");
+		function h(p, q) return 0;
+		Sys.println(a.x + b.x + a.y + b.y.length + h(a, b));
+	}
+	#end
+}
+===
+
+--- hlc-macro-object-twice
+// One object declaration typed twice: the macro puts its argument in two places, and the names Haxe
+// encoded and decoded are the parsed ones, so a's and b's structures share "x" and "y".
+import haxe.macro.Expr;
+
+class P {
+	macro static function twice(e:Expr):Expr
+		return macro {
+			var a = $e;
+			var b = $e;
+			a.x.push(1);
+			b.x.push("s");
+			function h(p, q) return 0;
+			Sys.println(a.x.length + b.x.length + a.y + b.y + h(a, b));
+		};
+
+	#if !macro
+	static function main() {
+		twice({x: [], y: 1});
+	}
+	#end
+}
+===
+
+--- hlc-macro-typed-object-names
+// An object declaration a macro types and turns back into syntax (Context.typeExpr, then
+// Context.getTypedExpr) on two calls: the typed declaration keeps the reified literals' "x" and "y", so
+// a's and b's structures share them, and h's digest has back-references.
+import haxe.macro.Context;
+import haxe.macro.Expr;
+
+class P {
+	macro static function obj(e:Expr):Expr
+		return Context.getTypedExpr(Context.typeExpr(macro {x: $e, y: 2}));
+
+	#if !macro
+	static function main() {
+		var a = obj(1);
+		var b = obj(1.5);
+		function h(p, q) return 0;
+		Sys.println(a.x + b.x + a.y + h(a, b));
+	}
+	#end
+}
+===
+
+--- hlc-macro-object-field-names
+// Field names a build macro takes out of a parsed object declaration it leaves as it is: Mirror's x is
+// Q.a's own "x", so `two`'s digest has a back-reference.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+#if !macro
+@:build(P.mirror()) class Q {
+	public static var a = {x: 1};
+}
+#end
+
+class P {
+	#if macro
+	static function mirror():Null<Array<Field>> {
+		var p = Context.currentPos();
+		for (f in Context.getBuildFields()) switch (f.kind) {
+			case FVar(_, {expr: EObjectDecl(fl)}):
+				var fields = [for (o in fl) ({name: o.field, kind: FVar(macro :String), pos: p} : Field)];
+				Context.defineType({pack: [], name: "Mirror", pos: p, fields: [], kind: TDAlias(TAnonymous(fields))});
+			case _:
+		}
+		return null;
+	}
+	#else
+	static function main() {
+		function two(p, b:Mirror):Int
+			return b.x.length;
+		Sys.println(Q.a.x + two(Q.a, {x: "ab"}));
+	}
+	#end
+}
+===
+
+--- hlc-macro-inline-names + --macro P.init()
+// A literal in an inline function the macro calls twice: both inlined copies are the one literal, so
+// Built's and Built2's "x" are one string.
+import haxe.macro.Expr;
+#if macro
+import haxe.macro.Context;
+#end
+
+class P {
+	#if macro
+	static function init() {
+		Context.onTypeNotFound(function(name) {
+			if (name != "Built") return null;
+			var p = Context.currentPos();
+			Context.defineType({pack: [], name: "Built2", pos: p, fields: [], kind: TDAlias(TAnonymous([field(macro :String, p)]))});
+			return {pack: [], name: name, pos: p, fields: [], kind: TDAlias(TAnonymous([field(macro :Int, p)]))};
+		});
+	}
+
+	static inline function field(t:ComplexType, p:Position):Field
+		return {name: "x", kind: FVar(t), pos: p};
+	#else
+	static function mac(a:Built, b:Built2):Int
+		return a.x + b.x.length;
+
+	static function main() {
+		Sys.println(mac({x: 1}, {x: "a"}));
+	}
+	#end
+}
+===

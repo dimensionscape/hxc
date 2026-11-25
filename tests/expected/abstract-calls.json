@@ -1,0 +1,5 @@
+{
+	"generic-method-on-own-abstract-with-other-params": "P.hx:5: characters 9-10 : Warning : K<K.A, ap.R0>",
+	"generic-method-on-own-class-with-other-params": "P.hx:6: characters 9-10 : Warning : C<ap.U>",
+	"generic-method-host-param-is-callers-own-param": "P.hx:4: characters 44-48 : Warning : (x : Unknown<0>) -> Unknown<0>\nP.hx:4: characters 57-64 : Warning : f.U"
+}

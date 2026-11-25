@@ -106,7 +106,7 @@ class EvalMacro {
 	public static function dumpRefStats():Void {
 		if (Sys.getEnv("HXC_DBG_REFS") == null) return;
 		inline function n<K, V>(m:Map<K, V>):Int { var c = 0; for (_ in m.keys()) c++; return c; }
-		var o = Sys.stderr();
+		var o = hxc.core.HostStdio.err();
 		if (macroCom != null) o.writeString("[refs] macroCom modules=" + macroCom.modules.length
 			+ " types=" + macroCom.types.length + "
 ");
@@ -131,6 +131,51 @@ class EvalMacro {
 	// The API wrapper turns a decode failure into the macro's uncaught "Invalid expression"; a typing
 	// error a reporting native raises (under an outer API's typingTimer) is not its own to convert -
 	// it climbs to the API that ran the typer.
+	// HXC_DBG_MACROAPI: per-API call counts and times, printed with HXC_DBG_TYPETIMES' report. `self` is
+	// the API's time less the nested API calls it made (a typer an API runs can call macros, which call
+	// APIs); `top` is the time of the calls made with no other API running, the API's share of the macros.
+	public static var apiProfOn:Bool = Sys.getEnv("HXC_DBG_MACROAPI") != null;
+	static var apiProfStats:Map<String, Array<Float>> = new Map();
+	static var apiProfChild:Array<Float> = [];
+
+	static function apiProfWrap(name:String, f:VFunc):VFunc {
+		return function(a:Array<EvalValue>):EvalValue {
+			var st = apiProfStats.get(name);
+			if (st == null) { st = [0.0, 0.0, 0.0, 0.0]; apiProfStats.set(name, st); }
+			var top = apiProfChild.length == 0;
+			apiProfChild.push(0.0);
+			var t0 = haxe.Timer.stamp();
+			function done() {
+				var dt = haxe.Timer.stamp() - t0;
+				var child = apiProfChild.pop();
+				st[0] += 1;
+				st[1] += dt;
+				st[2] += dt - child;
+				if (top) st[3] += dt;
+				if (apiProfChild.length > 0) apiProfChild[apiProfChild.length - 1] += dt;
+			}
+			var r = try f(a) catch (e:Dynamic) { done(); throw e; };
+			done();
+			return r;
+		};
+	}
+
+	public static function dumpApiProf():Void {
+		if (!apiProfOn) return;
+		var rows = [for (k in apiProfStats.keys()) {name: k, s: apiProfStats.get(k)}];
+		rows.sort(function(a, b) return a.s[2] < b.s[2] ? 1 : (a.s[2] > b.s[2] ? -1 : 0));
+		var o = hxc.core.HostStdio.err();
+		var tot = 0.0, totTop = 0.0;
+		for (r in rows) { tot += r.s[2]; totTop += r.s[3]; }
+		o.writeString("[mapi] self total=" + Math.round(tot * 1000) + "ms top total=" + Math.round(totTop * 1000) + "ms
+");
+		for (r in rows) o.writeString("[mapi] " + StringTools.lpad(Std.string(Math.round(r.s[2] * 1000)), " ", 7) + "ms self "
+			+ StringTools.lpad(Std.string(Math.round(r.s[3] * 1000)), " ", 7) + "ms top "
+			+ StringTools.lpad(Std.string(Std.int(r.s[0])), " ", 8) + "x  " + r.name + "
+");
+		o.flush();
+	}
+
 	static function regBuiltinRaw(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
 		var key = EvalHash.hash(typeName);
 		var list = ec.builtins.staticBuiltins.get(key);
@@ -139,6 +184,7 @@ class EvalMacro {
 			try return f(a)
 			catch (d:DecodeFailure) return EvalExceptions.excString(ec, d.text);
 		};
+		if (apiProfOn) wrapped = apiProfWrap(typeName + "." + fieldName, wrapped);
 		var nameKey = EvalHash.hash(fieldName);
 		var entry = {name: nameKey, v: VFunction(wrapped, true)};
 		for (i in 0...list.length) if (list[i].name == nameKey) { list[i] = entry; return; }
@@ -160,6 +206,7 @@ class EvalMacro {
 			catch (we:hxc.core.TypingError.WithTypeError) return throwMacroError(ec, we.message, we.pos)
 			catch (d:DecodeFailure) return EvalExceptions.excString(ec, d.text);
 		};
+		if (apiProfOn) wrapped = apiProfWrap(typeName + "." + fieldName, wrapped);
 		// A new compilation swaps in its own API. Every closure here holds the com it was registered
 		// with, so a re-registration must REPLACE the entry: a lookup through load("<snake>") ->
 		// callMacroApi takes the first match, and a duplicate would keep answering from the previous
@@ -482,6 +529,8 @@ class EvalMacro {
 							case _: throw new TypingError("map_anon_ref: expected function", curPos);
 						};
 						var nf = TypeFunctions.mkField(f.name, decodeType(ec, mappedV), f.pos, f.namePos);
+						// Haxe's map copies the field ({f with cf_type}), keeping its name string
+						nf.nameOrigin = TypeFunctions.nameOrigin(f);
 						nf.meta = f.meta;
 						nf.kind = f.kind;
 						nf.flags = f.flags;
@@ -943,7 +992,7 @@ class EvalMacro {
 				return VObject(new VObject([], ODictionary(m)));
 			}
 			function mkP(line:Int, character:Int):EvalValue
-				return obj([{name: "line", value: VInt(line)}, {name: "character", value: VInt(character)}]);
+				return obj([{name: "line", value: hxc.eval.EvalValue.EvalValueTools.vint(line)}, {name: "character", value: hxc.eval.EvalValue.EvalValueTools.vint(character)}]);
 			return obj([
 				{name: "file", value: mkString(p.file)},
 				{name: "range", value: obj([
@@ -1219,7 +1268,9 @@ class EvalMacro {
 	// @:autoBuild inherited from a superclass or implemented interface.
 	// The build macros precede the field checks: a class whose build has not run yet has no final field
 	// list to check.
+	// A build whose macros are running is pending too: the fields wait for the list the last one leaves.
 	public static function hasPendingBuild(com:Context, c:TClass):Bool {
+		if (buildMacroPendings.exists(c)) return true;
 		var key = (com.isMacro ? "macro:" : "") + c.path.pack.join(".") + "." + c.path.name;
 		return !builtClasses.exists(key) && collectBuildEntries(c).length > 0;
 	}
@@ -1248,7 +1299,8 @@ class EvalMacro {
 		// super and interface chain.
 		builtClasses.set(key, true);
 		var entries = collectBuildEntries(c);
-		if (entries.length == 0) return;
+		// Fields that waited for an inherited @:autoBuild that turned out to bring none still resolve below.
+		if (entries.length == 0 && !c.hxcFieldsDeferred) return;
 		// A build's failure is RAISED out of the class build before any field is added, so the class is
 		// left with none. It goes to whoever FORCED the build: the PBuildClass pass runner (which has no
 		// handler, so the compile ends with it, after everything recorded so far) or an expression that
@@ -1275,11 +1327,16 @@ class EvalMacro {
 		buildMacroPendings.set(c, []);
 		try runBuildEntries(com, c, entries, fail) catch (e:Dynamic) {
 			buildMacroPendings.remove(c);
+			buildRewroteFields.remove(c);
 			throw e;
 		}
 		var pending = buildMacroPendings.get(c);
 		buildMacroPendings.remove(c);
-		for (f in pending) f();
+		var rewroteFields = buildRewroteFields.exists(c);
+		buildRewroteFields.remove(c);
+		// The list is prepended to, so the latest addition runs first.
+		var i = pending.length;
+		while (i > 0) pending[--i]();
 		// The class initializes from the field list the build returns, once the builds and their pendings
 		// are done. A build that returned null leaves the fields it was given, which nothing has resolved
 		// yet.
@@ -1287,6 +1344,15 @@ class EvalMacro {
 			var declEntry = com.declOfType.get(Context.pathKey(c.path));
 			switch (declEntry == null ? null : declEntry.decl) {
 				case EClass(d):
+					// The FINAL field list is checked, the builds' included (a duplicate name, a variable
+					// without hint or value, an accessor name, a modifier): with the com, the registration
+					// reports them for what the macros returned.
+					if (rewroteFields) hxc.context.ModuleLoader.rebuildFields(c, d.dData, com);
+					// Resolved in the class's own module so its private sibling types (e.g. a private
+					// typedef used in a field signature) resolve; a build triggered from another module's
+					// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule. The
+					// heritage is already resolved, so only the field signatures are (resolveClass would
+					// re-process extends and reject the set super).
 					var savedMod = com.currentModule;
 					com.currentModule = c.module;
 					try hxc.typing.TypeResolve.resolveClassFields(com, c, d, declEntry.pos) catch (e:Dynamic) {
@@ -1564,20 +1630,15 @@ class EvalMacro {
 		}
 		var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
 		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
-		// The FINAL field list is checked, the build's included (a duplicate name, a variable without hint
-		// or value, an accessor name, a modifier): with the com, the registration reports them for what the
-		// macro returned.
-		hxc.context.ModuleLoader.rebuildFields(c, newFields, com);
-		// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
-		// private typedef used in a field signature) resolve; a build triggered from another module's
-		// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule.
-		var savedResolveMod = com.currentModule;
-		com.currentModule = c.module;
-		// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
-		// just the field signatures (resolveClass would re-process extends and reject the set super).
-		hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
-		com.currentModule = savedResolveMod;
+		// Only the declaration changes here. The class's fields are made once, from the list the LAST build
+		// leaves (runClassBuildMacros): a later build can still remove or rewrite what this one returned, so
+		// nothing between two builds is registered, resolved or checked.
+		c.hxcFieldsDeferred = true;
+		buildRewroteFields.set(c, true);
 	}
+
+	// The classes whose running builds returned a field list, which their fields are registered from anew.
+	static var buildRewroteFields = new haxe.ds.ObjectMap<TClass, Bool>();
 
 	// An enum's constructors are shown to a build macro as ordinary fields, so a no-argument constructor
 	// without type parameters reads as a var and every other one reads as a body-less function.
@@ -1719,8 +1780,36 @@ class EvalMacro {
 		com.log("Calling macro " + name + " (" + p.file + ":" + Position.lineNumber(p) + ")");
 	}
 
+	// `--times -D macro-times`: a `macro.typing.<class>.<method>` row for the first load of each macro and a
+	// `macro.execution.<class>.<method>` row for every call, as macroContext's macro_timer adds them.
+	static var macroTimesTyped:Map<String, Bool> = new Map();
+
+	static function macroTimer(com:Context, callee:Expr, kind:String, firstOnly:Bool):Void->Void {
+		if (!hxc.core.Timer.measureTimes || !com.defines.rawDefined("macro_times")) return null;
+		var t = macroTarget(callee);
+		if (t == null) return null;
+		var name = hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}) + "." + t.method;
+		if (firstOnly) {
+			if (macroTimesTyped.exists(name)) return null;
+			macroTimesTyped.set(name, true);
+		}
+		return hxc.core.Timer.timer(["macro", kind, name]);
+	}
+
 	static function callMacroFn(com:Context, ec:EvalContext, callee:Expr, errPos:Position, values:Array<EvalValue>, p:Position):EvalValue {
-		var fn = resolveMacroFn(ec, callee, errPos);
+		var tType = macroTimer(com, callee, "typing", true);
+		var fn = try resolveMacroFn(ec, callee, errPos) catch (e:Dynamic) { if (tType != null) tType(); throw e; };
+		if (tType != null) tType();
+		var tExec = macroTimer(com, callee, "execution", false);
+		if (tExec != null) {
+			var r = try callMacroFnResolved(com, ec, fn, callee, values, p) catch (e:Dynamic) { tExec(); throw e; };
+			tExec();
+			return r;
+		}
+		return callMacroFnResolved(com, ec, fn, callee, values, p);
+	}
+
+	static function callMacroFnResolved(com:Context, ec:EvalContext, fn:VFunc, callee:Expr, values:Array<EvalValue>, p:Position):EvalValue {
 		if (!com.verbose) return callPath(ec, fn, values, p);
 		var t = macroTarget(callee);
 		var name = hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}) + "." + t.method;
@@ -1806,7 +1895,7 @@ class EvalMacro {
 	// A typed constant argument reduced to its runtime value.
 	static function makeConst(ec:EvalContext, e:TExpr):EvalValue {
 		return switch (e.expr) {
-			case TConst(TInt(i)): VInt(i);
+			case TConst(TInt(i)): hxc.eval.EvalValue.EvalValueTools.vint(i);
 			case TConst(TFloat(s)): VFloat(hxc.core.Numeric.parseFloatLit(s));
 			case TConst(TString(s)): mkString(s);
 			case TConst(TBool(b)): b ? VTrue : VFalse;
@@ -1828,7 +1917,7 @@ class EvalMacro {
 	static function initMacroConstArg(ec:EvalContext, e:Expr):EvalValue {
 		return switch (e.expr) {
 			case EConst(CString(v, _)): mkString(v);
-			case EConst(CInt(v, _)): VInt(Std.parseInt(v));
+			case EConst(CInt(v, _)): hxc.eval.EvalValue.EvalValueTools.vint(Std.parseInt(v));
 			case EConst(CFloat(v, _)): VFloat(Std.parseFloat(v));
 			case EConst(CIdent("true")): VTrue;
 			case EConst(CIdent("false")): VFalse;
@@ -1938,16 +2027,13 @@ class EvalMacro {
 						var ec = getContext(com);
 						var savedPos = curPos;
 						curPos = e.pos;
-						// A macro method receives its arguments as expressions; a plain function (like
-						// Compiler.nullSafety) receives constants: the arguments type against the
-						// function's signature (so a malformed object literal errors here) and the typed
+						// A macro method is called as a plain function (like Compiler.nullSafety) is: the
+						// arguments type against the function's signature (so a malformed object literal
+						// errors here, and a value given for an Expr parameter is refused) and the typed
 						// constants convert to values.
 						var cf = macroWorldField({pack: t.pack, name: t.name}, t.method, {pack: t.pack, name: t.module}, t.moduleOnly);
-						var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
 						var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s2): s2; case _: null; };
-						var vargs = if (isMacroFn) {
-							[for (a in args) encodeExpr(ec, a)];
-						} else if (sig != null) {
+						var vargs = if (sig != null) {
 							var tctx = new hxc.typing.TyperContext(macroCom);
 							// The macro typer stays in nullModule until a load sets its module, and the init macro's
 							// arguments type there: a bare enum value resolves against the expected type by joining that
@@ -2225,7 +2311,7 @@ class EvalMacro {
 			{name: "name", value: str(com.mainClass.name)},
 		]);
 		return obj([
-			{name: "version", value: VInt(4307)},
+			{name: "version", value: hxc.eval.EvalValue.EvalValueTools.vint(4307)},
 			{name: "args", value: strArray(com.args)},
 			{name: "debug", value: com.debug ? VTrue : VFalse},
 			{name: "verbose", value: com.verbose ? VTrue : VFalse},
@@ -2620,9 +2706,16 @@ class EvalMacro {
 	// again; the mark belongs to the compilation, so it is kept here and handed to each one.
 	static var interpHadError = false;
 
-	static function markInterpError():Void {
+	static function markInterpError():Null<Void->Void> {
+		if (interpHadError) return null;
 		interpHadError = true;
-		if (macroCtx != null) macroCtx.hadError = true;
+		var ctx = macroCtx;
+		var hadError = ctx != null && ctx.hadError;
+		if (ctx != null) ctx.hadError = true;
+		return function() {
+			interpHadError = false;
+			if (ctx != null) ctx.hadError = hadError;
+		};
 	}
 
 	static function initMacroContext(com:Context):Void {
@@ -3129,10 +3222,17 @@ class EvalMacro {
 			expectedTypeStack.push(withType);
 			var macroName = hxc.core.Globals.sTypePath(path) + "." + fa.field.name;
 			logMacroCall(tctx.com, macroName, p);
+			var tExec = hxc.core.Timer.measureTimes && tctx.com.defines.rawDefined("macro_times")
+				? hxc.core.Timer.timer(["macro", "execution", macroName]) : null;
 			var result = try callPath(ec, fn, args, p) catch (a:hxc.eval.EvalExceptions.MacroAbort) {
+				if (tExec != null) tExec();
 				tctx.com.log("Exiting macro " + macroName);
 				throw a;
+			} catch (e:Dynamic) {
+				if (tExec != null) tExec();
+				throw e;
 			};
+			if (tExec != null) tExec();
 			tctx.com.log("Exiting macro " + macroName);
 			expectedTypeStack.pop();
 			// The expression the macro answers with is decoded under the same guard as a build's fields -
@@ -3422,7 +3522,7 @@ class EvalMacro {
 				{ok: true, value: mkString(s)};
 			case EConst(CInt(s, _)):
 				var n = Std.parseInt(s);
-				{ok: true, value: VInt(n == null ? 0 : n)};
+				{ok: true, value: hxc.eval.EvalValue.EvalValueTools.vint(n == null ? 0 : n)};
 			case EConst(CFloat(s, _)):
 				{ok: true, value: VFloat(Std.parseFloat(s))};
 			case EConst(CIdent("true")):
@@ -4063,8 +4163,10 @@ class EvalMacro {
 			case "TField": TField(loop(args[0]), decodeFieldAccessValue(ec, args[1]));
 			case "TTypeExpr": TTypeExpr(decodeModuleTypeValue(ec, args[0]));
 			case "TParenthesis": TParenthesis(loop(args[0]));
-			case "TObjectDecl": TObjectDecl([for (fv in arrOf(args[0]))
-				{key: {name: strOf(EvalField.field(ec, fv, EvalNames.hName())), pos: p, quotes: NoQuotes}, expr: loop(EvalField.field(ec, fv, EvalNames.hExpr()))}]);
+			case "TObjectDecl": TObjectDecl([for (fv in arrOf(args[0])) {
+				var nv = EvalField.field(ec, fv, EvalNames.hName());
+				{key: {name: strOf(nv), pos: p, quotes: NoQuotes, nameOrigin: nameOriginOf(nv)}, expr: loop(EvalField.field(ec, fv, EvalNames.hExpr()))};
+			}]);
 			case "TArrayDecl": TArrayDecl([for (x in arrOf(args[0])) loop(x)]);
 			case "TCall": TCall(loop(args[0]), [for (x in arrOf(args[1])) loop(x)]);
 			case "TNew": switch (moduleTypeFromRef(ec, args[0])) {
@@ -4099,10 +4201,13 @@ class EvalMacro {
 	// block is recorded as a diagnostic by typeBlock's recovery instead of thrown, but a macro's typeExpr
 	// has to propagate that error to the caller so the macro can catch it. Surface the first new error
 	// diagnostic as a throw (the builtin wrapper turns it into a catchable haxe.macro.Error) and roll the
-	// trial diagnostics back so a caught error does not leak into the final compiler output.
+	// trial diagnostics back so a caught error does not leak into the final compiler output. A typing that
+	// fails also takes back the property deprecations it queued (rollbackSpeculation): the macro never gets
+	// that expression, so it never reaches the final tree Haxe's check walks.
 	static function typeMacroExpr(ctx:TyperContext, e:Expr):TExpr {
 		var com = ctx.com;
-		var before = com.diagnostics.length;
+		var spec = com.speculationMark();
+		var before = spec.diagnostics;
 		var oldRaise = com.raiseTypingErrors;
 		// Typing an expression is typingTimer with the type needed.
 		var oldPass = needTypePass(com, true);
@@ -4115,7 +4220,7 @@ class EvalMacro {
 			com.raiseTypingErrors = oldRaise;
 			com.currentPass = oldPass;
 			restoreReport();
-			if (com.diagnostics.length > before) com.diagnostics.resize(before);
+			com.rollbackSpeculation(spec);
 			throw err;
 		};
 		com.raiseTypingErrors = oldRaise;
@@ -4127,7 +4232,7 @@ class EvalMacro {
 		while (i < com.diagnostics.length) {
 			var d = com.diagnostics[i];
 			if (d.severity == hxc.core.Globals.MessageSeverity.Error) {
-				com.diagnostics.resize(before);
+				com.rollbackSpeculation(spec);
 				throw new TypingError(d.message, d.pos, d.depth);
 			}
 			i++;
@@ -4185,6 +4290,8 @@ class EvalMacro {
 	}
 
 	static function decodeFunctionKind(ec:EvalContext, v:EvalValue, dp:Position):FunctionKind {
+		// A null kind is an anonymous function: macros written before the kind existed pass null there.
+		if (v == VNull) return FKAnonymous;
 		var a = eargs(v);
 		return switch (ctorName(ec, v)) {
 			case "FNamed": FKNamed({name: strOf(a[0]), pos: dp}, a.length > 1 && boolOf(a[1]));
@@ -4259,7 +4366,34 @@ class EvalMacro {
 		// A null is what posOf rejects as an invalid expression.
 		var npv = EvalField.field(ec, v, EvalNames.hNameUnderscorePos());
 		var np = npv == VNull ? Position.nullPos : try posOf(ec, npv, dp) catch (_:Dynamic) Position.nullPos;
-		return {name: strOf(EvalField.field(ec, v, EvalNames.hField())), pos: np, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp)};
+		var nv = EvalField.field(ec, v, EvalNames.hField());
+		return {name: strOf(nv), pos: np, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp),
+			nameOrigin: nameOriginOf(nv)};
+	}
+
+	// What a decoded name's OCaml string stands for (TClassField.nameOrigin). decode_string hands the
+	// compiler the macro string's own bytes, and eval wraps an existing string without copying it, so names
+	// decoded from one eval string are one OCaml string. The string's origin says which: a string literal's
+	// TString (EvalEmitter.evalConst), however many calls or inlined copies use it, and the name of a field
+	// or object field the macro took it out of (encodeClassField, encodeField, encodeObjField). A string
+	// with no origin (made by concatenation, substr and the like) stands for itself: strings made
+	// separately are separate, even when equal.
+	static function nameOriginOf(v:EvalValue):Null<{}> {
+		return switch (v) {
+			case VString(s): s.origin != null ? s.origin : s;
+			case _: null;
+		};
+	}
+
+	// mkString for a compiler name Haxe's encode_string wraps without copying: the string remembers what
+	// the name's OCaml string stands for (nameOriginOf).
+	static function mkName(s:String, origin:Null<{}>):EvalValue {
+		var v = mkString(s);
+		if (origin != null) switch (v) {
+			case VString(vs): vs.origin = origin;
+			case _:
+		}
+		return v;
 	}
 
 	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {
@@ -4275,7 +4409,8 @@ class EvalMacro {
 	}
 
 	static function decodeField(ec:EvalContext, v:EvalValue, dp:Position):ClassField {
-		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
+		var nv = EvalField.field(ec, v, EvalNames.hName());
+		var name = strOf(nv);
 		// The field's own pos (used for the field position and, unless the field gives its own namePos,
 		// the name position). A macro-built field carries its real source pos here; dp is only the fallback
 		// when the field omits pos.
@@ -4288,7 +4423,9 @@ class EvalMacro {
 		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalNames.hMeta()), pos);
 		// `namePos`, defaulting to the field's pos.
 		var namePos = posDefault(ec, EvalField.field(ec, v, EvalNames.hNameUnderscorePos()), pos);
-		return new ClassField({name: name, pos: namePos}, decodeDoc(EvalField.field(ec, v, EvalNames.hDoc())), pos, meta, access, kind);
+		var cff = new ClassField({name: name, pos: namePos}, decodeDoc(EvalField.field(ec, v, EvalNames.hDoc())), pos, meta, access, kind);
+		cff.cffNameOrigin = nameOriginOf(nv);
+		return cff;
 	}
 
 	// The string becomes the doc's own text, with nothing inherited.
@@ -4700,7 +4837,7 @@ class EvalMacro {
 
 	static function encodeField(ec:EvalContext, f:ClassField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalNames.hName(), mkString(f.cffName.name));
+		fields.set(EvalNames.hName(), mkName(f.cffName.name, Ast.fieldNameOrigin(f)));
 		// `namePos` carries the placed name's position, and decoding the field restores it, so a field a
 		// build macro hands back unchanged keeps its name where the parser put it - which the build's
 		// placed-name equality check relies on.
@@ -4808,7 +4945,7 @@ class EvalMacro {
 
 	static function encodeObjField(ec:EvalContext, f:ObjectField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalNames.hField(), mkString(f.name));
+		fields.set(EvalNames.hField(), mkName(f.name, Ast.objectFieldNameOrigin(f)));
 		// The field name's own position is encoded as `namePos` and decoded back. Without it every field
 		// of a structure that went through a build macro would come back carrying the enclosing literal's
 		// position, which the typer then unions into pos - so --json would print `{x: x, y: y}` as the
@@ -5101,7 +5238,7 @@ class EvalMacro {
 			case TTypeExpr(mt): mkEnumValue(ec, "TypedExprDef", "TTypeExpr", [encodeModuleType(ec, mt)]);
 			case TParenthesis(e1): mkEnumValue(ec, "TypedExprDef", "TParenthesis", [encodeTypedExpr(ec, e1)]);
 			case TObjectDecl(fl):
-				mkEnumValue(ec, "TypedExprDef", "TObjectDecl", [encodeArray([for (f in fl) typedObjectField(ec, f.key.name, f.expr)])]);
+				mkEnumValue(ec, "TypedExprDef", "TObjectDecl", [encodeArray([for (f in fl) typedObjectField(ec, f.key, f.expr)])]);
 			case TArrayDecl(el): mkEnumValue(ec, "TypedExprDef", "TArrayDecl", [encodeArray([for (e in el) encodeTypedExpr(ec, e)])]);
 			case TCall(e1, el): mkEnumValue(ec, "TypedExprDef", "TCall", [encodeTypedExpr(ec, e1), encodeArray([for (e in el) encodeTypedExpr(ec, e)])]);
 			case TNew(c, params, el): mkEnumValue(ec, "TypedExprDef", "TNew", [encodeClassRef(ec, c), encodeArray([for (p in params) encodeType(ec, p)]), encodeArray([for (e in el) encodeTypedExpr(ec, e)])]);
@@ -5121,7 +5258,7 @@ class EvalMacro {
 			case TThrow(e1): mkEnumValue(ec, "TypedExprDef", "TThrow", [encodeTypedExpr(ec, e1)]);
 			case TCast(e1, mt): mkEnumValue(ec, "TypedExprDef", "TCast", [encodeTypedExpr(ec, e1), mt == null ? VNull : encodeModuleType(ec, mt)]);
 			case TMeta(m, e1): mkEnumValue(ec, "TypedExprDef", "TMeta", [encodeMetadataEntry(ec, m), encodeTypedExpr(ec, e1)]);
-			case TEnumParameter(e1, ef, index): mkEnumValue(ec, "TypedExprDef", "TEnumParameter", [encodeTypedExpr(ec, e1), encodeEnumField(ec, ef), VInt(index)]);
+			case TEnumParameter(e1, ef, index): mkEnumValue(ec, "TypedExprDef", "TEnumParameter", [encodeTypedExpr(ec, e1), encodeEnumField(ec, ef), hxc.eval.EvalValue.EvalValueTools.vint(index)]);
 			case TEnumIndex(e1): mkEnumValue(ec, "TypedExprDef", "TEnumIndex", [encodeTypedExpr(ec, e1)]);
 			case TIdent(s): mkEnumValue(ec, "TypedExprDef", "TIdent", [mkString(s)]);
 		};
@@ -5129,7 +5266,7 @@ class EvalMacro {
 
 	static function encodeTConstant(ec:EvalContext, c:TConstant):EvalValue {
 		return switch (c) {
-			case TInt(i): mkEnumValue(ec, "TConstant", "TInt", [VInt(i)]);
+			case TInt(i): mkEnumValue(ec, "TConstant", "TInt", [hxc.eval.EvalValue.EvalValueTools.vint(i)]);
 			case TFloat(s): mkEnumValue(ec, "TConstant", "TFloat", [mkString(s)]);
 			case TString(s): mkEnumValue(ec, "TConstant", "TString", [mkString(s)]);
 			case TBool(b): mkEnumValue(ec, "TConstant", "TBool", [b ? VTrue : VFalse]);
@@ -5145,7 +5282,7 @@ class EvalMacro {
 		tvarRefs.set(refId, v);
 		// The tvar object's handle is an Unsafe instance, not a number.
 		fields.set(EvalNames.hDollar(), unsafeValue(ec, refId));
-		fields.set(EvalNames.hId(), VInt(v.id));
+		fields.set(EvalNames.hId(), hxc.eval.EvalValue.EvalValueTools.vint(v.id));
 		fields.set(EvalNames.hName(), mkString(v.name));
 		fields.set(EvalNames.hT(), encodeType(ec, v.type));
 		// A local function's var reads as captured: the VFinal INDEX is stored as its flags.
@@ -5198,9 +5335,9 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
-	static function typedObjectField(ec:EvalContext, name:String, expr:TExpr):EvalValue {
+	static function typedObjectField(ec:EvalContext, key:TObjectFieldKey, expr:TExpr):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalNames.hName(), mkString(name));
+		fields.set(EvalNames.hName(), mkName(key.name, hxc.core.TexprTools.objectKeyNameOrigin(key)));
 		fields.set(EvalNames.hExpr(), encodeTypedExpr(ec, expr));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
@@ -5467,8 +5604,8 @@ class EvalMacro {
 	static function posInfosValue(ec:EvalContext, p:Position):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalNames.hFile(), mkString(p.file));
-		fields.set(EvalNames.hMin(), VInt(p.min));
-		fields.set(EvalNames.hMax(), VInt(p.max));
+		fields.set(EvalNames.hMin(), hxc.eval.EvalValue.EvalValueTools.vint(p.min));
+		fields.set(EvalNames.hMax(), hxc.eval.EvalValue.EvalValueTools.vint(p.max));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -5646,7 +5783,8 @@ class EvalMacro {
 
 	static function encodeClassField(ec:EvalContext, cf:TClassField, ?owner:TClass):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalNames.hName(), mkString(cf.name));
+		// encode_string cf.cf_name: decoding it gives back the field's own name string
+		f.set(EvalNames.hName(), mkName(cf.name, TypeFunctions.nameOrigin(cf)));
 		// A field's type is encoded LAZILY - a body not yet typed stays behind TLazy.
 		f.set(EvalNames.hType(), encodeLazyType(ec, cf.type));
 		f.set(EvalNames.hIsPublic(), TypeFunctions.hasClassFieldFlag(cf, CfPublic) ? VTrue : VFalse);
@@ -5740,7 +5878,7 @@ class EvalMacro {
 			proto.pvalue = VPrototype(proto);
 			opaqueProtos.set(path, proto);
 		}
-		return VInstance(new VInstance([], proto, IRef(VInt(id))));
+		return VInstance(new VInstance([], proto, IRef(hxc.eval.EvalValue.EvalValueTools.vint(id))));
 	}
 
 	static function unsafeValue(ec:EvalContext, id:Int):EvalValue {
@@ -5749,12 +5887,12 @@ class EvalMacro {
 			proto.pvalue = VPrototype(proto);
 			unsafeProtoCache = proto;
 		}
-		return VInstance(new VInstance([], unsafeProtoCache, IRef(VInt(id))));
+		return VInstance(new VInstance([], unsafeProtoCache, IRef(hxc.eval.EvalValue.EvalValueTools.vint(id))));
 	}
 
 	// The Ref itself: get and toString in the prototype's slot order, the handle in the ikind.
 	static function makeRef(ec:EvalContext, getFn:VFunc, toStringFn:VFunc, id:Int):EvalValue {
-		return VInstance(new VInstance([VFunction(getFn, true), VFunction(toStringFn, true)], refProto(ec), IRef(VInt(id))));
+		return VInstance(new VInstance([VFunction(getFn, true), VFunction(toStringFn, true)], refProto(ec), IRef(hxc.eval.EvalValue.EvalValueTools.vint(id))));
 	}
 
 	// The handle a Ref (or a tvar object's `$`) carries, or null when the value is not one of ours.
@@ -5828,7 +5966,7 @@ class EvalMacro {
 		f.set(EvalNames.hPos(), encPos(ef.pos));
 		f.set(EvalNames.hNamePos(), encPos(ef.namePos));
 		f.set(EvalNames.hDoc(), encodeDoc(Ast.getOwnDocOpt(ef.doc)));
-		f.set(EvalNames.hIndex(), VInt(ef.index));
+		f.set(EvalNames.hIndex(), hxc.eval.EvalValue.EvalValueTools.vint(ef.index));
 		f.set(EvalNames.hParams(), encodeArray([for (tp in ef.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return ef.meta, function(m) ef.meta = m));
 		return VObject(new VObject([], ODictionary(f)));
@@ -5837,8 +5975,8 @@ class EvalMacro {
 	// haxe.macro.Type.ClassType. Refs (super/fields/statics) are lazy so a class can reference itself
 	// without infinite recursion.
 	static function encodeClassType(ec:EvalContext, c:TClass):EvalValue {
-		// Encoding a class forces its build first.
-		hxc.typing.TypeResolve.forceQueuedBuild(c);
+		// Encoding a class forces its build first; a canceled one is tried again, once.
+		if (!hxc.typing.TypeFields.retryCanceledBuild(c)) hxc.typing.TypeResolve.forceQueuedBuild(c);
 		var f:Map<Int, EvalValue> = new Map();
 		// The hidden ref handle round-trips the decl through decode.
 		stashModuleTypeRef(f, TClassDecl(c));
@@ -5857,11 +5995,21 @@ class EvalMacro {
 		f.set(EvalNames.hIsAbstract(), TypeFunctions.hasClassFlag(c, CAbstract) ? VTrue : VFalse);
 		f.set(EvalNames.hSuperClass(), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
 		f.set(EvalNames.hInterfaces(), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
-		f.set(EvalNames.hFields(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
-		f.set(EvalNames.hStatics(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) encodeClassField(ec, cf, c)])));
-		f.set(EvalNames.hConstructor(), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
+		// A class whose build has not reached the end of its build macros, or was canceled, has no fields
+		// yet: they are made from the list the builds return. hxc registers the declared fields as shells
+		// at module load, so they are hidden here, and a ClassType encoded meanwhile keeps answering none.
+		if (hxc.typing.TypeFields.awaitsFields(c)) {
+			f.set(EvalNames.hFields(), encodeLazyRef(ec, function() return encodeArray([])));
+			f.set(EvalNames.hStatics(), encodeLazyRef(ec, function() return encodeArray([])));
+			f.set(EvalNames.hConstructor(), VNull);
+			f.set(EvalNames.hOverrides(), encodeArray([]));
+		} else {
+			f.set(EvalNames.hFields(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
+			f.set(EvalNames.hStatics(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) encodeClassField(ec, cf, c)])));
+			f.set(EvalNames.hConstructor(), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
+			f.set(EvalNames.hOverrides(), encodeArray([for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) encodeClassFieldRef(ec, cf)]));
+		}
 		f.set(EvalNames.hInit(), c.init == null ? VNull : encodeTypedExpr(ec, c.init));
-		f.set(EvalNames.hOverrides(), encodeArray([for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) encodeClassFieldRef(ec, cf)]));
 		// Exclude() makes the class extern and drops its init.
 		f.set(EvalNames.hExclude(), VFunction(function(_) {
 			TypeFunctions.addClassFlag(c, CExtern);

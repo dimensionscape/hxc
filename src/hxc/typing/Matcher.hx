@@ -563,6 +563,10 @@ class PatternMaker {
 		// would fall through to be reported as an unknown identifier instead of as the type mismatch it
 		// is.
 		var typed:Null<TExpr> = null;
+		// A deprecated property the probes reach (`case Fixed(_, zoom)` inside a class with a
+		// @:deprecated `zoom(get, set)`) queues its warning at typing; when the name ends up a capture,
+		// that use was never real and the queue gives it back below, whatever the second probe finds.
+		var pendingBefore = hxc.filters.DeprecationCheck.pendingPropertyMark();
 		try {
 			// Pattern expressions type in untyped mode so a private enum-abstract constant still matches
 			// from another module.
@@ -591,11 +595,14 @@ class PatternMaker {
 			}
 			if (pat != null) return answerDisplay(pat);
 		}
+		// The first probe's value is not the pattern; a deprecated property it read must not warn even
+		// when the second probe below finds an enum-abstract value of the same name.
+		hxc.filters.DeprecationCheck.rollbackPendingProperties(pendingBefore);
 		// An ident that typed to a non-pattern value (e.g. a same-named local) or failed to type is
 		// resolved as a field of the subject's module type (an enum-abstract constant), and only captures
 		// when that fails too. The probe is speculative: diagnostics it records roll back unless it yields
 		// a pattern.
-		var diagBefore = pctx.ctx.com.diagnostics.length;
+		var specBefore = pctx.ctx.com.speculationMark();
 		try {
 			var mt = TypeFunctions.moduleTypeOfType(t);
 			var emt = TexprTools.makeTypeExpr(mt, p);
@@ -606,7 +613,7 @@ class PatternMaker {
 			if (pat != null) return answerDisplay(pat);
 		} catch (_:Dynamic) {}
 		hxc.parser.Parser.displaySuppressed = savedSuppressed;
-		if (pctx.ctx.com.diagnostics.length > diagBefore) pctx.ctx.com.diagnostics.resize(diagBefore);
+		pctx.ctx.com.rollbackSpeculation(specBefore);
 		// Anything that is not a lower-case identifier (an uppercase name, a $-ident) is not a capture;
 		// generated-local and `_` prefixes are excluded.
 		if (i.length > 0 && !hxc.ast.Ast.isLowerIdent(i) && i.charCodeAt(0) != "`".code && i.charCodeAt(0) != "_".code) {
@@ -902,9 +909,10 @@ class PatternMaker {
 										sig2.args;
 									case _: fail();
 								};
-								// A single `_` argument matches every constructor argument; otherwise match
-								// positionally, filling omitted trailing optional args with wildcards.
-								var single = el.length == 1 && (switch (el[0].expr) { case EConst(CIdent("_")): true; case _: false; });
+								// A final `_` matches every remaining constructor argument; the others match
+								// positionally, and omitted trailing optional args are filled with wildcards.
+								var lastWild = el.length > 0 && (switch (el[el.length - 1].expr) { case EConst(CIdent("_")): true; case _: false; });
+								var wildUsed = false;
 								// Constructor arguments are patterned from the last to the first: the REST of the arguments
 								// are patterned before the current one, and the arity checks fire from the deepest
 								// recursion before any of them. Two observable effects: the arity error precedes every
@@ -914,18 +922,18 @@ class PatternMaker {
 								var pairIdx:Array<Int> = [];
 								var ei = 0;
 								for (ai in 0...args.length) {
-									if (single) pairIdx.push(-1);
+									if (lastWild && ei == el.length - 1) { pairIdx.push(-2); wildUsed = true; }
 									else if (ei < el.length) { pairIdx.push(ei); ei++; }
 									else if (args[ai].opt) pairIdx.push(-1);
 									else throw new TypingError("Not enough arguments", p);
 								}
-								if (!single && ei < el.length) throw new TypingError("Too many arguments", p);
+								if (ei < el.length && !wildUsed) throw new TypingError("Too many arguments", p);
 								var subs:Array<Pattern> = [];
 								var ai = args.length - 1;
 								while (ai >= 0) {
 									var idx = pairIdx[ai];
 									subs.push(idx < 0
-										? ({pat: PatAny, pos: single ? el[0].pos : p} : Pattern)
+										? ({pat: PatAny, pos: idx == -2 ? el[el.length - 1].pos : p} : Pattern)
 										: make(pctx, false, args[ai].t, el[idx]));
 									ai--;
 								}
@@ -1996,14 +2004,10 @@ class TexprConverter {
 				var effT = effectiveSubjectType(subject, cases);
 				var unmatched = unmatchedFiniteCoverage(ctx.com, effT, cases);
 				var complete = unmatched != null && unmatched.length == 0;
-				// Only a run-time-finite subject (a true enum or Bool) can drop its default branch; an enum
-				// abstract is compile-time finite, so a runtime value can be out of range and a user
-				// default must be kept.
-				var runtimeFinite = switch (TypeFunctions.follow(effT)) {
-					case TEnum(_, _): true;
-					case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): true;
-					case _: false;
-				};
+				// Only a run-time-finite subject (a true enum or Bool, or a non-core abstract over one) can
+				// drop its default branch; an enum abstract is compile-time finite, so a runtime value can be
+				// out of range and a user default must be kept.
+				var runtimeFinite = finitenessOf(effT) == FRunTimeFinite;
 				function reportUnmatched():Void {
 					var s = if (unmatched == null || unmatched.length == 0) "_" else {
 						hxc.core.StringSort.sort(unmatched);
@@ -2020,20 +2024,16 @@ class TexprConverter {
 					case Bind(_, d1): hasFail(d1);
 					case Guard(_, _, d2) | GuardNull(_, _, d2): hasFail(d2);
 					case Switch(sub, subCases, dflt):
-						// A complete run-time-finite sub-switch (its cases cover every constructor of a
-						// true enum or Bool) drops its default at texpr time, exactly as
-						// droppedCompleteDefault does below, so the Fail there is dead and does not make
-						// the enclosing constructor a partial match. Otherwise `case C(Prefix): ..; case
-						// C(Postfix): ..;` would read as leaving C(_) unmatched even though {Prefix,
-						// Postfix} exhausts the argument.
+						// A complete run-time-finite sub-switch (its cases cover every constructor of an
+						// enum or Bool, or of a non-core abstract over one) drops its default at texpr
+						// time, exactly as droppedCompleteDefault does below, so the Fail there is dead and
+						// does not make the enclosing constructor a partial match. Otherwise `case
+						// C(Prefix): ..; case C(Postfix): ..;` would read as leaving C(_) unmatched even
+						// though {Prefix, Postfix} exhausts the argument.
 						var subT = effectiveSubjectType(sub, subCases);
 						var subUnmatched = unmatchedFiniteCoverage(ctx.com, subT, subCases);
 						var subComplete = subUnmatched != null && subUnmatched.length == 0;
-						var subRuntimeFinite = switch (TypeFunctions.follow(subT)) {
-							case TEnum(_, _): true;
-							case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): true;
-							case _: false;
-						};
+						var subRuntimeFinite = finitenessOf(subT) == FRunTimeFinite;
 						(subComplete && subRuntimeFinite) ? false : hasFail(dflt);
 					case Leaf(_): false;
 				};
@@ -2166,10 +2166,7 @@ class TexprConverter {
 					// drops the same way). A merely default-less switch (a String subject falling through) must
 					// not be marked: downstream analysis would treat it as always-terminating and drop the
 					// fall-through code.
-					var compileTimeFinite = complete && switch (TypeFunctions.follow(effT)) {
-						case TAbstract(a, _): a.impl != null && a.isEnum;
-						case _: false;
-					};
+					var compileTimeFinite = complete && finiteness == FCompileTimeFinite;
 					if ((droppedCompleteDefault || compileTimeFinite) && defE == null)
 						swSubject = TypeFunctions.mk(TMeta({name: ":exhaustive", params: [], pos: dt.pos}, swSubject), swSubject.type, swSubject.pos);
 					TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);

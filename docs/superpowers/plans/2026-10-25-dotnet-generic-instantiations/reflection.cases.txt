@@ -1,0 +1,758 @@
+# Milestone 3c plan: reflection through companions (types notes §3, §5; std notes §3).
+#
+
+# Types notes §8.6 (probe companion) minus `fields Array` and `fields resolved Array`, which list get_Item
+# and set_Item (hxcs's @:classCode indexer, milestone 4; kept in m4.cases.txt).
+--- generic-reflection @gencs
+// Companion interfaces: reflection over them, generic subclassing, generic interfaces.
+class G<T> {
+	public var v:T;
+	public var n:Int = 7;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+	public function plain():Int return n;
+	public function str():String return "G.str";
+}
+class Sub extends G<Int> {
+	public var w:String = "w";
+	public function new() super(5);
+	public function own():String return w;
+}
+class GSub<U> extends G<U> {
+	public var u:U;
+	public function new(x:U) { super(x); u = x; }
+	public function getU():U return u;
+}
+interface IG<T> {
+	function ig():T;
+	function igPlain():Int;
+}
+class GI<T> implements IG<T> {
+	public var x:T;
+	public function new(x:T) this.x = x;
+	public function ig():T return x;
+	public function igPlain():Int return 3;
+}
+class NI implements IG<String> {
+	public function new() {}
+	public function ig():String return "ni";
+	public function igPlain():Int return 4;
+}
+class P {
+	static function main() {
+		var keep = new haxe.ds.StringMap<Int>(); keep.set("a", 1);
+		Sys.println("resolve G: " + Type.resolveClass("G"));
+		Sys.println("resolve name: " + Type.getClassName(Type.resolveClass("G")));
+		Sys.println("resolve Array: " + Type.resolveClass("Array") + " / " + Type.getClassName(Type.resolveClass("Array")));
+		Sys.println("resolve StringMap: " + Type.resolveClass("haxe.ds.StringMap") + " / " + Type.getClassName(Type.resolveClass("haxe.ds.StringMap")));
+		Sys.println("resolve Sub: " + Type.resolveClass("Sub"));
+		Sys.println("resolve GSub: " + Type.resolveClass("GSub"));
+		Sys.println("resolve IG: " + Type.resolveClass("IG"));
+		Sys.println("fields G: " + Type.getInstanceFields(G));
+		Sys.println("fields Sub: " + Type.getInstanceFields(Sub));
+		Sys.println("fields GSub: " + Type.getInstanceFields(GSub));
+		Sys.println("fields GI: " + Type.getInstanceFields(GI));
+		Sys.println("fields NI: " + Type.getInstanceFields(NI));
+		Sys.println("fields resolved G: " + Type.getInstanceFields(Type.resolveClass("G")));
+		Sys.println("class fields G: " + Type.getClassFields(G));
+		var g = new G<Int>(1);
+		var s = new Sub();
+		var gs = new GSub<String>("q");
+		Sys.println("getClass g: " + Type.getClass(g) + " / " + Type.getClassName(Type.getClass(g)));
+		Sys.println("getClass s: " + Type.getClass(s) + " / " + Type.getClassName(Type.getClass(s)));
+		Sys.println("getClass gs: " + Type.getClass(gs) + " / " + Type.getClassName(Type.getClass(gs)));
+		Sys.println("super Sub: " + Type.getSuperClass(Sub) + " / " + Type.getClassName(Type.getSuperClass(Sub)));
+		Sys.println("super GSub: " + Type.getSuperClass(GSub));
+		Sys.println("super of getClass(gs): " + Type.getSuperClass(Type.getClass(gs)));
+		Sys.println("reflect fields s: " + Reflect.fields(s));
+		Sys.println("isOfType g G: " + Std.isOfType(g, G));
+		Sys.println("isOfType s G: " + Std.isOfType(s, G));
+		Sys.println("isOfType gs G: " + Std.isOfType(gs, G));
+		Sys.println("isOfType gs GSub: " + Std.isOfType(gs, GSub));
+		Sys.println("isOfType [1] Array: " + Std.isOfType([1], Array));
+		Sys.println("isOfType ['a'] Array: " + Std.isOfType(["a"], Array));
+		var ig:IG<Int> = new GI(1);
+		Sys.println("isOfType GI IG: " + Std.isOfType(ig, IG));
+		Sys.println("isOfType NI IG: " + Std.isOfType(new NI(), IG));
+		var d:Dynamic = g;
+		Sys.println("dyn isOfType G: " + Std.isOfType(d, G));
+		var rc = Type.resolveClass("G");
+		Sys.println("isOfType resolved: " + Std.isOfType(d, rc));
+		Sys.println("createEmptyInstance: " + Type.getClassName(Type.getClass(Type.createEmptyInstance(Type.resolveClass("Sub")))));
+		try {
+			throw [1, 2];
+		} catch (e:Array<Dynamic>) {
+			Sys.println("caught array " + e.length);
+		}
+		try {
+			throw new G<String>("x");
+		} catch (e:G<Dynamic>) {
+			Sys.println("caught G " + e.v);
+		}
+	}
+}
+===
+[run]
+resolve G: G`1[System.Object]
+resolve name: G
+resolve Array: Array`1[System.Object] / Array
+resolve StringMap: haxe.ds.StringMap`1[System.Object] / haxe.ds.StringMap
+resolve Sub: Sub
+resolve GSub: GSub`1[System.Object]
+resolve IG: IG`1[System.Object]
+fields G: [G_cast,get,plain,str,v,n]
+fields Sub: [own,G_cast,get,plain,str,w,v,n]
+fields GSub: [GSub_cast,G_cast,getU,get,plain,str,u,v,n]
+fields GI: [GI_cast,IG_cast,ig,igPlain,x]
+fields NI: [IG_cast,ig,igPlain]
+fields resolved G: [G_cast,get,plain,str,v,n]
+class fields G: []
+getClass g: G`1[System.Int32] / G
+getClass s: Sub / Sub
+getClass gs: GSub`1[System.String] / GSub
+super Sub: G`1[System.Int32] / G
+super GSub: G`1[System.Object]
+super of getClass(gs): G`1[System.String]
+reflect fields s: [w,n,v]
+isOfType g G: true
+isOfType s G: true
+isOfType gs G: true
+isOfType gs GSub: true
+isOfType [1] Array: true
+isOfType ['a'] Array: true
+isOfType GI IG: true
+isOfType NI IG: true
+dyn isOfType G: true
+isOfType resolved: true
+createEmptyInstance: Sub
+caught array 2
+caught G x
+
+# Std notes §3.3-3.5 minus the two Array instance-field lists (get_Item/set_Item, milestone 4; kept in
+# m4.cases.txt).
+--- resolve-generic-class @gencs
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class Sub extends Box<Int> {
+	public var z:Int = 3;
+	public function new() super(1);
+}
+class Pt {
+	public var x:Int = 0;
+	public function new() {}
+}
+class Pair<A, B> {
+	public var a:A; public var b:B;
+	public function new(a:A, b:B) { this.a = a; this.b = b; }
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function sorted(a:Array<String>) { a.sort((x, y) -> x < y ? -1 : x > y ? 1 : 0); return a.join(","); }
+	static function main() {
+		var names = ["Array", "haxe.ds.StringMap", "Box", "Pair", "Sub", "Pt", "haxe.IMap", "Int", "String", "Nope"];
+		for (n in names) {
+			var c:Class<Dynamic> = Type.resolveClass(n);
+			t("resolve " + n, () -> c == null ? "null" : "ok");
+			if (c == null) continue;
+			t("  string", () -> Std.string(c));
+			t("  className", () -> Type.getClassName(c));
+			t("  super", () -> Std.string(Type.getSuperClass(c)));
+			// Array's list would include get_Item,set_Item, hxcs's @:classCode indexer (milestone 4): see m4.cases.txt.
+			if (n != "Array") t("  instFields", () -> sorted(Type.getInstanceFields(c)));
+			t("  classFields", () -> sorted(Type.getClassFields(c)));
+			t("  typeof", () -> Type.typeof(c));
+		}
+		var cb = Type.resolveClass("Box");
+		t("create Box", () -> { var b:Dynamic = Type.createInstance(cb, [5]); return Std.string(Type.getClass(b)) + " " + b.v; });
+		t("empty Box", () -> { var b:Dynamic = Type.createEmptyInstance(cb); return Std.string(Type.getClass(b)) + " " + b.v; });
+		var ca = Type.resolveClass("Array");
+		t("create Array", () -> { var b:Dynamic = Type.createInstance(ca, []); return Std.string(Type.getClass(b)) + " " + b.length; });
+		t("empty Array", () -> { var b:Dynamic = Type.createEmptyInstance(ca); return Std.string(Type.getClass(b)) + " " + b.length; });
+		var cm = Type.resolveClass("haxe.ds.StringMap");
+		t("empty StringMap", () -> { var b:Dynamic = Type.createEmptyInstance(cm); return Std.string(Type.getClass(b)); });
+		var cp = Type.resolveClass("Pair");
+		t("create Pair", () -> { var b:Dynamic = Type.createInstance(cp, [1, "x"]); return Std.string(Type.getClass(b)) + " " + b.a + b.b; });
+		var csub = Type.resolveClass("Sub");
+		t("create Sub", () -> { var b:Dynamic = Type.createInstance(csub, []); return Std.string(Type.getClass(b)) + " " + b.v + b.z; });
+		// compare with the value of the class expression
+		t("Array == resolve", () -> Type.resolveClass("Array") == (Array : Dynamic));
+		t("Box == resolve", () -> Type.resolveClass("Box") == (Box : Dynamic));
+		t("class Array", () -> Std.string((Array : Dynamic)));
+		t("class Box", () -> Std.string((Box : Dynamic)));
+		t("class StringMap", () -> Std.string((haxe.ds.StringMap : Dynamic)));
+		t("className Array", () -> Type.getClassName(Array));
+		t("className Box", () -> Type.getClassName(Box));
+		t("super Array", () -> Std.string(Type.getSuperClass(Array)));
+		t("super Box", () -> Std.string(Type.getSuperClass(Box)));
+		t("super Sub", () -> Std.string(Type.getSuperClass(Sub)));
+		t("instFields Box", () -> sorted(Type.getInstanceFields(Box)));
+		t("instFields Sub", () -> sorted(Type.getInstanceFields(Sub)));
+		t("instFields StringMap", () -> sorted(Type.getInstanceFields(haxe.ds.StringMap)));
+		t("instFields Pair", () -> sorted(Type.getInstanceFields(Pair)));
+		t("classFields Box", () -> sorted(Type.getClassFields(Box)));
+		t("classFields Array", () -> sorted(Type.getClassFields(Array)));
+		t("Reflect.fields box", () -> sorted(Reflect.fields(new Box(1))));
+		t("Reflect.fields sub", () -> sorted(Reflect.fields(new Sub())));
+		t("Reflect.fields array", () -> sorted(Reflect.fields([1])));
+		t("Reflect.fields stringmap", () -> sorted(Reflect.fields(new haxe.ds.StringMap<Int>())));
+		t("Reflect.fields pair", () -> sorted(Reflect.fields(new Pair(1, 2))));
+	}
+}
+===
+[run]
+resolve Array ok
+  string Array`1[System.Object]
+  className Array
+  super null
+  classFields alloc,ofNative
+  typeof TObject
+resolve haxe.ds.StringMap ok
+  string haxe.ds.StringMap`1[System.Object]
+  className haxe.ds.StringMap
+  super null
+  instFields cachedIndex,haxe_IMap_cast,haxe_ds_StringMap_cast
+  classFields
+  typeof TObject
+resolve Box ok
+  string Box`1[System.Object]
+  className Box
+  super null
+  instFields Box_cast,get,v
+  classFields
+  typeof TObject
+resolve Pair ok
+  string Pair`2[System.Object,System.Object]
+  className Pair
+  super null
+  instFields Pair_cast,a,b
+  classFields
+  typeof TObject
+resolve Sub ok
+  string Sub
+  className Sub
+  super Box`1[System.Int32]
+  instFields Box_cast,get,v,z
+  classFields
+  typeof TObject
+resolve Pt ok
+  string Pt
+  className Pt
+  super null
+  instFields x
+  classFields
+  typeof TObject
+resolve haxe.IMap ok
+  string haxe.IMap`2[System.Object,System.Object]
+  className haxe.IMap
+  super null
+  instFields
+  classFields
+  typeof TObject
+resolve Int ok
+  string System.Int32
+  className Int
+  super System.ValueType
+  instFields CompareTo,CompareTo,GetTypeCode,TryFormat,TryFormat
+  classFields Abs,BigMul,Clamp,CopySign,CreateChecked,CreateSaturating,CreateTruncating,DivRem,IsEvenInteger,IsNegative,IsOddInteger,IsPositive,IsPow2,LeadingZeroCount,Log2,Max,MaxMagnitude,MaxValue,Min,MinMagnitude,MinValue,Parse,Parse,Parse,Parse,Parse,Parse,Parse,Parse,PopCount,RotateLeft,RotateRight,Sign,TrailingZeroCount,TryParse,TryParse,TryParse,TryParse,TryParse,TryParse,TryParse,TryParse,TryParse
+  typeof TObject
+resolve String ok
+  string System.String
+  className String
+  super null
+  instFields charAt,charCodeAt,indexOf,lastIndexOf,length,split,substr,substring,toLowerCase,toUpperCase
+  classFields fromCharCode
+  typeof TObject
+resolve Nope null
+create Box Box`1[System.Object] 5
+empty Box Box`1[System.Object] null
+create Array Array`1[System.Object] 0
+empty Array Array`1[System.Object] 0
+empty StringMap haxe.ds.StringMap`1[System.Object]
+create Pair Pair`2[System.Object,System.Object] 1x
+create Sub Sub 13
+Array == resolve true
+Box == resolve true
+class Array Array`1[System.Object]
+class Box Box`1[System.Object]
+class StringMap haxe.ds.StringMap`1[System.Object]
+className Array Array
+className Box Box
+super Array null
+super Box null
+super Sub Box`1[System.Int32]
+instFields Box Box_cast,get,v
+instFields Sub Box_cast,get,v,z
+instFields StringMap cachedIndex,haxe_IMap_cast,haxe_ds_StringMap_cast
+instFields Pair Pair_cast,a,b
+classFields Box
+classFields Array alloc,ofNative
+Reflect.fields box v
+Reflect.fields sub v,z
+Reflect.fields array __a,length
+Reflect.fields stringmap cachedIndex
+Reflect.fields pair a,b
+
+# Std notes §3.1, B1 (Std.isOfType, `is`, Std.downcast of generic classes; hxc answers some silently
+# wrong today).
+--- generic-is-of-type @gencs
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class Sub extends Box<Int> {
+	public var z:Int = 3;
+	public function new() super(1);
+}
+class Pt {
+	public var x:Int = 0;
+	public function new() {}
+}
+class Pair<A, B> {
+	public var a:A; public var b:B;
+	public function new(a:A, b:B) { this.a = a; this.b = b; }
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function main() {
+		var ai:Dynamic = [1, 2];
+		var as:Dynamic = ["a"];
+		var an:Dynamic = ([1, null]:Array<Null<Int>>);
+		var ad:Dynamic = ([]:Array<Dynamic>);
+		var sm:Dynamic = new haxe.ds.StringMap<String>();
+		var im:Dynamic = new haxe.ds.IntMap<Int>();
+		var om:Dynamic = new haxe.ds.ObjectMap<Pt, Int>();
+		var li:Dynamic = new List<Int>();
+		var bx:Dynamic = new Box<Int>(1);
+		var bs:Dynamic = new Box<String>("s");
+		var sb:Dynamic = new Sub();
+		var pr:Dynamic = new Pair<Int, String>(1, "x");
+		var pt:Dynamic = new Pt();
+		var s:Dynamic = "str";
+		var n:Dynamic = null;
+		var all:Array<Array<Dynamic>> = [["ai", ai], ["as", as], ["an", an], ["ad", ad], ["sm", sm], ["im", im], ["om", om], ["li", li], ["bx", bx], ["bs", bs], ["sb", sb], ["pr", pr], ["pt", pt], ["s", s], ["n", n]];
+		for (p in all) {
+			var nm:String = p[0]; var v:Dynamic = p[1];
+			Sys.println(nm + ": Array=" + Std.isOfType(v, Array) + " StringMap=" + Std.isOfType(v, haxe.ds.StringMap) + " IntMap=" + Std.isOfType(v, haxe.ds.IntMap) + " ObjectMap=" + Std.isOfType(v, haxe.ds.ObjectMap) + " List=" + Std.isOfType(v, List) + " Box=" + Std.isOfType(v, Box) + " Pair=" + Std.isOfType(v, Pair) + " Pt=" + Std.isOfType(v, Pt));
+		}
+		// downcasts
+		t("instance Array", () -> Std.downcast(ai, Array) != null);
+		t("instance Box", () -> Std.downcast(bx, Box) != null);
+		t("instance Box null", () -> Std.downcast(pt, Box) != null);
+		// is operator
+		t("is", () -> (ai is Array));
+		// dynamic class value
+		var ca:Dynamic = Array;
+		var cb:Dynamic = Box;
+		var cs:Dynamic = haxe.ds.StringMap;
+		t("dyn Array", () -> Std.isOfType(ai, ca));
+		t("dyn Array/str", () -> Std.isOfType(s, ca));
+		t("dyn Box", () -> Std.isOfType(bx, cb));
+		t("dyn Box/Sub", () -> Std.isOfType(sb, cb));
+		t("dyn Box/pt", () -> Std.isOfType(pt, cb));
+		t("dyn SM", () -> Std.isOfType(sm, cs));
+		var cl:Class<Dynamic> = Type.getClass(ai);
+		t("dyn getClass", () -> Std.isOfType(ai, cl));
+		t("dyn getClass(an)", () -> Std.isOfType(ai, Type.getClass(an)));
+		var cbx:Class<Dynamic> = Type.getClass(bx);
+		t("dyn getClass bx", () -> Std.isOfType(bs, cbx));
+	}
+}
+===
+[run]
+ai: Array=true StringMap=false IntMap=false ObjectMap=false List=false Box=false Pair=false Pt=false
+as: Array=true StringMap=false IntMap=false ObjectMap=false List=false Box=false Pair=false Pt=false
+an: Array=true StringMap=false IntMap=false ObjectMap=false List=false Box=false Pair=false Pt=false
+ad: Array=true StringMap=false IntMap=false ObjectMap=false List=false Box=false Pair=false Pt=false
+sm: Array=false StringMap=true IntMap=false ObjectMap=false List=false Box=false Pair=false Pt=false
+im: Array=false StringMap=false IntMap=true ObjectMap=false List=false Box=false Pair=false Pt=false
+om: Array=false StringMap=false IntMap=false ObjectMap=true List=false Box=false Pair=false Pt=false
+li: Array=false StringMap=false IntMap=false ObjectMap=false List=true Box=false Pair=false Pt=false
+bx: Array=false StringMap=false IntMap=false ObjectMap=false List=false Box=true Pair=false Pt=false
+bs: Array=false StringMap=false IntMap=false ObjectMap=false List=false Box=true Pair=false Pt=false
+sb: Array=false StringMap=false IntMap=false ObjectMap=false List=false Box=true Pair=false Pt=false
+pr: Array=false StringMap=false IntMap=false ObjectMap=false List=false Box=false Pair=true Pt=false
+pt: Array=false StringMap=false IntMap=false ObjectMap=false List=false Box=false Pair=false Pt=true
+s: Array=false StringMap=false IntMap=false ObjectMap=false List=false Box=false Pair=false Pt=false
+n: Array=false StringMap=false IntMap=false ObjectMap=false List=false Box=false Pair=false Pt=false
+instance Array true
+instance Box true
+instance Box null false
+is true
+dyn Array true
+dyn Array/str false
+dyn Box true
+dyn Box/Sub true
+dyn Box/pt false
+dyn SM true
+dyn getClass true
+dyn getClass(an) true
+dyn getClass bx true
+
+# Std notes §3.2, B2.
+--- catch-generic-class @gencs
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class Sub extends Box<Int> {
+	public var z:Int = 3;
+	public function new() super(1);
+}
+class Pt {
+	public var x:Int = 0;
+	public function new() {}
+}
+class Pair<A, B> {
+	public var a:A; public var b:B;
+	public function new(a:A, b:B) { this.a = a; this.b = b; }
+}
+class P {
+	static function thrower(k:Int):Void {
+		switch (k) {
+			case 0: throw [1, 2];
+			case 1: throw ["a"];
+			case 2: throw new Box<Int>(3);
+			case 3: throw new haxe.ds.StringMap<Int>();
+			case 4: throw "str";
+			case 5: throw new Pt();
+			case 6: throw (new List<Int>() : Dynamic);
+			case 7: throw (null : Dynamic);
+			case _: throw 99;
+		}
+	}
+	static function main() {
+		for (k in 0...9) {
+			var r = try { thrower(k); "none"; }
+			catch (e:Array<Dynamic>) "Array<Dynamic> " + e.length
+			catch (e:Box<Dynamic>) "Box<Dynamic>"
+			catch (e:haxe.ds.StringMap<Dynamic>) "StringMap<Dynamic>"
+			catch (e:List<Dynamic>) "List<Dynamic>"
+			catch (e:String) "String " + e
+			catch (e:Pt) "Pt"
+			catch (e:Dynamic) "Dynamic " + Std.string(Type.getClass(e));
+			Sys.println(k + " " + r);
+		}
+	}
+}
+===
+[run]
+0 Array<Dynamic> 2
+1 Array<Dynamic> 1
+2 Box<Dynamic>
+3 StringMap<Dynamic>
+4 String str
+5 Pt
+6 List<Dynamic>
+7 Dynamic null
+8 Dynamic System.Int32
+
+# Types notes §8.10 (probe erasediface).
+--- erased-interface-overload @gencs
+// A class implementing a generic interface instantiated with an erased type argument.
+class C { public function new() {} public function toString() return "C"; }
+interface IQ<T> { function f(x:T):T; function g():Array<T>; }
+class Q implements IQ<C> {
+	public function new() {}
+	public function f(x:C):C return x;
+	public function g():Array<C> return [new C()];
+}
+class QI implements IQ<Int> {
+	public function new() {}
+	public function f(x:Int):Int return x + 1;
+	public function g():Array<Int> return [1];
+}
+class P {
+	static function main() {
+		var q:IQ<C> = new Q();
+		Sys.println(q.f(new C()));
+		Sys.println(q.g());
+		var qi:IQ<Int> = new QI();
+		Sys.println(qi.f(1));
+		Sys.println(Type.getInstanceFields(Q));
+		Sys.println(Type.getInstanceFields(QI));
+	}
+}
+===
+[run]
+C
+[C]
+2
+[IQ_cast,f,f,g]
+[IQ_cast,f,g]
+
+# Std notes L7, B7. The method list is sorted with a comparator that returns 0 for equal strings; the
+# researcher's `a < b ? -1 : 1` made hxcs's quicksort leave the list in an order that depends on its input
+# (GetMethods order), so its QDyn list was unsorted.
+--- explicit-impl-erased-generic-interface @gencs
+class Pt { public var x:Int = 0; public function new() {} public function toString() return "Pt"; }
+interface IQ<T> { function get(i:Int):T; function put(v:T):Void; var last(default, null):T; }
+class QPt implements IQ<Pt> {
+	public var last(default, null):Pt;
+	public function new() {}
+	public function get(i:Int):Pt return last;
+	public function put(v:Pt):Void last = v;
+}
+class QInt implements IQ<Int> {
+	public var last(default, null):Int = 0;
+	public function new() {}
+	public function get(i:Int):Int return last + i;
+	public function put(v:Int):Void last = v;
+}
+class QArr implements IQ<Array<Int>> {
+	public var last(default, null):Array<Int>;
+	public function new() {}
+	public function get(i:Int):Array<Int> return last;
+	public function put(v:Array<Int>):Void last = v;
+}
+class QDyn implements IQ<Dynamic> {
+	public var last(default, null):Dynamic;
+	public function new() {}
+	public function get(i:Int):Dynamic return last;
+	public function put(v:Dynamic):Void last = v;
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function main() {
+		var q:IQ<Pt> = new QPt();
+		q.put(new Pt());
+		t("QPt get", () -> q.get(0));
+		var qi:IQ<Int> = new QInt();
+		qi.put(4);
+		t("QInt get", () -> qi.get(2));
+		var qa:IQ<Array<Int>> = new QArr();
+		qa.put([1]);
+		t("QArr get", () -> qa.get(0));
+		var qd:IQ<Dynamic> = new QDyn();
+		qd.put("d");
+		t("QDyn get", () -> qd.get(0));
+		for (c in ([QPt, QInt, QArr, QDyn] : Array<Class<Dynamic>>)) {
+			var cls:Class<Dynamic> = c;
+			t("fields " + Type.getClassName(cls), () -> {
+				var fl:cs.Flags<cs.system.reflection.BindingFlags> = new cs.Flags(cs.system.reflection.BindingFlags.Instance) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.DeclaredOnly;
+				var ms = [for (m in cs.Lib.toNativeType(cls).GetMethods(fl)) Std.string(m) + (m.IsPublic ? " public" : " nonpublic") ];
+				ms.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+				return "\n  " + ms.join("\n  ");
+			});
+		}
+		t("dyn call", () -> Reflect.callMethod(q, Reflect.field(q, "get"), [0]));
+		t("dyn field", () -> Reflect.field(q, "last"));
+	}
+}
+===
+[run]
+QPt get Pt
+QInt get 6
+QArr get [1]
+QDyn get d
+fields QPt
+  Pt get(Int32) public
+  System.Object IQ_cast[T_c]() public
+  System.Object __hx_getField(System.String, Int32, Boolean, Boolean, Boolean) public
+  System.Object __hx_invokeField(System.String, Int32, System.Object[]) public
+  System.Object __hx_setField(System.String, Int32, System.Object, Boolean) public
+  System.Object global::IQ<System.Object>.get(Int32) nonpublic
+  Void __hx_getFields(Array`1[System.String]) public
+  Void put(Pt) public
+  Void put(System.Object) public
+fields QInt
+  Double __hx_getField_f(System.String, Int32, Boolean, Boolean) public
+  Double __hx_setField_f(System.String, Int32, Double, Boolean) public
+  Int32 get(Int32) public
+  System.Object IQ_cast[T_c]() public
+  System.Object __hx_getField(System.String, Int32, Boolean, Boolean, Boolean) public
+  System.Object __hx_invokeField(System.String, Int32, System.Object[]) public
+  System.Object __hx_setField(System.String, Int32, System.Object, Boolean) public
+  Void __hx_getFields(Array`1[System.String]) public
+  Void put(Int32) public
+fields QArr
+  Array`1[System.Int32] get(Int32) public
+  System.Object IQ_cast[T_c]() public
+  System.Object __hx_getField(System.String, Int32, Boolean, Boolean, Boolean) public
+  System.Object __hx_invokeField(System.String, Int32, System.Object[]) public
+  System.Object __hx_setField(System.String, Int32, System.Object, Boolean) public
+  System.Object global::IQ<System.Object>.get(Int32) nonpublic
+  Void __hx_getFields(Array`1[System.String]) public
+  Void put(Array`1[System.Int32]) public
+  Void put(System.Object) public
+fields QDyn
+  Double __hx_getField_f(System.String, Int32, Boolean, Boolean) public
+  Double __hx_setField_f(System.String, Int32, Double, Boolean) public
+  System.Object IQ_cast[T_c]() public
+  System.Object __hx_getField(System.String, Int32, Boolean, Boolean, Boolean) public
+  System.Object __hx_invokeField(System.String, Int32, System.Object[]) public
+  System.Object __hx_setField(System.String, Int32, System.Object, Boolean) public
+  System.Object get(Int32) public
+  Void __hx_getFields(Array`1[System.String]) public
+  Void put(System.Object) public
+dyn call Pt
+dyn field Pt
+
+# Std notes §3.5: the server app's createInstance(Type.getClass(v), []) shape (a regression pin).
+--- serverapp-generic-tools @gencs
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class Sub extends Box<Int> {
+	public var z:Int = 3;
+	public function new() super(1);
+}
+class Pt {
+	public var x:Int = 0;
+	public function new() {}
+}
+class Pair<A, B> {
+	public var a:A; public var b:B;
+	public function new(a:A, b:B) { this.a = a; this.b = b; }
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function main() {
+		var ai:Dynamic = ([1, 2] : Array<Int>);
+		var ad:Dynamic = ([1, 2] : Array<Dynamic>);
+		var ap:Dynamic = [new Pt()];
+		var bx:Dynamic = new Box<Int>(3);
+		t("createInstance getClass(ai)", () -> { var r:Dynamic = Type.createInstance(Type.getClass(ai), []); return Std.string(Type.getClass(r)) + " len " + r.length; });
+		t("createInstance getClass(ad)", () -> { var r:Dynamic = Type.createInstance(Type.getClass(ad), []); return Std.string(Type.getClass(r)) + " len " + r.length; });
+		t("createInstance getClass(ap)", () -> { var r:Dynamic = Type.createInstance(Type.getClass(ap), []); return Std.string(Type.getClass(r)) + " len " + r.length; });
+		t("createInstance getClass(bx)", () -> { var r:Dynamic = Type.createInstance(Type.getClass(bx), [7]); return Std.string(Type.getClass(r)) + " v " + r.v; });
+		t("emptyInstance getClass(bx)", () -> { var r:Dynamic = Type.createEmptyInstance(Type.getClass(bx)); return Std.string(Type.getClass(r)) + " v " + r.v; });
+		t("push on created", () -> { var r:Dynamic = Type.createInstance(Type.getClass(ai), []); r.push(5); r.push(6); return r.length + " " + r[1]; });
+		t("typeof class", () -> Type.typeof(Type.getClass(ai)));
+		t("className of getClass(ai)", () -> Type.getClassName(Type.getClass(ai)));
+		t("getClass ai == Array", () -> Type.getClass(ai) == (Array : Dynamic));
+		t("getClass ad == Array", () -> Type.getClass(ad) == (Array : Dynamic));
+		t("getClass ap == Array", () -> Type.getClass(ap) == (Array : Dynamic));
+		t("getClass ai == getClass ad", () -> Type.getClass(ai) == Type.getClass(ad));
+		t("getClass bx == Box", () -> Type.getClass(bx) == (Box : Dynamic));
+		t("switch typeof TClass(Array)", () -> switch (Type.typeof(ai)) { case TClass(c): c == Array; default: false; });
+		t("switch typeof ad TClass(Array)", () -> switch (Type.typeof(ad)) { case TClass(c): c == Array; default: false; });
+		t("className switch", () -> switch (Type.typeof(ai)) { case TClass(c): Type.getClassName(c); default: "?"; });
+		t("Std.string(Array)", () -> Std.string(Array));
+		t("Std.string(Box)", () -> Std.string(Box));
+	}
+}
+===
+[run]
+createInstance getClass(ai) Array`1[System.Int32] len 0
+createInstance getClass(ad) Array`1[System.Object] len 0
+createInstance getClass(ap) Array`1[System.Object] len 0
+createInstance getClass(bx) Box`1[System.Int32] v 7
+emptyInstance getClass(bx) Box`1[System.Int32] v 0
+push on created 2 6
+typeof class TObject
+className of getClass(ai) Array
+getClass ai == Array true
+getClass ad == Array true
+getClass ap == Array true
+getClass ai == getClass ad true
+getClass bx == Box true
+switch typeof TClass(Array) true
+switch typeof ad TClass(Array) true
+className switch Array
+Std.string(Array) Array`1[System.Object]
+Std.string(Box) Box`1[System.Object]
+
+# Std notes A12 (a regression pin).
+--- list-lambda-generics @gencs
+class Pt { public var x:Int; public function new(x:Int) this.x = x; public function toString() return "Pt" + x; }
+class P {
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var l = new List<Int>();
+		l.add(1); l.add(2); l.push(0);
+		t(() -> l.length);
+		t(() -> l.toString());
+		t(() -> l.join("-"));
+		t(() -> l.first());
+		t(() -> l.last());
+		t(() -> l.pop());
+		t(() -> l.map(i -> i * 2).toString());
+		t(() -> l.filter(i -> i > 0).toString());
+		t(() -> [for (i in l) i + 1]);
+		t(() -> { var it = l.iterator(); it.next(); it.next(); });
+		t(() -> Lambda.array(l));
+		t(() -> Lambda.list([3, 4]).toString());
+		t(() -> Lambda.map(l, i -> i + 1));
+		t(() -> Lambda.filter(l, i -> i > 1));
+		t(() -> Lambda.exists(l, i -> i == 2));
+		t(() -> Lambda.count(l));
+		t(() -> Lambda.fold(l, (i, a) -> i + a, 0));
+		t(() -> Lambda.concat([1], l));
+		t(() -> Lambda.flatten([[1], [2, 3]]));
+		t(() -> Lambda.flatMap([1, 2], i -> [i, i]));
+		t(() -> Lambda.empty([]));
+		t(() -> Lambda.has([1, 2], 2));
+		t(() -> Lambda.indexOf([1, 2], 2));
+		t(() -> Lambda.find([1, 2], i -> i == 2));
+		t(() -> Lambda.foreach([1, 2], i -> i > 0));
+		t(() -> Lambda.mapi([5, 6], (i, v) -> i + v));
+		t(() -> Lambda.array(new haxe.ds.StringMap<Int>()));
+		var pts = [new Pt(1), new Pt(2)];
+		var pl = new List<Pt>(); pl.add(pts[0]);
+		t(() -> Lambda.array(pl));
+		t(() -> Lambda.map(pts, p -> p.x));
+		t(() -> Lambda.filter(pts, p -> p.x > 1));
+		t(() -> Lambda.array(pts));
+		t(() -> Lambda.list(pts).first());
+		var sl = new List<String>(); sl.add("a");
+		t(() -> sl.toString());
+		t(() -> Lambda.map(sl, s -> s + "!"));
+		t(() -> Std.string(Type.getClass(l)));
+		t(() -> Type.typeof(l));
+	}
+}
+===
+[run]
+3
+{0, 1, 2}
+0-1-2
+0
+2
+0
+{2, 4}
+{1, 2}
+[2,3]
+2
+[1,2]
+{3, 4}
+[2,3]
+[2]
+True
+2
+3
+[1,1,2]
+[1,2,3]
+[1,1,2,2]
+True
+True
+1
+2
+True
+[5,7]
+[]
+[Pt1]
+[1,2]
+[Pt2]
+[Pt1,Pt2]
+Pt1
+{a}
+[a!]
+haxe.ds.List`1[System.Int32]
+TClass(haxe.ds.List`1[System.Int32])

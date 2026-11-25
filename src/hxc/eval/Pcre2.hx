@@ -61,9 +61,12 @@ enum abstract Pcre2Flag(Int) to Int {
 	var NO_UTF_CHECK = 0x40000000;
 }
 
+#if cpp
 @:buildXml('<files id="haxe"><compilerflag value="-I${HXCPP}/project/thirdparty/pcre2-10.42/src"/></files>')
 @:cppFileCode('#define PCRE2_STATIC\n#define PCRE2_CODE_UNIT_WIDTH 8\n#include <pcre2.h>\n#include <string.h>\nextern int _hxcpp_argc;\nextern char **_hxcpp_argv;\nstatic unsigned char hxc_pcre2_empty[1] = {0};')
+#end
 class Pcre2 {
+	#if cpp
 	// The compiled pattern (pcre2_code*), kept as an address; freed with the regexp.
 	final code:cpp.RawPointer<cpp.Void>;
 	public final captureCount:Int;
@@ -79,10 +82,25 @@ class Pcre2 {
 	@:void static function finalize(r:Pcre2):Void {
 		untyped __cpp__("pcre2_code_free((pcre2_code*){0})", r.code);
 	}
+	#else
+	// The pattern a host that is not C++ compiled (HostRegex), which owns its memory.
+	final code:HostRegex;
+	public final captureCount:Int;
+
+	function new(code:HostRegex) {
+		this.code = code;
+		captureCount = code.captureCount;
+	}
+	#end
 
 	// The pattern's bytes, the compile options, no character tables; a failure is a
 	// BadPattern(message, offset) error. The message is a 128-byte string that
 	// pcre2_get_error_message fills up to its NUL; the rest is zeros.
+	#if !cpp
+	public static function compile(options:Int, pattern:ByteString):Pcre2 {
+		return new Pcre2(HostRegex.compile(options, pattern.toBytes()));
+	}
+	#else
 	public static function compile(options:Int, pattern:ByteString):Pcre2 {
 		var b = pattern.toBytes();
 		var len = b.length;
@@ -102,6 +120,7 @@ class Pcre2 {
 		}
 		return new Pcre2(code);
 	}
+	#end
 
 	/**
 	 * Pcre2_match with no callout: match `subj` from byte `pos` under the run-time `options`, filling
@@ -109,11 +128,18 @@ class Pcre2 {
 	 * part). NOMATCH raises Pcre2NotFound, a malformed-UTF result BadUTF, and so on.
 	 */
 	public function match(options:Int, pos:Int, subj:haxe.io.Bytes, ovector:Array<Int>):Void {
+		if (!matchOpt(options, pos, subj, ovector)) throw new Pcre2NotFound();
+	}
+
+	// The same, with NOMATCH as the answer false: most searches end on one, and a raise costs far more
+	// than the search it ends.
+	public function matchOpt(options:Int, pos:Int, subj:haxe.io.Bytes, ovector:Array<Int>):Bool {
 		var len = subj.length;
 		if (pos > len || pos < 0) throw new EvalExceptions.HostException("Invalid_argument(\"Pcre2.pcre2_match_stub: illegal position\")", false);
 		var pairs = captureCount + 1;
 		var out = new Array<Int>();
 		out.resize(pairs * 2);
+		#if cpp
 		var ret = 0;
 		untyped __cpp__("{
 			PCRE2_SPTR hxc_s = {2} > 0 ? (PCRE2_SPTR){1}->b->GetBase() : hxc_pcre2_empty;
@@ -128,10 +154,15 @@ class Pcre2 {
 			}
 			pcre2_match_data_free(hxc_md);
 		}", code, subj, len, pos, options, ret, out, pairs);
+		#else
+		var ret = code.match(options, pos, subj, out, pairs);
+		#end
+		if (ret == -1) return false; // PCRE2_ERROR_NOMATCH
 		if (ret < 0) throw matchError(ret);
 		// The pairs past the last one the match set are -1.
 		var set = ret == 0 ? pairs : ret;
 		for (i in 0...pairs * 2) ovector[i] = i < set * 2 ? out[i] : -1;
+		return true;
 	}
 
 	// A failed match's code as its exception.
@@ -161,20 +192,32 @@ class Pcre2 {
 		return new Pcre2Substrings(subj, ov);
 	}
 
+	// exec, with null for no match.
+	public function execOpt(iflags:Int, pos:Int, subj:haxe.io.Bytes):Null<Pcre2Substrings> {
+		var ov = makeOvector();
+		return matchOpt(iflags, pos, subj, ov) ? new Pcre2Substrings(subj, ov) : null;
+	}
+
 	// Every match from `pos`, an empty match retried with NOTEMPTY.
 	public function execAll(iflags:Int, pos:Int, subj:haxe.io.Bytes):Array<Pcre2Substrings> {
-		var first = exec(iflags, pos, subj);
+		var all = execAllOpt(iflags, pos, subj);
+		if (all == null) throw new Pcre2NotFound();
+		return all;
+	}
+
+	// execAll, with null when there is no match at all.
+	public function execAllOpt(iflags:Int, pos:Int, subj:haxe.io.Bytes):Null<Array<Pcre2Substrings>> {
+		var first = execOpt(iflags, pos, subj);
+		if (first == null) return null;
 		var nullFlags = iflags | (NOTEMPTY : Int);
 		var subjLen = subj.length;
 		var out = [first];
 		var cur = first;
 		var p = first.ovector[1];
 		while (true) {
-			var next:Null<Pcre2Substrings> = try {
-				if (cur.ovector[0] == p && cur.ovector[1] == p) {
-					if (p == subjLen) null else exec(nullFlags, p, subj);
-				} else exec(iflags, p, subj);
-			} catch (_:Pcre2NotFound) null;
+			var next:Null<Pcre2Substrings> = if (cur.ovector[0] == p && cur.ovector[1] == p) {
+				if (p == subjLen) null else execOpt(nullFlags, p, subj);
+			} else execOpt(iflags, p, subj);
 			if (next == null) break;
 			out.push(next);
 			cur = next;
@@ -245,12 +288,18 @@ class Pcre2 {
 	// Argv[0], the program's name exactly as the command line gave it (the host's resolved programPath
 	// differs whenever it was started through a relative or slash-flipped path).
 	static function programName():haxe.io.Bytes {
+		#if cpp
 		var len = -1;
 		untyped __cpp__("if (_hxcpp_argc > 0) {0} = (int)strlen(_hxcpp_argv[0])", len);
 		if (len < 0) return haxe.io.Bytes.ofString(Sys.programPath());
 		var b = haxe.io.Bytes.alloc(len);
 		for (i in 0...len) b.set(i, untyped __cpp__("(int)(unsigned char)_hxcpp_argv[0][{0}]", i));
 		return b;
+		#elseif (cs && hxc_pcre2_netlib)
+		return haxe.io.Bytes.ofString(hxchost.HostInfo.ProgramName());
+		#else
+		return haxe.io.Bytes.ofString(Sys.programPath());
+		#end
 	}
 
 	static function calcTransLst(subgroups2:Int, ov:Array<Int>, subj:haxe.io.Bytes, templ:haxe.io.Bytes,
@@ -292,7 +341,7 @@ class Pcre2 {
 		var out = new haxe.io.BytesBuffer();
 		var curPos = 0;
 		while (true) {
-			var none = curPos > subjLen || (try { match(iflags, curPos, subj, ov); false; } catch (_:Pcre2NotFound) true);
+			var none = curPos > subjLen || !matchOpt(iflags, curPos, subj, ov);
 			if (none) {
 				var postfix = subjLen - curPos;
 				if (postfix > 0) out.addBytes(subj, curPos, postfix);
@@ -318,7 +367,7 @@ class Pcre2 {
 		var nsubs = (subgroups2 >> 1) - 1;
 		if (t.maxBr > nsubs) throw new EvalExceptions.HostException("Pcre2.replace_first: backreference denotes nonexistent subpattern", true);
 		if (t.withLp && nsubs == 0) throw new EvalExceptions.HostException("Pcre2.replace_first: no backreferences", true);
-		try match(iflags, 0, subj, ov) catch (_:Pcre2NotFound) return subj;
+		if (!matchOpt(iflags, 0, subj, ov)) return subj;
 		var first = ov[0];
 		var last = ov[1];
 		var out = new haxe.io.BytesBuffer();
@@ -358,3 +407,56 @@ class Pcre2Substrings {
 		return {first: start, last: ovector[n * 2 + 1]};
 	}
 }
+
+#if !cpp
+/**
+ * The regexp engine of a host that is not C++. `match` answers as pcre2_match does: the number of
+ * pairs set (0 when all are), or a negative PCRE2 error code (-1 is no match); `out` takes the start
+ * and end of each pair, -1 for a group that took no part.
+ *
+ * On .NET with -D hxc_pcre2_netlib it is the same PCRE2, reached through tools/dotnet-host's
+ * HxcHostNative.dll (--net-lib). Anywhere else there is none, and compiling a pattern says so.
+ */
+class HostRegex {
+	public var captureCount(default, null):Int = 0;
+
+	#if (cs && hxc_pcre2_netlib)
+	final code:hxchost.Pcre2Code;
+
+	function new(code:hxchost.Pcre2Code) {
+		this.code = code;
+		captureCount = code.CaptureCount;
+	}
+
+	public static function compile(options:Int, pattern:haxe.io.Bytes):HostRegex {
+		var error = new cs.NativeArray<Int>(2);
+		var code = hxchost.Pcre2Code.Compile(pattern.getData(), pattern.length, options, error);
+		if (code == null) {
+			var msg = haxe.io.Bytes.ofData(hxchost.Pcre2Code.ErrorMessage(error[0])).toString();
+			throw new Pcre2.Pcre2Exception(BadPattern(msg, error[1]));
+		}
+		return new HostRegex(code);
+	}
+
+	public function match(options:Int, pos:Int, subj:haxe.io.Bytes, out:Array<Int>, pairs:Int):Int {
+		var ov = new cs.NativeArray<Int>(pairs * 2);
+		var r = code.Match(subj.getData(), subj.length, pos, options, ov, pairs);
+		if (r >= 0) {
+			var k = r == 0 ? pairs : r;
+			for (i in 0...k * 2) out[i] = ov[i];
+		}
+		return r;
+	}
+	#else
+	function new() {}
+
+	public static function compile(options:Int, pattern:haxe.io.Bytes):HostRegex {
+		throw new EvalExceptions.HostException("EReg is not available in macros on this host", false);
+	}
+
+	public function match(options:Int, pos:Int, subj:haxe.io.Bytes, out:Array<Int>, pairs:Int):Int {
+		return -1;
+	}
+	#end
+}
+#end

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Builds the C# that Haxe 4.3.7 gencs writes (-D no-compilation) for net10.0; run.sh fills in @NAME@ and @MAIN@. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>@NAME@</AssemblyName>
+    <StartupObject>@MAIN@</StartupObject>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CS0108;CS0109;CS0114;CS0162;CS0164;CS0168;CS0169;CS0183;CS0184;CS0219;CS0252;CS0253;CS0414;CS0472;CS0618;CS0642;CS0649;CS0659;CS0660;CS0661;CS0665;CS0675;CS0693;CS0728;CS1717;CS1718;CS8981;SYSLIB0050</NoWarn>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <Optimize>true</Optimize>
+    <DebugType>none</DebugType>
+    <DefineConstants>$(DefineConstants);NET_CORE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="src/**/*.cs" />
+    <EmbeddedResource Include="src/Resources/**" LogicalName="src.Resources.$([System.String]::Copy('%(RecursiveDir)%(Filename)%(Extension)').Replace('\','/'))" />
+  </ItemGroup>
+</Project>

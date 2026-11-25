@@ -172,23 +172,42 @@ class TypeUnification {
 	// return cannot bind to the anon's field type.
 	public static var forceOpenMethodHook:Null<(c:TClass, cf:TClassField)->Void> = null;
 
-	static var eqStack:RecStack<{a:T, b:T}> = new RecStack();
-	static var unifyStack:RecStack<{a:T, b:T}> = new RecStack();
-	static var varianceStack:RecStack<{a:T, b:T}> = new RecStack();
-	static var abstractCastStack:RecStack<{a:T, b:T}> = new RecStack();
-	static var unifyNewMonos:RecStack<T> = new RecStack();
+	// The recursion stacks, one set per thread slot (hxc.core.Par).
+	static var eqStacks:Array<RecStack<{a:T, b:T}>> = [for (_ in 0...Par.MAX_THREADS) new RecStack()];
+	static var unifyStacks:Array<RecStack<{a:T, b:T}>> = [for (_ in 0...Par.MAX_THREADS) new RecStack()];
+	static var varianceStacks:Array<RecStack<{a:T, b:T}>> = [for (_ in 0...Par.MAX_THREADS) new RecStack()];
+	static var abstractCastStacks:Array<RecStack<{a:T, b:T}>> = [for (_ in 0...Par.MAX_THREADS) new RecStack()];
+	static var unifyNewMonosStacks:Array<RecStack<T>> = [for (_ in 0...Par.MAX_THREADS) new RecStack()];
+	static var eqStack(get, never):RecStack<{a:T, b:T}>;
+	static function get_eqStack() return eqStacks[Par.tid()];
+	static var unifyStack(get, never):RecStack<{a:T, b:T}>;
+	static function get_unifyStack() return unifyStacks[Par.tid()];
+	static var varianceStack(get, never):RecStack<{a:T, b:T}>;
+	static function get_varianceStack() return varianceStacks[Par.tid()];
+	static var abstractCastStack(get, never):RecStack<{a:T, b:T}>;
+	static function get_abstractCastStack() return abstractCastStacks[Par.tid()];
+	static var unifyNewMonos(get, never):RecStack<T>;
+	static function get_unifyNewMonos() return unifyNewMonosStacks[Par.tid()];
 
 	// Mono journal: while active, records the pre-mutation state of every monomorph touched by a
 	// bind/constraint operation so a speculative unification (an operator-overload probe) can be rolled
 	// back on failure without leaving unrelated monos corrupted. Abstract binop overload resolution relies
 	// on failed typeEq/cast attempts not persisting.
-	static var monoJournal:Null<Array<MonoState>> = null;
+	static var monoJournals:Array<Null<Array<MonoState>>> = [for (_ in 0...Par.MAX_THREADS) null];
+	static var monoJournal(get, set):Null<Array<MonoState>>;
+	static function get_monoJournal() return monoJournals[Par.tid()];
+	static function set_monoJournal(v:Null<Array<MonoState>>) return monoJournals[Par.tid()] = v;
 	// The open frame's nesting depth. A mono's journal is the depth of the innermost open frame
 	// holding an entry for it: frames nest, and each one leaving puts back the journal of every
 	// mono it holds, so no closed frame's depth is left behind.
-	static var monoJournalDepth:Int = 0;
+	static var monoJournalDepths:Array<Int> = [for (_ in 0...Par.MAX_THREADS) 0];
+	static var monoJournalDepth(get, set):Int;
+	static function get_monoJournalDepth() return monoJournalDepths[Par.tid()];
+	static function set_monoJournalDepth(v:Int) return monoJournalDepths[Par.tid()] = v;
 
 	static function journalMono(m:TMono):Void {
+		// A monomorph is shared by whatever holds its type: only the main thread changes one.
+		Par.mainOnly();
 		var j = monoJournal;
 		if (j != null) {
 			// Record only the first time a mono is seen in this probe (its earliest state).
@@ -218,14 +237,20 @@ class TypeUnification {
 		carried.
 	**/
 	public static function withRegisteredMonoRollback<R>(monos:Array<{m:TMono, p:hxc.ast.Position}>, f:Void->R):R {
-		var known = [for (e in monos) {m: e.m, ty: e.m.type, down: e.m.downConstraints}];
+		// What each registered monomorph holds now, in three arrays side by side: this runs for every
+		// field call, and one object per monomorph was most of what a call allocated.
 		var current = monos.copy();
+		var n = current.length;
+		var knownM:Array<TMono> = [for (e in current) e.m];
+		var knownTy = [for (m in knownM) m.type];
+		var knownDown = [for (m in knownM) m.downConstraints];
 		try {
 			return f();
 		} catch (ex:haxe.Exception) {
-			for (k in known) {
-				if (k.ty != k.m.type) k.m.type = k.ty;
-				if (k.down != k.m.downConstraints) k.m.downConstraints = k.down;
+			for (i in 0...n) {
+				var m = knownM[i];
+				if (knownTy[i] != m.type) m.type = knownTy[i];
+				if (knownDown[i] != m.downConstraints) m.downConstraints = knownDown[i];
 			}
 			monos.splice(0, monos.length);
 			for (e in current) monos.push(e);
@@ -496,6 +521,7 @@ class TypeUnification {
 	}
 
 	public static function monoBind(m:TMono, t:T):Void {
+		Par.mainOnly();
 		switch (t) {
 			case TAnon(_) if (listMemOpenStructure(m.downConstraints)):
 				// Merge fields semantics
@@ -871,7 +897,10 @@ class TypeUnification {
 	}
 
 	// What typeEq raises where typeEqTry returned false.
-	static var eqFailErrors:Array<UnifyErrorKind>;
+	static var eqFailErrorsSlots:Array<Array<UnifyErrorKind>> = [for (_ in 0...Par.MAX_THREADS) null];
+	static var eqFailErrors(get, set):Array<UnifyErrorKind>;
+	static function get_eqFailErrors() return eqFailErrorsSlots[Par.tid()];
+	static function set_eqFailErrors(v:Array<UnifyErrorKind>) return eqFailErrorsSlots[Par.tid()] = v;
 
 	static function eqFail(l:Array<UnifyErrorKind>):Bool {
 		eqFailErrors = l;

@@ -108,6 +108,8 @@ class PathKey {
 	// system, so the file need not exist and symbolic links stay; `.`, `..`, doubled and trailing slashes
 	// are folded only when the path has any.
 	public static function fullPath(f:String):String {
+		// The .NET runtime's files embedded in hxc have no place on disk.
+		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(f)) return f;
 		if (Globals.isWindows) return try sys.FileSystem.fullPath(f) catch (_:Dynamic) f;
 		var length = f.length;
 		function skipPastSlash(i:Int):Int {
@@ -162,8 +164,11 @@ class PathKey {
 	// everything below it, keeps the case it was given. Elsewhere the full path. The path itself where that
 	// fails.
 	public static function realPath(p:String):String {
+		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(p)) return p;
 		#if cpp
 		return untyped __cpp__("hxc_get_real_path({0})", p);
+		#elseif (cs && hxc_pcre2_netlib)
+		return hxchost.HostInfo.RealPath(p);
 		#else
 		return try sys.FileSystem.fullPath(p) catch (_:Dynamic) p;
 		#end

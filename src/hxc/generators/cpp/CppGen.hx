@@ -26,6 +26,8 @@ class CppGen {
 			}
 		}
 		var base = com.file;
+		var prefix = com.defines.rawDefinedValueSafe("include_prefix", "");
+		CppGenClass.includePrefix = prefix == "" ? "" : prefix + "/";
 		var sourceExtension = sourceFileExtension(com);
 		ensureDir(base);
 		ensureDir(base + "/src");
@@ -36,7 +38,7 @@ class CppGen {
 		// Fix overrides (Cpp only): rewrite each override method's signature to match its overridden base
 		// (return type + arg types) so C++ virtual overrides are covariant-clean; must run before
 		// generation.
-		for (mt in com.types) CppFixOverrides.fixOverrides(com, mt);
+		for (mt in com.types) hxc.codegen.FixOverrides.fixOverrides(com, mt);
 		// Constructor synthesis (the forwarding/inherited/compiler-generated constructors) is done at typer
 		// time by Filters.run -> Typer.ensureInheritedCtor for every platform, so no cpp-gen pass is needed.
 		CppGenClass.buildTypeIds(com);
@@ -64,14 +66,14 @@ class CppGen {
 		// during generation names the culprit as the last line printed instead of failing silently.
 		var trace = com.defines.rawDefined("cppgen-trace");
 		inline function traceType(kind:String, path:Path):Void {
-			if (trace) { Sys.stderr().writeString("[cppgen] " + kind + " " + CppGenClass.joinPath(path, ".") + "\n"); Sys.stderr().flush(); }
+			if (trace) { hxc.core.HostStdio.err().writeString("[cppgen] " + kind + " " + CppGenClass.joinPath(path, ".") + "\n"); hxc.core.HostStdio.err().flush(); }
 		}
 		for (mt in com.types) switch (mt) {
 			case TClassDecl(c) if (shouldEmit(c)):
 				traceType("class", c.path);
 				var gc = new CppGenClass(com, c);
 				var p = CppGenClass.joinPath(c.path, "/");
-				ensureDir(base + "/include/" + dirOf(p));
+				ensureDir(base + "/include/" + CppGenClass.includePrefix + dirOf(p));
 				ensureDir(base + "/src/" + dirOf(p));
 				var nativeGen = TypeFunctions.hasMeta(":nativeGen", c.meta);
 				// The cpp is generated before the header so interface-glue forwarders accumulated during
@@ -79,7 +81,7 @@ class CppGen {
 				// only a header, no cpp.
 				var isNativeGenInterface = nativeGen && TypeFunctions.hasClassFlag(c, CInterface);
 				var cppText = isNativeGenInterface ? null : (nativeGen ? gc.genNativeGenCpp() : gc.genCpp());
-				writeSourceFile(com, base + "/include/" + p + ".h", nativeGen ? gc.genNativeGenHeader() : gc.genHeader());
+				writeSourceFile(com, base + "/include/" + CppGenClass.includePrefix + p + ".h", nativeGen ? gc.genNativeGenHeader() : gc.genHeader());
 				if (!isNativeGenInterface)
 					writeSourceFile(com, base + "/src/" + p + sourceExtension, cppText);
 				if (!(TypeFunctions.hasClassFlag(c, CInterface) && CppTypeOf.isNativeGenClass(c)))
@@ -88,9 +90,9 @@ class CppGen {
 				traceType("enum", e.path);
 				var ge = new CppGenEnum(com, e);
 				var p = CppGenClass.joinPath(e.path, "/");
-				ensureDir(base + "/include/" + dirOf(p));
+				ensureDir(base + "/include/" + CppGenClass.includePrefix + dirOf(p));
 				ensureDir(base + "/src/" + dirOf(p));
-				writeSourceFile(com, base + "/include/" + p + ".h", ge.genHeader());
+				writeSourceFile(com, base + "/include/" + CppGenClass.includePrefix + p + ".h", ge.genHeader());
 				writeSourceFile(com, base + "/src/" + p + sourceExtension, ge.genCpp());
 				exeClasses.unshift({path: e.path, deps: typeDeps.get(Context.pathKey(e.path)), mt: mt});
 			case _:
@@ -160,7 +162,7 @@ class CppGen {
 
 	static function guardedInclude(path:Path):String {
 		var guard = CppGenClass.joinPath(path, "_");
-		var inc = CppGenClass.joinPath(path, "/");
+		var inc = CppGenClass.includePrefix + CppGenClass.joinPath(path, "/");
 		return "#ifndef INCLUDED_" + guard + "\n#include <" + inc + ".h>\n#endif\n";
 	}
 
@@ -393,7 +395,7 @@ class CppGen {
 			for (p in deps)
 				if (!CppTypeOf.isInternalClass(p))
 					b.add("   <depend name=\"" + (p.pack.length == 1 && p.pack[0] == "@verbatim" ? p.name
-						: "include/" + CppGenClass.joinPath(p, "/") + ".h") + "\"/>\n");
+						: "include/" + CppGenClass.includePrefix + CppGenClass.joinPath(p, "/") + ".h") + "\"/>\n");
 			b.add("  </file>\n");
 		}
 		b.add("<xml>\n<set name=\"HXCPP_API_LEVEL\" value=\"" + api + "\" />\n");

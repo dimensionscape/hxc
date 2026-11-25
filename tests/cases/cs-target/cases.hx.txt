@@ -1,0 +1,74 @@
+--- net-ver-not-a-number + -D net-ver=4x
+class P { static function main() {} }
+
+--- net-ver-below-20 + -D net-ver=10
+class P { static function main() {} }
+
+--- no-std-dir-for-net-ver + -D net-ver=99
+class P { static function main() {} }
+
+--- netcore-without-netcore-ver + -D net-target=netcore
+class P { static function main() {} }
+
+--- net-std-without-the-digraph + --net-std . -D net-ver=40
+class P { static function main() {} }
+
+--- std-type-resolves
+class P { static function main() { $type(new cs.system.text.StringBuilder()); } }
+
+--- native-array-works
+class P { static function main() { var a = new cs.NativeArray<Int>(3); $type(a); $type(a.Length); $type(a[0]); } }
+
+--- net40-std-loads + -D net-ver=40
+class P { static function main() { $type(cs.system.Console.Out); $type(cs.system.Environment.ProcessorCount); } }
+
+--- default-net-ver-is-20
+class P { static function main() { #if (NET_20 && !NET_21) $type("net20"); #end #if net $type("net"); #end } }
+
+--- net-ver-40-defines-up-to-40 + -D net-ver=40
+class P { static function main() { #if (NET_40 && !NET_45) $type("net40"); #end } }
+
+--- null-literal-is-a-plain-monomorph
+class P {
+	static function main() {
+		var found = null;
+		$type(found);
+		$type(null);
+		var a:Array<Dynamic> = [];
+		for (pf in a) { found = pf; break; }
+	}
+}
+
+--- field-written-after-read-through-null-initialized-local
+class P {
+	static function g<T>():Array<T> return [];
+	static function main() {
+		var found = null;
+		for (pf in g()) { var a = pf.Name; found = pf; break; }
+		var b = found.Name;
+		found.Name = "a";
+		$type(found);
+	}
+}
+
+--- null-literal-to-a-basic-type
+class P { static function main() { var x:Int = null; } }
+
+--- local-function-null-default-on-a-static-target
+class P {
+	static function main() {
+		function f(r:Int, num:Float = null) { $type(num); }
+		f(1);
+	}
+}
+
+--- exceptions-are-wrapped-for-dce + -dce full -D dce-debug -D unsafe
+class P {
+	static function main() {
+		try {
+			throw "x";
+		} catch (e:Dynamic) {
+			trace("a" + e);
+		}
+	}
+}

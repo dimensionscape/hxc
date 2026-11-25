@@ -1,0 +1,182 @@
+--- plain-class-members
+class P { static function main() { var p = new fixture.Plain(3); $type(p.Count); $type(p.Ratio); $type(fixture.Plain.Name); $type(fixture.Plain.Max); $type(p.Add(1, 2)); $type(fixture.Plain.Wide); $type(p.Bytes()); $type(p.Unsigned()); $type(p.Any()); } }
+
+--- namespace-is-lowercased
+class P { static function main() { $type(new fixture.sub.Thing()); } }
+
+--- internal-type-is-loaded
+class P { static function main() { var h:fixture.Hidden = null; $type(h); } }
+
+--- lambda-closure-class-is-not-found
+class P { static function main() { $type(new fixture.UsesLambda().F()); var c:fixture.UsesLambda.UsesLambda__x60__x62_c = null; } }
+
+--- assigning-a-readonly-field
+class P { static function main() { new fixture.Plain().Ratio = 1.0; } }
+
+--- two-libraries-same-type + --net-lib Fixture2.dll
+class P { static function main() { var p = new fixture.Plain(); $type(p.Count); $type(p.Other); } }
+
+--- missing-net-lib + --net-lib Missing.dll
+class P { static function main() {} }
+
+--- bad-std-suffix + --net-lib Fixture.dll@std@x
+class P { static function main() {} }
+
+--- net-lib-as-std + --net-lib Fixture2.dll@std
+class P { static function main() { $type(new fixture.Plain().Other); } }
+
+--- two-std-dirs-in-command-line-order + --net-std netlib --net-std stdA --net-std stdB
+class P { static function main() { var p = new fixture.Plain(); $type(p.Other); $type(p.Count); } }
+
+--- not-an-assembly + --net-lib NotAnAssembly.dll
+class P { static function main() {} }
+
+--- generic-class-and-method
+class P { static function main() { var b = new fixture.Box_1<String>(); $type(b.Value); $type(b.Map); } }
+
+--- generic-constraints
+class P { static function main() { var p = new fixture.Pair_2<String, Int>(); $type(p.First); $type(p.Second); } }
+
+--- nested-type-in-outer-module
+class P { static function main() { var i = new fixture.Outer.Outer_Inner(); $type(i.V); } }
+
+--- nested-name-collision
+class P { static function main() { $type(new fixture.Outer_Inner().W); } }
+
+--- nested-and-top-level-redefined
+class P { static function main() { var a = new fixture.Outer_Inner(); var b = new fixture.Outer.Outer_Inner(); } }
+
+--- nested-in-generic
+class P { static function main() { var n = new fixture.Box_1.Box_1_Nested<Int>(); $type(n.Item); } }
+
+--- lowercase-class-is-capitalized
+class P { static function main() { $type(new fixture.LowerName().X); } }
+
+--- haxe-keyword-members
+class P { static function main() { var k = new fixture.Keywords(); $type(k); $type(k._in); $type(k._cast); $type(k._var); } }
+
+--- type-references-by-name
+class P { static function main() { var u = new fixture.UsesNames(); $type(u.N); $type(u.G); $type(u.P); $type(u.L); $type(u.N.Item); $type(u.NA); } }
+
+--- type-references-a-nested-type
+class P { static function main() { var u = new fixture.UsesInner(); $type(u.I); $type(u.I.V); } }
+
+--- nested-generic-chain
+class P { static function main() { var l = new fixture.Outer2_1.Outer2_1_Mid_1_Leaf<Int, String>(); $type(l.A); $type(l.B); } }
+
+--- nested-generic-middle-type
+class P { static function main() { var l = new fixture.Outer2_1.Outer2_1_Mid_1<Int, String>(); $type(l); } }
+
+--- nested-generic-chain-in-signature
+class P { static function main() { var u = new fixture.Uses2(); $type(u.L); $type(u.G); $type(u.F); $type(u.K); $type(u.L.A); $type(u.L.B); } }
+
+--- generic-base-class-members
+class P { static function main() { var d = new fixture.Derived(); $type(d.Value); $type(d.D); $type(d.Map); } }
+
+--- generic-methods-on-plain-class
+class P { static function main() { $type(fixture.GenStatics.Id); $type(fixture.GenStatics.Two); } }
+
+--- generic-interface-and-delegate
+class P { static function main() { var l:fixture.IGen_1<Int> = null; $type(l.Get); var f:fixture.Fn_2<Int, String> = null; $type(f); } }
+
+--- nested-enum
+class P { static function main() { $type(new fixture.WithEnum().K); $type(fixture.WithEnum.WithEnum_Kind.A); } }
+
+--- namespace-segments-are-lowercased
+class P { static function main() { $type(new fixture.mixedcase.deep.InDeep()); } }
+
+
+--- interface-and-explicit-impl
+class P { static function main() { var s = new fixture.Square(); $type(s.Area()); var i:fixture.IShape = s; var n:fixture.INamed = s; $type(n.Name()); } }
+
+--- enum-values
+class P { static function main() { $type(fixture.Color.Green); var c:fixture.Color = Red; } }
+
+--- flags-enum
+class P { static function main() { $type(fixture.Perm.Read); } }
+
+--- delegate-type
+class P { static function main() { var o:fixture.Op = null; $type(o); $type(o.Invoke); } }
+
+--- event-and-properties
+class P { static function main() { var e = new fixture.Events(); $type(e.Size); e.Size = 2; $type(e.ReadOnly); $type(e.Fired); $type(e.get_Item); } }
+
+--- assigning-a-get-only-property
+class P { static function main() { new fixture.Events().ReadOnly = 2; } }
+
+--- overloads-resolve
+class P { static function main() { var o = new fixture.Overloads(); o.F(1); o.F("a"); o.F(1, 2); $type(o.F); } }
+
+--- overload-mismatch-error
+class P { static function main() { new fixture.Overloads().F(1.5); } }
+
+--- struct-type
+class P { static function main() { var p = new fixture.Point(3); $type(p.X); } }
+
+--- operators
+class P { static function main() { var a = new fixture.Ops(); $type(a + a); $type(a == a); } }
+
+--- ref-and-out-parameters
+class P { static function main() { var a = 1; var b:String = null; new fixture.ByRef().Fill(a, b); $type(new fixture.ByRef().Fill); } }
+
+--- ref-parameter-accepts-plain-value
+class P { static function main() { new fixture.ByRef().Fill(1, null); } }
+
+--- ref-parameter-needs-cs-ref
+class P { static function main() { new fixture.ByRef().Fill("a", null); } }
+
+--- nullable-value-fields
+class P { static function main() { var n = new fixture.Nulls(); $type(n.MaybeInt); $type(n.MaybeDouble); } }
+
+--- event-accessors
+class P { static function main() { var e = new fixture.Events(); $type(e.add_Fired); $type(e.remove_Fired); } }
+
+--- property-accessors
+class P { static function main() { var e = new fixture.Events(); $type(e.get_Size); $type(e.set_Size); $type(e.get_ReadOnly); $type(e.set_Item); } }
+
+--- operators-are-static-methods
+class P { static function main() { var a = new fixture.Ops(); $type(fixture.Ops.op_Addition(a, a)); $type(fixture.Ops.op_Equality); $type(a != a); } }
+
+--- flags-enum-is-not-an-int
+class P { static function main() { var f = fixture.Perm.Read | fixture.Perm.Write; } }
+
+--- enum-switch
+class P { static function main() { var c:fixture.Color = Red; switch (c) { case Red: case Green: } } }
+
+--- struct-needs-a-constructor-argument
+class P { static function main() { new fixture.Point(); } }
+
+--- constructor-overloads-resolve
+class P { static function main() { $type(new fixture.Plain()); $type(new fixture.Plain(3)); } }
+
+--- constructor-overload-mismatch-error
+class P { static function main() { new fixture.Plain("s"); } }
+
+--- ambiguous-method-overload
+class P { static function main() { new fixture.Ambiguous("s").A(null); } }
+
+--- ambiguous-constructor-overload
+class P { static function main() { new fixture.Ambiguous(null); } }
+
+--- protected-constructor-overload
+class P { static function main() { new fixture.Guarded(); new fixture.Guarded(1); } }
+
+--- inherited-constructor-overload-mismatch-error
+class E extends cs.system.Exception {}
+class P { static function main() { new E(1.5); } }
+
+--- inherited-constructor-overloads-resolve
+class E extends cs.system.Exception {}
+class P { static function main() { $type(new E()); $type(new E("m")); $type(new E("m", new cs.system.Exception())); } }
+
+--- inherited-fixture-constructor-overloads
+class Sub extends fixture.Plain {}
+class P { static function main() { $type(new Sub(3)); $type(new Sub()); new Sub("s"); } }
+
+--- inherited-ambiguous-constructor-overload
+class Sub extends fixture.Ambiguous {}
+class P { static function main() { new Sub("s"); new Sub(null); } }
+
+--- inherited-protected-constructor-overload
+class G extends fixture.Guarded {}
+class P { static function main() { new G(); new G(1); } }

@@ -262,7 +262,9 @@ class Graph {
 	public var varInfos:Array<VarInfo>;
 	public var loops:IntMap<BasicBlock>;
 
-	static var nextId = 1;
+	// Block ids count up within one graph (the root took 1): only their order within the graph matters, and a
+	// counter of the graph's own keeps them the same whichever thread builds it.
+	var nextId = 1;
 
 	function new() {}
 
@@ -352,13 +354,9 @@ class Graph {
 	}
 
 	// First call yields 2; the root took 1
-	public static function allocId():Int {
+	public function allocId():Int {
 		nextId++;
 		return nextId;
-	}
-
-	public static function resetIds():Void {
-		nextId = 1;
 	}
 
 	public function createNode(kind:BlockKind, t:T, p:Position):BasicBlock {
@@ -578,6 +576,9 @@ class AnalyzerContext {
 	public var debugExprs:Array<{s:String, e:TExpr}>;
 	public var nameStack:Array<String>;
 	public var didOptimize:Bool;
+	// The data-flow passes' cells (Analyzer.ConstPropagation and CopyPropagation), by variable id.
+	public var constLattice:haxe.ds.IntMap<Dynamic>;
+	public var copyLattice:haxe.ds.IntMap<Dynamic>;
 
 	public function new(com:Context, config:AnalyzerConfig, graph:Graph, identifier:String) {
 		this.com = com;

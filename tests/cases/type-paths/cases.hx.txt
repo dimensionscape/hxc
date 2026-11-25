@@ -1,0 +1,12 @@
+--- wildcard-import-finds-a-sub-type
+import wpk.*;
+class P { static function main() { var d:Def.Data = Def.make(); $type(d); } }
+
+--- wildcard-import-sub-type-in-a-later-package
+import wpk2.*;
+import wpk.*;
+class P { static function main() { var d:Def.Data = null; $type(d); var o:Def.Other = null; $type(o); } }
+
+--- wildcard-import-sub-type-not-found
+import wpk.*;
+class P { static function main() { var d:Def.Missing = null; } }

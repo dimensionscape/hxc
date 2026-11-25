@@ -22,6 +22,8 @@ class CppEmit {
 	var emitFuncName:String = "";
 	// The injection prologue (emitted at the top block's start; consumed once)
 	var topPrologue:Null<Bool->Void> = null;
+	// @:functionTailCode text, written before the top block's closing brace.
+	public var topTail:String = "";
 
 	// The per-file unique-id counter (goto labels, const-array names). Shared across every method body
 	// emitted into one .cpp/.h and threaded by the caller (CppGenClass); a null default keeps a fresh
@@ -132,7 +134,8 @@ class CppEmit {
 				// Local closures are defined at the block start
 				for (c in closures) genClosure(c);
 				// The injection prologue (stack frame etc.) is emitted once, for the top block
-				if (topPrologue != null) { var p = topPrologue; topPrologue = null; p(gc); }
+				var tail = "";
+				if (topPrologue != null) { var p = topPrologue; topPrologue = null; tail = topTail; topTail = ""; p(gc); }
 				lastLine = lineOf(rootPos);
 				var remaining = exprs.length;
 				for (e in exprs) {
@@ -143,6 +146,7 @@ class CppEmit {
 					writer.terminateLine();
 					remaining--;
 				}
+				if (tail != "") out(tail);
 				out(spacer());
 				if (newLine) writer.endBlock() else writer.endBlockLine();
 			case CppInt(i):

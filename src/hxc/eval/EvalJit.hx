@@ -55,7 +55,7 @@ class EvalJit {
 	public static function invoke(ctx:EvalContext, c:JCompiled, args:Array<EvalValue>, offset:Int, vthis:Null<EvalValue>, info:Null<EvalEnvInfo>):EvalValue {
 		var n = c.argSlots.length;
 		var defaults:Null<Array<EvalValue>> = null;
-		for (i in 0...n) {
+		if (c.anyDefault) for (i in 0...n) {
 			var d = c.argDefaults[i];
 			if (d == null) continue;
 			var j = i + offset;
@@ -67,7 +67,7 @@ class EvalJit {
 			}
 		}
 		if (info == null) info = EvalContext.createEnvInfo(vthis == null, c.expr.pos, EKEntrypoint, 0, 0);
-		var env = EvalContext.pushEnvironment(ctx, info, c.layout);
+		var env = EvalContext.pushFrame(ctx, info, c.layout);
 		env.vthis = vthis;
 		var locals = env.locals;
 		for (i in 0...n) {
@@ -78,7 +78,7 @@ class EvalJit {
 		// More values than arguments, raised in the pushed environment.
 		if (args.length > n + offset) EvalExceptions.excString(ctx, "Something went wrong");
 		var ret = runBody(ctx, env.eval, c.node);
-		EvalContext.popEnvironment(ctx, env);
+		EvalContext.popFrame(ctx, env);
 		return ret;
 	}
 
@@ -233,6 +233,8 @@ class EvalJit {
 
 	// A closure captures its defining frame and runs its body in a child frame linked to it.
 	public static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
+		// The closure keeps its defining frame (and the snapshot that frame's callers).
+		EvalContext.markEscaped(captured);
 		var snap = EvalEmitter.snapshotCaptures(tf, captured);
 		var ordinal = tf.evalOrdinal;
 		// The closure's info is made with it, not per call.
@@ -244,7 +246,7 @@ class EvalJit {
 				c = compiled(ctx, tf);
 				cache = c;
 			}
-			var env2 = EvalContext.pushEnvironment(ctx, info, c.layout);
+			var env2 = EvalContext.pushFrame(ctx, info, c.layout);
 			env2.lexicalParent = snap;
 			env2.vthis = captured == null ? null : captured.vthis;
 			var n = c.argSlots.length;
@@ -261,9 +263,37 @@ class EvalJit {
 			// More values than arguments, raised in the pushed environment.
 			if (args.length > n) EvalExceptions.excString(ctx, "Something went wrong");
 			var r = runBody(ctx, env2.eval, c.node);
-			EvalContext.popEnvironment(ctx, env2);
+			EvalContext.popFrame(ctx, env2);
 			return r;
 		};
+	}
+}
+
+// What an interpreted method's function (EvalPrototype.makeFunction) runs: the function calls
+// EvalJit.invoke with these, and a call site that knows them binds its arguments itself.
+class JMethod {
+	public final ctx:EvalContext;
+	public final tf:TFunc;
+	public final isInstance:Bool;
+	public final abstractThis:Bool;
+	public final info:EvalContext.EvalEnvInfo;
+	var cache:Null<JCompiled> = null;
+
+	public function new(ctx:EvalContext, tf:TFunc, isInstance:Bool, abstractThis:Bool, info:EvalContext.EvalEnvInfo) {
+		this.ctx = ctx;
+		this.tf = tf;
+		this.isInstance = isInstance;
+		this.abstractThis = abstractThis;
+		this.info = info;
+	}
+
+	public inline function compiled():JCompiled {
+		var c = cache;
+		if (c == null || !c.valid(ctx, tf)) {
+			c = EvalJit.compiled(ctx, tf);
+			cache = c;
+		}
+		return c;
 	}
 }
 
@@ -276,6 +306,8 @@ class JCompiled {
 	// Each argument's slot in the layout and its default value, if it has one.
 	public final argSlots:Array<Int>;
 	public final argDefaults:Array<Null<TExpr>>;
+	// Whether any argument has a default.
+	public final anyDefault:Bool;
 
 	public function new(ctx:EvalContext, tf:TFunc, layout:FrameLayout, node:JNode) {
 		this.ctx = ctx;
@@ -285,6 +317,9 @@ class JCompiled {
 		this.node = node;
 		this.argSlots = [for (a in tf.args) layout.slots.get(a.v.id)];
 		this.argDefaults = [for (a in tf.args) a.c];
+		var any = false;
+		for (d in this.argDefaults) if (d != null) any = true;
+		this.anyDefault = any;
 	}
 
 	public inline function valid(ctx:EvalContext, tf:TFunc):Bool {
@@ -647,7 +682,7 @@ class JAssignStatic extends JNode {
 		if (pos != null) ev.currentPos = pos;
 		var proto = EvalEmitter.ensureStaticProto(ctx, cl, lhs.pos);
 		var v = value.run(ctx, ev);
-		proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = v;
+		proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.fieldHash(cf), lhs.pos)] = v;
 		ev.currentPos = old;
 		return v;
 	}
@@ -772,7 +807,7 @@ class JRWLocal extends JNode {
 		var fe = slot >= 0 ? ev.env : EvalEmitter.localFrame(ev.env, v);
 		var s = slot >= 0 ? slot : EvalEmitter.localSlot(fe, v);
 		var v1 = fe.locals[s];
-		var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+		var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 		var r = EvalEmitter.binopValue(ctx, op, v1, v2, e.pos);
 		fe.locals[s] = r;
 		ev.currentPos = old;
@@ -802,9 +837,9 @@ class JRWStatic extends JNode {
 		if (pos != null) ev.currentPos = pos;
 		var p = e.pos;
 		var proto = EvalEmitter.ensureStaticProto(ctx, cl, p);
-		var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
+		var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.fieldHash(cf), p);
 		var vf = proto.pfields[idx];
-		var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+		var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 		var r = EvalEmitter.binopValue(ctx, op, vf, v2, p);
 		proto.pfields[idx] = r;
 		ev.currentPos = old;
@@ -847,7 +882,7 @@ class JRWField extends JNode {
 		}
 		var name = EvalEmitter.fieldKey(fa);
 		var vf = EvalField.field(ctx, o, name);
-		var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+		var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 		var r = EvalEmitter.binopValue(ctx, op, vf, v2, p);
 		EvalField.setField(ctx, o, name, r, p);
 		ev.currentPos = old;
@@ -888,7 +923,7 @@ class JRWArray extends JNode {
 			var idx = EvalStdLib.decodeIntP(ctx, idxNode.run(ctx, ev), idxE.pos);
 			if (idx < 0) EvalExceptions.excString(ctx, "Negative vector index: " + idx, idxE.pos);
 			var v = EvalEmitter.vecElemGet(vv, idx);
-			var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+			var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 			var r = EvalEmitter.binopValue(ctx, op, v, v2, p);
 			EvalEmitter.vecElemSet(vv, idx, r);
 			result = prefix ? r : v;
@@ -897,7 +932,7 @@ class JRWArray extends JNode {
 			var idx = EvalStdLib.decodeIntP(ctx, idxNode.run(ctx, ev), idxE.pos);
 			if (idx < 0) EvalExceptions.excString(ctx, "Negative array index: " + idx, idxE.pos);
 			var v = EvalEmitter.arrayElemGet(va, idx);
-			var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+			var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 			var r = EvalEmitter.binopValue(ctx, op, v, v2, p);
 			EvalEmitter.arrayElemSet(va, idx, r);
 			result = prefix ? r : v;
@@ -940,7 +975,7 @@ class JNeg extends JNode {
 		var old = ev.currentPos;
 		if (pos != null) ev.currentPos = pos;
 		var r = switch (a.run(ctx, ev)) {
-			case VInt(i): VInt(-i);
+			case VInt(i): hxc.eval.EvalValue.EvalValueTools.vint(-i);
 			case VFloat(f): VFloat(-f);
 			case _: EvalExceptions.excString(ctx, "Invalid operation", e.pos);
 		};
@@ -962,7 +997,7 @@ class JNegBits extends JNode {
 	override public function run(ctx:EvalContext, ev:Eval):EvalValue {
 		var old = ev.currentPos;
 		if (pos != null) ev.currentPos = pos;
-		var r = EvalEmitter.binopValue(ctx, OpSub, VInt(-1), a.run(ctx, ev), e.pos);
+		var r = EvalEmitter.binopValue(ctx, OpSub, hxc.eval.EvalValue.EvalValueTools.vint(-1), a.run(ctx, ev), e.pos);
 		ev.currentPos = old;
 		return r;
 	}
@@ -991,7 +1026,7 @@ class JIncLocal extends JNode {
 		var s = slot >= 0 ? slot : EvalEmitter.localSlot(fe, v);
 		var cur = fe.locals[s];
 		var next = switch (cur) {
-			case VInt(i): VInt(i + 1);
+			case VInt(i): hxc.eval.EvalValue.EvalValueTools.vint(i + 1);
 			case VFloat(f): VFloat(f + 1);
 			case _: EvalStdLib.unexpectedValueP(ctx, cur, "number", e1.pos);
 		};
@@ -1446,7 +1481,8 @@ class JField extends JNode {
 		this.recv = recv;
 	}
 
-	// 0 not yet known; 1 a class's var read (EvalEmitter.evalField's last FInstance case), 2 any other.
+	// 0 not yet known; 1 a class's var read (EvalEmitter.evalField's last FInstance case), 2 any other,
+	// 3 a static field.
 	var mode:Int = 0;
 	var cf:Null<TClassField> = null;
 	var hash:Int = -1;
@@ -1454,12 +1490,20 @@ class JField extends JNode {
 	// prototype, so an index once found stays right.
 	var cacheProto:Null<VPrototype> = null;
 	var cacheIdx:Int = -1;
+	// A static field's slot: `staticOwner.pfields[staticIdx]`, found through `staticProto`, which stays
+	// right while the context still maps the class to that prototype (a prototype's slots are only ever
+	// added, and its fields array is never replaced).
+	var staticClass:Null<TClass> = null;
+	var staticCtx:Null<EvalContext> = null;
+	var staticProto:Null<VPrototype> = null;
+	var staticOwner:Null<VPrototype> = null;
+	var staticIdx:Int = -1;
 
 	override public function run(ctx:EvalContext, ev:Eval):EvalValue {
 		var old = ev.currentPos;
 		if (pos != null) ev.currentPos = pos;
 		if (mode == 0) mode = varRead();
-		var r = if (mode == 1) readVar(ctx, recv.run(ctx, ev)) else EvalEmitter.evalField(ctx, e1, fa, e.pos, recv == null ? null : recv.run(ctx, ev));
+		var r = if (mode == 1) readVar(ctx, recv.run(ctx, ev)) else if (mode == 3) readStatic(ctx) else EvalEmitter.evalField(ctx, e1, fa, e.pos, recv == null ? null : recv.run(ctx, ev));
 		ev.currentPos = old;
 		return r;
 	}
@@ -1471,9 +1515,38 @@ class JField extends JNode {
 				if (!f.kind.match(Var(_))) return 2;
 				cf = f;
 				return 1;
+			case FStatic(c, f):
+				staticClass = c;
+				cf = f;
+				return 3;
 			case _:
 				return 2;
 		}
+	}
+
+	// EvalEmitter.evalField's static read, with the slot it found kept for the next run.
+	function readStatic(ctx:EvalContext):EvalValue {
+		var key = EvalHash.pathHash(staticClass.path);
+		var proto = ctx.staticPrototypes.get(key);
+		if (proto != null && proto == staticProto && ctx == staticCtx) return staticOwner.pfields[staticIdx];
+		var v = EvalEmitter.evalField(ctx, e1, fa, e.pos, null);
+		proto = ctx.staticPrototypes.get(key);
+		if (proto != null) {
+			var h = EvalHash.fieldHash(cf);
+			var p = proto;
+			while (p != null) {
+				var idx = p.pnames.get(h);
+				if (idx != null) {
+					staticCtx = ctx;
+					staticProto = proto;
+					staticOwner = p;
+					staticIdx = idx;
+					break;
+				}
+				p = p.pparent;
+			}
+		}
+		return v;
 	}
 
 	// evalField's instance read: an instance's field (the field read on it, or `stack` on an exception
@@ -1481,7 +1554,7 @@ class JField extends JNode {
 	function readVar(ctx:EvalContext, rv:EvalValue):EvalValue {
 		switch (rv) {
 			case VInstance(vi):
-				if (hash < 0) hash = EvalHash.hash(cf.name);
+				if (hash < 0) hash = EvalHash.fieldHash(cf);
 				var v:EvalValue;
 				if (vi.iproto == cacheProto) {
 					v = vi.ifields[cacheIdx];
@@ -1563,6 +1636,9 @@ class JCall extends JNode {
 	var methodProto:Null<VPrototype> = null;
 	var methodSlots:Int = -1;
 	var methodFn:Null<VFunc> = null;
+	// What `methodFn` and `staticFn` run when they are interpreted methods' functions, null for any other.
+	var methodDm:Null<JMethod> = null;
+	var staticDm:Null<JMethod> = null;
 
 	public function new(e:TExpr, callee:TExpr, argExprs:Array<TExpr>, args:Array<JNode>, recv:Null<JNode>, calleeNode:Null<JNode>) {
 		super(e);
@@ -1588,15 +1664,122 @@ class JCall extends JNode {
 	// The arguments' values from index `first` on, the array made at its size.
 	function evalArgsFrom(ctx:EvalContext, ev:Eval, first:Int):Array<EvalValue> {
 		var n = args.length;
+		// The small ones are made at their size in one go; the slots before `first` start null.
+		if (first == 0) switch (n) {
+			case 0: return [];
+			case 1: return [args[0].run(ctx, ev)];
+			case 2:
+				var a0 = args[0].run(ctx, ev);
+				return [a0, args[1].run(ctx, ev)];
+			case 3:
+				var a0 = args[0].run(ctx, ev);
+				var a1 = args[1].run(ctx, ev);
+				return [a0, a1, args[2].run(ctx, ev)];
+			case _:
+		} else if (first == 1) switch (n) {
+			case 0: return [null];
+			case 1: return [null, args[0].run(ctx, ev)];
+			case 2:
+				var a0 = args[0].run(ctx, ev);
+				return [null, a0, args[1].run(ctx, ev)];
+			case 3:
+				var a0 = args[0].run(ctx, ev);
+				var a1 = args[1].run(ctx, ev);
+				return [null, a0, a1, args[2].run(ctx, ev)];
+			case _:
+		}
 		var argv:Array<EvalValue> = [];
 		argv.resize(n + first);
 		for (i in 0...n) argv[i + first] = args[i].run(ctx, ev);
 		return argv;
 	}
 
+	// What the callee makes of the call, worked out on its first run: 0 a plain call, 1 `super(...)`, 2
+	// `super.f(...)`, 3 StringTools.fastCodeAt, 4 StringTools.unsafeCodeAt.
+	var site:Int = -1;
+	// Whether the leave position is recorded before the arguments (a callee that is not a proper method):
+	// 0 not yet known, 1 yes, 2 no.
+	var leaveFirstKnown:Int = 0;
+
+	// The callee's shape, worked out on the first run: 0 a field read off a receiver (`calleeE1`.`calleeFa`),
+	// 1 a proper static method, 2 anything else. For an instance field, instKind is 1 for a proper method
+	// (instClass/instField), 2 for another method and 0 for a variable; 3 is a structure's field
+	// (instField), read as a bound method when the receiver is a class instance.
+	var calleeKind:Int = -1;
+	var calleeE1:Null<TExpr> = null;
+	var calleeFa:Null<TFieldAccess> = null;
+	var instKind:Int = 0;
+	var instClass:Null<TClass> = null;
+	var instField:Null<TClassField> = null;
+
+	function decodeCallee():Void {
+		instKind = 0;
+		calleeKind = switch (callee.expr) {
+			case TField(e1, fa) if (!fa.match(FStatic(_, _) | FEnum(_, _))):
+				calleeE1 = e1;
+				calleeFa = fa;
+				switch (fa) {
+					case FInstance(c, _, cf):
+						instClass = c;
+						instField = cf;
+						instKind = EvalEmitter.isProperMethod(cf) ? 1 : cf.kind.match(Method(_)) ? 2 : 0;
+					case FAnon(cf):
+						instField = cf;
+						instKind = 3;
+					case _:
+				}
+				0;
+			case TField(_, FStatic(_, cf)) if (EvalEmitter.isProperMethod(cf)): 1;
+			case _: 2;
+		};
+	}
+
+	// Whether the call gives the method exactly its arguments, none of them defaulted, few enough to hold
+	// while its frame is made: anything else goes through the method's function.
+	inline function fits(c:JCompiled):Bool {
+		return !c.anyDefault && c.argSlots.length == args.length && args.length <= 4;
+	}
+
+	// The method's function (EvalPrototype.makeFunction) and EvalJit.invoke in one, the arguments bound
+	// into the frame without an array in between: the arguments in the caller's frame, the leave position
+	// as callAt records it, then the frame, its `this` (the receiver, an abstract's first argument, or none)
+	// and the body.
+	function callMethod(ctx:EvalContext, ev:Eval, m:JMethod, c:JCompiled, recvValue:Null<EvalValue>, leaveFirst:Bool, p:Position):EvalValue {
+		// The method's own context is the caller's: the call site found it in its context's table.
+		var mctx = m.ctx;
+		var n = args.length;
+		var a0:EvalValue = n > 0 ? args[0].run(ctx, ev) : VNull;
+		var a1:EvalValue = n > 1 ? args[1].run(ctx, ev) : VNull;
+		var a2:EvalValue = n > 2 ? args[2].run(ctx, ev) : VNull;
+		var a3:EvalValue = n > 3 ? args[3].run(ctx, ev) : VNull;
+		if (!leaveFirst && ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
+		var env = EvalContext.pushFrame(mctx, m.info, c.layout);
+		env.vthis = m.isInstance ? recvValue : (m.abstractThis ? a0 : null);
+		var locals = env.locals;
+		var slots = c.argSlots;
+		if (n > 0) locals[slots[0]] = a0;
+		if (n > 1) locals[slots[1]] = a1;
+		if (n > 2) locals[slots[2]] = a2;
+		if (n > 3) locals[slots[3]] = a3;
+		var ret = EvalJit.runBody(mctx, env.eval, c.node);
+		EvalContext.popFrame(mctx, env);
+		return ret;
+	}
+
+	function siteKind():Int {
+		return switch (callee.expr) {
+			case TConst(TSuper): 1;
+			case TField({expr: TConst(TSuper)}, _): 2;
+			case TField(_, FStatic(c, cf)) if (argExprs.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools" && (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt")):
+				cf.name == "unsafeCodeAt" ? 4 : 3;
+			case _: 0;
+		};
+	}
+
 	function call(ctx:EvalContext, ev:Eval):EvalValue {
 		var p = e.pos;
-		switch (callee.expr) {
+		if (site < 0) site = siteKind();
+		if (site == 1 || site == 2) switch (callee.expr) {
 			case TConst(TSuper):
 				// Super() checks the depth first; a native-backed parent's special super call records no leave
 				// position, an interpreted parent's is recorded after the arguments (callAt).
@@ -1640,7 +1823,7 @@ class JCall extends JNode {
 				};
 				if (c != null && cf != null) {
 					var proto = ctx.instancePrototypes.get(EvalHash.pathHash(c.path));
-					var m = EvalEmitter.superProtoMethod(proto, EvalHash.hash(cf.name));
+					var m = EvalEmitter.superProtoMethod(proto, EvalHash.fieldHash(cf));
 					var vthis = ev.env.vthis;
 					// A super field call: the depth check, the arguments, and the call with no leave position
 					// recorded.
@@ -1653,90 +1836,101 @@ class JCall extends JNode {
 				}
 			case _:
 		}
-		switch (callee.expr) {
-			// StringTools.fastCodeAt and unsafeCodeAt are intrinsics.
-			case TField(_, FStatic(c, cf)) if (argExprs.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools" && (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt")):
-				var s = EvalStdLib.decodeVString(ctx, args[0].run(ctx, ev));
-				var index = EvalStdLib.decodeIntP(ctx, args[1].run(ctx, ev), p);
-				if (cf.name == "unsafeCodeAt") return VInt(hxc.eval.EvalString.EvalString.charAt(s, index));
-				return index < 0 || index >= s.slength ? VNull : VInt(hxc.eval.EvalString.EvalString.charAt(s, index));
-			case _:
+		// StringTools.fastCodeAt and unsafeCodeAt are intrinsics.
+		if (site >= 3) {
+			var s = EvalStdLib.decodeVString(ctx, args[0].run(ctx, ev));
+			var index = EvalStdLib.decodeIntP(ctx, args[1].run(ctx, ev), p);
+			if (site == 4) return hxc.eval.EvalValue.EvalValueTools.vint(hxc.eval.EvalString.EvalString.charAt(s, index));
+			return index < 0 || index >= s.slength ? VNull : hxc.eval.EvalValue.EvalValueTools.vint(hxc.eval.EvalString.EvalString.charAt(s, index));
 		}
 		EvalJit.checkDepth(ctx, ev);
-		var leaveFirst = switch (callee.expr) {
-			case TField(_, FStatic(_, cf)): !EvalEmitter.isProperMethod(cf);
-			case TField(_, FInstance(_, _, cf)): !EvalEmitter.isProperMethod(cf);
-			case _: true;
-		};
+		if (leaveFirstKnown == 0) {
+			var lf = switch (callee.expr) {
+				case TField(_, FStatic(_, cf)): !EvalEmitter.isProperMethod(cf);
+				case TField(_, FInstance(_, _, cf)): !EvalEmitter.isProperMethod(cf);
+				case _: true;
+			};
+			leaveFirstKnown = lf ? 1 : 2;
+		}
+		var leaveFirst = leaveFirstKnown == 1;
 		// A method read off an instance is called with the receiver directly, without the bound-method
 		// value EvalField.dynamicField would make for it.
 		var direct:Null<VFunc> = null;
 		var directRecv:EvalValue = VNull;
-		var fn = switch (callee.expr) {
+		var directDm:Null<JMethod> = null;
+		if (calleeKind < 0) decodeCallee();
+		var fn = switch (calleeKind) {
 			// The receiver first, null-checked at its position.
-			case TField(e1, fa) if (!fa.match(FStatic(_, _) | FEnum(_, _))):
+			case 0:
 				var recvValue = recv.run(ctx, ev);
-				if (recvValue == VNull) EvalExceptions.excString(ctx, "Null Access", e1.pos);
-				switch [fa, recvValue] {
-					case [FInstance(c, _, cf), VInt(_) | VFloat(_) | VTrue | VFalse | VObject(_) | VEnumValue(_) | VFunction(_, _) | VFieldClosure(_, _)
-						| VNativeString(_) | VString(_) | VArray(_) | VVector(_) | VPrototype(_)] if (EvalEmitter.isProperMethod(cf)):
-						if (EvalEmitter.isFinalMethod(ctx, c, cf) && !TypeFunctions.hasClassFlag(c, CInterface)) {
-							var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), callee.pos);
-							switch (try EvalField.protoFieldRaise(proto, EvalHash.hash(cf.name)) catch (_:hxc.core.NotFound) VNull) {
-								case VFunction(f, _): VFieldClosure(recvValue, f);
-								case m: m;
-							}
-						} else {
-							var proto = switch (recvValue) {
-								case VPrototype(pr): pr;
-								case VString(_): ctx.stringPrototype;
-								case VArray(_): ctx.arrayPrototype;
-								case VVector(_): ctx.vectorPrototype;
-								case _: EvalStdLib.unexpectedValueP(ctx, recvValue, "instance", p);
-							};
-							var m = try EvalField.protoFieldRaise(proto, EvalHash.hash(cf.name)) catch (_:hxc.core.NotFound)
-								EvalExceptions.excString(ctx, "Field " + cf.name + " not found on prototype " + EvalHash.revHash(proto.ppath), p);
-							switch (m) {
-								case VFunction(f, _): VFieldClosure(recvValue, f);
-								case _: m;
-							}
+				if (recvValue == VNull) EvalExceptions.excString(ctx, "Null Access", calleeE1.pos);
+				var primitive = switch (recvValue) {
+					case VInt(_) | VFloat(_) | VTrue | VFalse | VObject(_) | VEnumValue(_) | VFunction(_, _) | VFieldClosure(_, _)
+						| VNativeString(_) | VString(_) | VArray(_) | VVector(_) | VPrototype(_): true;
+					case _: false;
+				};
+				if (instKind == 1 && primitive) {
+					var c = instClass;
+					var cf = instField;
+					if (EvalEmitter.isFinalMethod(ctx, c, cf) && !TypeFunctions.hasClassFlag(c, CInterface)) {
+						var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), callee.pos);
+						switch (try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound) VNull) {
+							case VFunction(f, _): VFieldClosure(recvValue, f);
+							case m: m;
 						}
-					// EvalEmitter.evalField's read of a method on a receiver that is not null:
-					// EvalField.dynamicField.
-					case [FInstance(_, _, cf), _] if (cf.kind.match(Method(_))):
-						if (methodHash < 0) methodHash = EvalHash.hash(cf.name);
-						var rv = EvalValueTools.vresolve(recvValue);
-						var cached:Null<VFunc> = null;
-						switch (rv) {
-							case VInstance(vi) if (vi.iproto == methodProto && vi.iproto.pinstanceFields.length == methodSlots):
-								cached = methodFn;
-							case _:
+					} else {
+						var proto = switch (recvValue) {
+							case VPrototype(pr): pr;
+							case VString(_): ctx.stringPrototype;
+							case VArray(_): ctx.arrayPrototype;
+							case VVector(_): ctx.vectorPrototype;
+							case _: EvalStdLib.unexpectedValueP(ctx, recvValue, "instance", p);
+						};
+						var m = try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound)
+							EvalExceptions.excString(ctx, "Field " + cf.name + " not found on prototype " + EvalHash.revHash(proto.ppath), p);
+						switch (m) {
+							case VFunction(f, _): VFieldClosure(recvValue, f);
+							case _: m;
 						}
-						if (cached != null) {
-							direct = cached;
+					}
+				} else if (instKind == 1 || instKind == 2 || (instKind == 3 && recvValue.match(VInstance(_)))) {
+					// EvalEmitter.evalField's read of a method on a receiver that is not null, and of a
+					// structure's field on a class instance: EvalField.dynamicField.
+					var cf = instField;
+					if (methodHash < 0) methodHash = EvalHash.fieldHash(cf);
+					var rv = EvalValueTools.vresolve(recvValue);
+					var cached:Null<VFunc> = null;
+					switch (rv) {
+						case VInstance(vi) if (vi.iproto == methodProto && vi.iproto.pinstanceFields.length == methodSlots):
+							cached = methodFn;
+						case _:
+					}
+					if (cached != null) {
+						direct = cached;
+						directRecv = rv;
+						directDm = methodDm;
+						VNull;
+					} else switch (EvalField.field(ctx, rv, methodHash)) {
+						case VFunction(f, false):
+							direct = f;
 							directRecv = rv;
+							// Field read it off the prototype chain when the instance has no slot of the name
+							switch (rv) {
+								case VInstance(vi) if (methodHash != EvalHash.keyLength && !vi.iproto.pinstanceNames.exists(methodHash)):
+									methodProto = vi.iproto;
+									methodSlots = vi.iproto.pinstanceFields.length;
+									methodFn = f;
+									var dm = ctx.jitMethods.get(f);
+									methodDm = dm != null && dm.isInstance ? dm : null;
+								case _:
+							}
 							VNull;
-						} else switch (EvalField.field(ctx, rv, methodHash)) {
-							case VFunction(f, false):
-								direct = f;
-								directRecv = rv;
-								// Field read it off the prototype chain when the instance has no slot of the name
-								switch (rv) {
-									case VInstance(vi) if (methodHash != EvalHash.keyLength && !vi.iproto.pinstanceNames.exists(methodHash)):
-										methodProto = vi.iproto;
-										methodSlots = vi.iproto.pinstanceFields.length;
-										methodFn = f;
-									case _:
-								}
-								VNull;
-							case _:
-								EvalValueTools.vresolve(EvalField.dynamicField(ctx, rv, methodHash));
-						}
-					case _:
-						EvalValueTools.vresolve(EvalEmitter.evalField(ctx, e1, fa, callee.pos, recvValue));
-				}
+						case _:
+							EvalValueTools.vresolve(EvalField.dynamicField(ctx, rv, methodHash));
+					}
+				} else EvalValueTools.vresolve(EvalEmitter.evalField(ctx, calleeE1, calleeFa, callee.pos, recvValue));
 			// A proper static method's slot is read before the arguments.
-			case TField(_, FStatic(_, cf)) if (EvalEmitter.isProperMethod(cf)):
+			case 1:
 				if (staticEpoch == EvalJit.epoch && staticFn != null) staticFn else {
 					var f = switch (EvalValueTools.vresolve(calleeNode.run(ctx, ev))) {
 						case v = VFunction(_, _): v;
@@ -1744,23 +1938,39 @@ class JCall extends JNode {
 					};
 					staticFn = f;
 					staticEpoch = EvalJit.epoch;
+					staticDm = switch (f) {
+						case VFunction(sf, _):
+							var dm = ctx.jitMethods.get(sf);
+							dm != null && !dm.isInstance ? dm : null;
+						case _: null;
+					};
 					f;
 				}
 			case _: EvalValueTools.vresolve(calleeNode.run(ctx, ev));
 		};
 		if (leaveFirst && ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
 		if (direct != null) {
+			if (directDm != null) {
+				var c = directDm.compiled();
+				if (fits(c)) return callMethod(ctx, ev, directDm, c, directRecv, leaveFirst, p);
+			}
 			var argv = evalArgsFrom(ctx, ev, 1);
 			argv[0] = directRecv;
 			return leaveFirst ? direct(argv) : EvalJit.callAt(ev, p, direct, argv);
 		}
-		var argv = evalArgs(ctx, ev);
 		if (trace == 0) {
 			trace = switch (callee.expr) {
 				case TField(_, FStatic(c, cf)) if (cf.name == "trace" && c.path.name == "Log" && c.path.pack.length == 1 && c.path.pack[0] == "haxe"): 1;
 				case _: 2;
 			};
 		}
+		if (calleeKind == 1 && trace == 2 && staticDm != null && staticEpoch == EvalJit.epoch) {
+			var c = staticDm.compiled();
+			if (fits(c)) return callMethod(ctx, ev, staticDm, c, null, leaveFirst, p);
+		}
+		// A bound method's arguments go in after a slot for its receiver.
+		var bound = trace != 1 && switch (fn) { case VFieldClosure(_, _): true; case _: false; };
+		var argv = evalArgsFrom(ctx, ev, bound ? 1 : 0);
 		if (trace == 1 && EvalEmitter.isEvalTarget(ctx)) {
 			if (argExprs.length > 0 && EvalEmitter.isUIntExpr(argExprs[0])) argv[0] = EvalEmitter.unsignedValue(argv[0]);
 			if (argExprs.length > 1) argv[1] = EvalEmitter.normalizeTraceValue(argExprs[1], argv[1]);
@@ -1768,7 +1978,7 @@ class JCall extends JNode {
 		return switch (fn) {
 			case VFunction(f, _): leaveFirst ? f(argv) : EvalJit.callAt(ev, p, f, argv);
 			case VFieldClosure(r, f):
-				argv.insert(0, r);
+				if (bound) argv[0] = r else argv.insert(0, r);
 				leaveFirst ? f(argv) : EvalJit.callAt(ev, p, f, argv);
 			// A macro's TLazy(f) is called to force the type.
 			case VInstance({ikind: ILazyType(_, get)}): get();
@@ -1907,7 +2117,7 @@ class JEnumIndex extends JNode {
 		var old = ev.currentPos;
 		if (pos != null) ev.currentPos = pos;
 		var r = switch (a.run(ctx, ev)) {
-			case VEnumValue(v): VInt(v.eindex);
+			case VEnumValue(v): hxc.eval.EvalValue.EvalValueTools.vint(v.eindex);
 			case v: EvalStdLib.unexpectedValueP(ctx, v, "enum value", e1.pos);
 		};
 		ev.currentPos = old;

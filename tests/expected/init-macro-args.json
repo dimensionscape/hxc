@@ -1,0 +1,13 @@
+{
+	"macro-method-takes-a-string": "str [a,b] null",
+	"macro-method-takes-an-optional-string": "str [a,b] C",
+	"macro-method-takes-each-constant-kind": "kinds 2 3 false x+y 3",
+	"macro-method-takes-a-dynamic-as-its-value": "dyn true x",
+	"macro-method-refuses-the-wrong-type": "(unknown) : Int should be String\n(unknown) : ... For function argument 'a'",
+	"macro-method-refuses-the-wrong-type-of-a-computed-argument": "(unknown) : Int should be String\n(unknown) : ... For function argument 'a'",
+	"macro-method-expr-parameter-is-refused": "--macro M.expr('x'):1: characters 1-2 : String should be haxe.macro.Expr\n--macro M.expr('x'):1: characters 1-2 : ... String has no field expr\n--macro M.expr('x'):1: characters 1-2 : ... For function argument 'e'",
+	"macro-method-exprof-parameter-is-refused": "--macro M.exprOf('x'):1: characters 1-2 : String should be haxe.macro.Expr\n--macro M.exprOf('x'):1: characters 1-2 : ... String has no field expr\n--macro M.exprOf('x'):1: characters 1-2 : ... For function argument 'e'",
+	"macro-method-array-of-expr-parameter-is-refused": "(unknown) : Int should be Array<haxe.macro.Expr>\n(unknown) : ... For function argument 'more'",
+	"macro-method-rest-of-expr-parameter-is-refused": "(unknown) : Int should be haxe.macro.Expr\n(unknown) : ... For function argument 'more'",
+	"plain-function-takes-a-string": "plain [a,b]"
+}

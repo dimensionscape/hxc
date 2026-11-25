@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 env:
-  CONFORMANCE_COMMIT: 4349f29f713ae367fcb0407beb95d27ea02e466c
+  CONFORMANCE_COMMIT: 1f8cdf63a3a09db7bc2cbd2547659dd7dc0c4cce
 
 jobs:
   build:
@@ -37,9 +37,9 @@ jobs:
         include:
           - { name: windows-x64, os: windows-2022, experimental: false }
           - { name: linux-x64, os: ubuntu-22.04, experimental: false }
-          - { name: macos-arm64, os: macos-14, experimental: false }
+          - { name: macos-arm64, os: macos-15, experimental: false }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -65,7 +65,7 @@ jobs:
           node main.js
 
       - name: Upload the executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: hxc-${{ matrix.name }}
           path: ${{ steps.build.outputs.executable }}
@@ -83,9 +83,9 @@ jobs:
         include:
           - { name: windows-x64, os: windows-2022, experimental: false, compare: "" }
           - { name: linux-x64, os: ubuntu-24.04, experimental: false, compare: "--haxe haxe" }
-          - { name: macos-arm64, os: macos-14, experimental: false, compare: "--haxe haxe --divergences $GITHUB_WORKSPACE/tests/divergences-macos.json" }
+          - { name: macos-arm64, os: macos-15, experimental: false, compare: "--haxe haxe --divergences $GITHUB_WORKSPACE/tests/divergences-macos.json" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: t
         uses: ./.github/actions/setup-tests
@@ -107,7 +107,9 @@ jobs:
         run: |
           cd "${{ steps.t.outputs.conformance }}"
           neko run.n run --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH" \
-            --cases "$GITHUB_WORKSPACE/tests/cases" -j 4 --junit "$RUNNER_TEMP/hxc.xml" --title "hxc"
+            --cases "$GITHUB_WORKSPACE/tests/cases" --expected "$GITHUB_WORKSPACE/tests/expected" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences.json" \
+            -j 4 --junit "$RUNNER_TEMP/hxc.xml" --title "hxc"
 
   jvm:
     name: JVM
@@ -115,7 +117,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: t
         uses: ./.github/actions/setup-tests
@@ -123,7 +125,7 @@ jobs:
           artifact: hxc-windows-x64
           conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -151,13 +153,131 @@ jobs:
           cd bin && java -jar unit.jar | tee "$RUNNER_TEMP/jvm.log"
           grep -q "ALL TESTS OK" "$RUNNER_TEMP/jvm.log"
 
+  dotnet:
+    name: .NET
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: t
+        uses: ./.github/actions/setup-tests
+        with:
+          artifact: hxc-windows-x64
+          conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: The .NET generator's cases
+        shell: bash
+        run: tests/dotnet/run.sh --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH"
+
+      # In a folder with its own empty haxelib repository, haxelib finds no hxcs, so hxc uses the net-20
+      # reference assemblies it carries; the .dll must be the one built with the global hxcs.
+      - name: Builds without hxcs, to the same bytes
+        shell: bash
+        run: |
+          hxc="${{ steps.t.outputs.hxc }}"
+          printf 'class Main {\n\tstatic function main() {\n\t\tvar m = [1 => "a"];\n\t\ttrace(m.get(1) + cs.system.Environment.Version.Major);\n\t}\n}\n' > "$RUNNER_TEMP/Main.hx"
+          for d in with without; do mkdir -p "$RUNNER_TEMP/$d" && cp "$RUNNER_TEMP/Main.hx" "$RUNNER_TEMP/$d/"; done
+          (cd "$RUNNER_TEMP/without" && haxelib newrepo && ! haxelib path hxcs > /dev/null 2>&1)
+          (cd "$RUNNER_TEMP/with" && "$hxc" -main Main --dotnet out)
+          (cd "$RUNNER_TEMP/without" && "$hxc" -main Main --dotnet out)
+          cmp "$RUNNER_TEMP/with/out/out.dll" "$RUNNER_TEMP/without/out/out.dll"
+          dotnet "$RUNNER_TEMP/without/out/out.dll"
+
+  dotnet-host:
+    name: hxc on .NET
+    needs: build
+    runs-on: windows-2022
+    # New: it reports without failing the run until it has been green for a while.
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: t
+        uses: ./.github/actions/setup-tests
+        with:
+          artifact: hxc-windows-x64
+          conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      # The same hxcpp commit the build-hxc action pins: only its PCRE2 sources are used here.
+      - name: Fetch hxcpp for the PCRE2 sources
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/hxcpp-src" && cd "$RUNNER_TEMP/hxcpp-src"
+          git init -q && git remote add origin https://github.com/openfl/libhxcpp.git
+          git fetch -q --depth 1 origin 1d90a2a86facf23ee3f9cee3abf33c704338988b && git checkout -q FETCH_HEAD
+          echo "HXCPP=$(cygpath -m "$RUNNER_TEMP/hxcpp-src")" >> "$GITHUB_ENV"
+
+      - name: Build hxc for .NET
+        shell: bash
+        run: tools/dotnet-host/build.sh "${{ steps.t.outputs.hxc }}" "$RUNNER_TEMP/hxc-dotnet"
+
+      - name: It builds itself to the same bytes
+        shell: bash
+        run: |
+          tools/dotnet-host/build.sh "$RUNNER_TEMP/hxc-dotnet/hxc.exe" "$RUNNER_TEMP/hxc-dotnet-2"
+          cmp "$RUNNER_TEMP/hxc-dotnet/hxc.dll" "$RUNNER_TEMP/hxc-dotnet-2/hxc.dll"
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          hxc="$RUNNER_TEMP/hxc-dotnet/hxc.exe"
+          "$hxc" -version
+          mkdir -p "$RUNNER_TEMP/smoke-dotnet" && cd "$RUNNER_TEMP/smoke-dotnet"
+          printf 'class Main {\n\tstatic function main() {\n\t\tvar m = [for (i in 0...3) i => i * i];\n\t\ttrace(m[2]);\n\t}\n}\n' > Main.hx
+          "$hxc" -main Main --interp
+          "$hxc" -main Main -js main.js
+          node main.js
+
+      - name: Parity with Haxe 4.3.7
+        shell: bash
+        run: |
+          cd "${{ steps.t.outputs.conformance }}"
+          neko run.n run --compiler "$(cygpath -m "$RUNNER_TEMP/hxc-dotnet/hxc.exe")" --std "$HAXE_STD_PATH" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences.json" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences-dotnet-host.json" -j 4 \
+            --junit "$RUNNER_TEMP/dotnet-host.xml" --title "hxc on .NET"
+
+      - name: hxc's own tests
+        shell: bash
+        run: |
+          cd "${{ steps.t.outputs.conformance }}"
+          neko run.n run --compiler "$(cygpath -m "$RUNNER_TEMP/hxc-dotnet/hxc.exe")" --std "$HAXE_STD_PATH" \
+            --cases "$GITHUB_WORKSPACE/tests/cases" --expected "$GITHUB_WORKSPACE/tests/expected" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences.json" \
+            --divergences "$GITHUB_WORKSPACE/tests/divergences-dotnet-host.json" \
+            -j 4 --junit "$RUNNER_TEMP/dotnet-host-own.xml" --title "hxc on .NET, own tests"
+
+      - name: Upload the .NET build
+        uses: actions/upload-artifact@v6
+        with:
+          name: hxc-dotnet-windows-x64
+          path: |
+            ${{ runner.temp }}/hxc-dotnet/hxc.exe
+            ${{ runner.temp }}/hxc-dotnet/hxc.dll
+            ${{ runner.temp }}/hxc-dotnet/hxc.runtimeconfig.json
+            ${{ runner.temp }}/hxc-dotnet/HxcHostNative.dll
+            ${{ runner.temp }}/hxc-dotnet/pcre2-8.dll
+            ${{ runner.temp }}/hxc-dotnet/hxczlib.dll
+          if-no-files-found: error
+
   haxe-suites:
     name: Haxe's suites
     needs: build
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: t
         uses: ./.github/actions/setup-tests
@@ -182,7 +302,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: t
         uses: ./.github/actions/setup-tests
